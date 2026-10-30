@@ -513,6 +513,53 @@ export function addServiceProfile(kind, input, actor) {
   return list
 }
 
+/** Changes a profile in place: its label, quality profile, folder or default flag. */
+export function editServiceProfile(kind, originalName, input, actor) {
+  const label = kind === 'sonarr' ? 'Sonarr' : 'Radarr'
+  const existing = serviceProfiles(kind)
+  const index = existing.findIndex((profile) => profile.name === String(originalName))
+  if (index < 0) throw new HttpError(404, 'Profile not found')
+
+  const name = String(input.name ?? '').trim() || existing[index].name
+  if (name.length > 60) throw new HttpError(400, 'Profile names are limited to 60 characters')
+
+  const duplicate = existing.some(
+    (profile, position) => position !== index && profile.name.toLowerCase() === name.toLowerCase()
+  )
+  if (duplicate) throw new HttpError(409, `A profile named "${name}" already exists`)
+
+  const [rawId, rawName = ''] = String(input.qualityProfile ?? '').split('|')
+  const profileId = Number(rawId)
+  if (!Number.isInteger(profileId) || profileId <= 0) {
+    throw new HttpError(400, 'Choose a quality profile')
+  }
+
+  const rootFolder = String(input.rootFolder ?? '').trim()
+  if (!rootFolder) throw new HttpError(400, 'Choose a root folder')
+
+  const isDefault = input.isDefault === true || existing[index].isDefault
+
+  const list = existing.map((profile, position) => {
+    if (position === index) {
+      return {
+        ...profile,
+        name,
+        profileId,
+        profileName: String(rawName).trim() || `Profile ${profileId}`,
+        rootFolder,
+        isDefault,
+      }
+    }
+    return { ...profile, isDefault: isDefault ? false : profile.isDefault }
+  })
+
+  if (!list.some((profile) => profile.isDefault)) list[0] = { ...list[0], isDefault: true }
+
+  saveServiceProfiles(kind, list)
+  store.recordAudit(actor?.id ?? null, 'settings.profile_updated', `${label}: ${name} -> ${rootFolder}`)
+  return list
+}
+
 export function removeServiceProfile(kind, name, actor) {
   const label = kind === 'sonarr' ? 'Sonarr' : 'Radarr'
   const existing = serviceProfiles(kind)
@@ -557,6 +604,13 @@ export function updateSettings(input, actor) {
   }
   if (input.syncIntervalMinutes !== undefined) {
     entries['sync.intervalMinutes'] = String(Math.max(0, Number(input.syncIntervalMinutes ?? 30) || 0))
+  }
+
+  if (input.plex) {
+    const plex = input.plex
+    if (plex.enabled !== undefined) entries['plex.enabled'] = plex.enabled ? 'true' : 'false'
+    if (plex.url !== undefined) entries['plex.url'] = String(plex.url ?? '').trim()
+    if (plex.token !== undefined) entries['plex.token'] = String(plex.token ?? '').trim()
   }
 
   if (input.notifications) {

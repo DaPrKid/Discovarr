@@ -817,3 +817,275 @@ code {
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   }
 }
+
+/* --- browse sidebar, shelves, profile bubbles, Plex --------------------- */
+
+.discover {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+
+.browse-nav {
+  position: sticky;
+  top: 82px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.browse-heading {
+  margin: 2px 8px 6px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.browse-link {
+  padding: 8px 10px;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.browse-link:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.browse-link.is-active {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.discover-main {
+  min-width: 0;
+}
+
+.shelf {
+  margin-bottom: 26px;
+}
+
+.shelf-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.shelf-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.shelf-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 152px;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-snap-type: x proximity;
+}
+
+.shelf-row .media-card {
+  scroll-snap-align: start;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chip-link {
+  padding: 9px 15px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.chip-link:hover {
+  border-color: var(--accent);
+  color: #c3b3ff;
+}
+
+.poster-link {
+  position: relative;
+  display: block;
+}
+
+.plex-ribbon {
+  position: absolute;
+  top: 9px;
+  left: 9px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(229, 160, 13, 0.95);
+  color: #17130a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.btn-plex {
+  background: #e5a00d;
+  border-color: #e5a00d;
+  color: #1a1405;
+  font-weight: 700;
+}
+
+.media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.plex-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.service-panel {
+  gap: 16px;
+}
+
+.service-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.service-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.service-icon,
+.bubble-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: #c3b3ff;
+  flex: none;
+}
+
+.bubble-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: #241f3f;
+}
+
+.profiles {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+.profiles h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.profile-bubbles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.profile-bubble {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px 9px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #0f1219;
+}
+
+.profile-bubble.is-default {
+  border-color: rgba(61, 220, 151, 0.45);
+  background: rgba(61, 220, 151, 0.06);
+}
+
+.bubble-text {
+  display: grid;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.bubble-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+}
+
+.bubble-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.icon-btn-danger:hover {
+  color: #ff9aa8;
+  background: rgba(255, 107, 129, 0.12);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .discover {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .browse-nav {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .browse-heading {
+    width: 100%;
+  }
+}

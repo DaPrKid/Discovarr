@@ -33,7 +33,7 @@ import { serviceOptions, serviceSummary } from './services.js'
 import { searchTmdb, tmdbConfigured } from './tmdb.js'
 import { syncLibrary, syncState } from './sync.js'
 
-const APP_VERSION = '0.4.0'
+const APP_VERSION = '0.5.0'
 
 function parseType(value) {
   return value === MediaType.MOVIE || value === MediaType.TV ? value : 'all'

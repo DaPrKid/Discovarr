@@ -17,6 +17,7 @@ import {
   createUserByAdmin,
   declineRequest,
   deleteRequest,
+  editServiceProfile,
   getCatalog,
   getMediaDetail,
   listRequestsFor,
@@ -41,7 +42,20 @@ import {
   serviceSummary,
   testServiceConnection,
 } from './services.js'
-import { searchTmdb, titleDetails, tmdbConfigured, trendingTmdb } from './tmdb.js'
+import {
+  discoverTitles,
+  genreList,
+  networkById,
+  networkShelves,
+  recommendedTitles,
+  searchTmdb,
+  studioById,
+  studioShelves,
+  titleDetails,
+  tmdbConfigured,
+  trendingTmdb,
+} from './tmdb.js'
+import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
 import {
   alert,
@@ -157,7 +171,81 @@ function setupPage({ appName, error, values = {} }) {
 // Discover and detail
 // ---------------------------------------------------------------------------
 
-function discoverBody({ user, type, query, source, items, error }) {
+const BROWSE_LINKS = Object.freeze([
+  ['networks', '/networks', 'Networks'],
+  ['studios', '/studios', 'Studios'],
+  ['movie-genres', '/genres/movie', 'Movie Genres'],
+  ['tv-genres', '/genres/tv', 'Series Genres'],
+  ['recommendations', '/recommendations', 'Recommendations'],
+])
+
+function browseNav(browse) {
+  return `<aside class="browse-nav">
+    <p class="browse-heading">Browse</p>
+    <a class="browse-link ${browse ? '' : 'is-active'}" href="/">Discover</a>
+    ${BROWSE_LINKS.map(
+      ([key, href, label]) =>
+        `<a class="browse-link ${browse === key ? 'is-active' : ''}" href="${href}">${label}</a>`
+    ).join('')}
+  </aside>`
+}
+
+function discoverLayout(browse, body) {
+  return `<div class="discover">${browseNav(browse)}<div class="discover-main">${body}</div></div>`
+}
+
+function plexFor(plex, mediaType, tmdbId) {
+  return plexEntryFor(plex, mediaType, tmdbId)
+}
+
+/** A poster grid, with each title linked to its local record when it exists. */
+function mediaGrid(items, { returnTo = '/', plex = {} } = {}) {
+  if (!items.length) return '<p class="empty">Nothing found.</p>'
+
+  return `<div class="grid">${items
+    .map((item) => {
+      const local = store.getMediaByTmdb(item.tmdbId, item.mediaType)
+      return mediaCard(item, { returnTo, local, plex: plexFor(plex, item.mediaType, item.tmdbId) })
+    })
+    .join('')}</div>`
+}
+
+/** One browsable row: a network, studio or genre and the titles it made. */
+function shelf(title, items, href, plex) {
+  if (!items.length) return ''
+
+  return `<section class="shelf">
+    <div class="shelf-head">
+      <h2>${escapeHtml(title)}</h2>
+      <a class="inline-link" href="${href}">See all →</a>
+    </div>
+    <div class="shelf-row">${items
+      .map((item) =>
+        mediaCard(item, {
+          returnTo: href,
+          local: store.getMediaByTmdb(item.tmdbId, item.mediaType),
+          plex: plexFor(plex, item.mediaType, item.tmdbId),
+        })
+      )
+      .join('')}</div>
+  </section>`
+}
+
+function browseUnavailable(what) {
+  return `<div class="page-head">
+      <div>
+        <h1>${escapeHtml(what)}</h1>
+        <p class="muted">This view is built from TMDB metadata.</p>
+      </div>
+    </div>
+    <section class="panel">
+      <p>Add a TMDB API key under
+        <a class="inline-link" href="/settings?tab=integrations">Settings → Integrations</a>
+        to browse ${escapeHtml(what.toLowerCase())}.</p>
+    </section>`
+}
+
+function discoverBody({ user, type, query, source, items, error, plex = {} }) {
   const tabs = [
     ['all', 'All'],
     ['movie', 'Movies'],
@@ -174,10 +262,20 @@ function discoverBody({ user, type, query, source, items, error }) {
     .join('')
 
   const grid = items.length
-    ? `<div class="grid">${items.map(({ item, local }) => mediaCard(item, { returnTo: '/', local })).join('')}</div>`
+    ? `<div class="grid">${items
+        .map(({ item, local }) =>
+          mediaCard(item, {
+            returnTo: '/',
+            local,
+            plex: plexFor(plex, item.mediaType, item.tmdbId),
+          })
+        )
+        .join('')}</div>`
     : `<p class="empty">Nothing found. ${source === 'local' ? 'Add a TMDB API key in settings to search the full catalog.' : ''}</p>`
 
-  return `<div class="page-head">
+  return discoverLayout(
+    '',
+    `<div class="page-head">
       <div>
         <h1>Discover</h1>
         <p class="muted">${source === 'tmdb' ? 'Trending on TMDB — request anything for the library.' : 'Local catalog (offline demo data).'}</p>
@@ -191,6 +289,154 @@ function discoverBody({ user, type, query, source, items, error }) {
     ${alert({ error })}
     <div class="tabs">${tabLinks}</div>
     ${grid}`
+  )
+}
+
+async function networksBody({ networkId, plex }) {
+  if (!tmdbConfigured()) return discoverLayout('networks', browseUnavailable('Networks'))
+
+  if (networkId) {
+    const network = networkById(networkId) ?? { id: networkId, name: 'Network' }
+    const items = await discoverTitles(MediaType.TV, { with_networks: networkId }, 36)
+
+    return discoverLayout(
+      'networks',
+      `<a class="back" href="/networks">← All networks</a>
+      <div class="page-head">
+        <div>
+          <h1>${escapeHtml(network.name)}</h1>
+          <p class="muted">Series from ${escapeHtml(network.name)}.</p>
+        </div>
+      </div>
+      ${mediaGrid(items, { returnTo: `/networks?network=${encodeURIComponent(networkId)}`, plex })}`
+    )
+  }
+
+  const rows = await networkShelves()
+
+  return discoverLayout(
+    'networks',
+    `<div class="page-head">
+      <div>
+        <h1>Networks</h1>
+        <p class="muted">Series grouped by the network that makes them.</p>
+      </div>
+    </div>
+    ${
+      rows
+        .map((row) => shelf(row.name, row.items, `/networks?network=${row.id}`, plex))
+        .join('') || '<p class="empty">TMDB returned no networks just now.</p>'
+    }`
+  )
+}
+
+async function studiosBody({ studioId, plex }) {
+  if (!tmdbConfigured()) return discoverLayout('studios', browseUnavailable('Studios'))
+
+  if (studioId) {
+    const studio = studioById(studioId) ?? { id: studioId, name: 'Studio' }
+    const items = await discoverTitles(MediaType.MOVIE, { with_companies: studioId }, 36)
+
+    return discoverLayout(
+      'studios',
+      `<a class="back" href="/studios">← All studios</a>
+      <div class="page-head">
+        <div>
+          <h1>${escapeHtml(studio.name)}</h1>
+          <p class="muted">Films from ${escapeHtml(studio.name)}.</p>
+        </div>
+      </div>
+      ${mediaGrid(items, { returnTo: `/studios?studio=${encodeURIComponent(studioId)}`, plex })}`
+    )
+  }
+
+  const rows = await studioShelves()
+
+  return discoverLayout(
+    'studios',
+    `<div class="page-head">
+      <div>
+        <h1>Studios</h1>
+        <p class="muted">Films grouped by the studio that made them.</p>
+      </div>
+    </div>
+    ${
+      rows
+        .map((row) => shelf(row.name, row.items, `/studios?studio=${row.id}`, plex))
+        .join('') || '<p class="empty">TMDB returned no studios just now.</p>'
+    }`
+  )
+}
+
+async function genresBody({ mediaType, genreId, plex }) {
+  const isMovie = mediaType === MediaType.MOVIE
+  const key = isMovie ? 'movie-genres' : 'tv-genres'
+  const label = isMovie ? 'Movie Genres' : 'Series Genres'
+
+  if (!tmdbConfigured()) return discoverLayout(key, browseUnavailable(label))
+
+  const genres = await genreList(mediaType)
+  const selected = genreId ? genres.find((genre) => String(genre.id) === String(genreId)) : null
+
+  if (selected) {
+    const items = await discoverTitles(mediaType, { with_genres: selected.id }, 36)
+
+    return discoverLayout(
+      key,
+      `<a class="back" href="/genres/${mediaType}">← All ${label.toLowerCase()}</a>
+      <div class="page-head">
+        <div>
+          <h1>${escapeHtml(selected.name)}</h1>
+          <p class="muted">Popular ${isMovie ? 'films' : 'series'} in ${escapeHtml(selected.name)}.</p>
+        </div>
+      </div>
+      ${mediaGrid(items, { returnTo: `/genres/${mediaType}?genre=${selected.id}`, plex })}`
+    )
+  }
+
+  return discoverLayout(
+    key,
+    `<div class="page-head">
+      <div>
+        <h1>${label}</h1>
+        <p class="muted">Pick a genre to see what is popular in it.</p>
+      </div>
+    </div>
+    <div class="chips">${genres
+      .map(
+        (genre) =>
+          `<a class="chip-link" href="/genres/${mediaType}?genre=${genre.id}">${escapeHtml(genre.name)}</a>`
+      )
+      .join('')}</div>`
+  )
+}
+
+async function recommendationsBody({ user, plex }) {
+  if (!tmdbConfigured()) return discoverLayout('recommendations', browseUnavailable('Recommendations'))
+
+  const seeds = store
+    .listRequests({ userId: user.id, take: 8 })
+    .filter((request) => request.media?.tmdbId)
+    .slice(0, 3)
+
+  const items = await recommendedTitles(
+    seeds.map((request) => ({ mediaType: request.media.mediaType, tmdbId: request.media.tmdbId }))
+  )
+
+  const reason = seeds.length
+    ? `Because you requested ${seeds.map((request) => request.media.title).join(', ')}.`
+    : 'Popular titles to start with — request a few and this page follows your taste.'
+
+  return discoverLayout(
+    'recommendations',
+    `<div class="page-head">
+      <div>
+        <h1>Recommendations</h1>
+        <p class="muted">${escapeHtml(reason)}</p>
+      </div>
+    </div>
+    ${mediaGrid(items, { returnTo: '/recommendations', plex })}`
+  )
 }
 
 function formatDate(value) {
@@ -279,7 +525,7 @@ function castPanel(details) {
   </section>`
 }
 
-function detailBody({ user, media, details, notice, error }) {
+function detailBody({ user, media, details, notice, error, plex = null }) {
   const entry = media ?? details
   const isTv = entry.mediaType === MediaType.TV
   const kind = isTv ? 'sonarr' : 'radarr'
@@ -370,6 +616,14 @@ function detailBody({ user, media, details, notice, error }) {
         </fieldset>`
       : ''
 
+  const plexRow = plex
+    ? `<div class="plex-row">
+        <span class="badge badge-available">On Plex</span>
+        <a class="btn btn-sm btn-plex" href="${escapeHtml(plex.playUrl)}" target="_blank" rel="noreferrer noopener">▶ Play on Plex</a>
+        <span class="muted small">${escapeHtml(plex.library)}</span>
+      </div>`
+    : ''
+
   const isAvailable = media?.status === MediaStatus.AVAILABLE
   const alreadyRequested = (media?.myActiveRequests ?? 0) > 0
   const quota = media ? quotaSummary(user)[isTv ? 'tv' : 'movie'] : null
@@ -409,18 +663,19 @@ function detailBody({ user, media, details, notice, error }) {
   return `<a class="back" href="/">← Back to discover</a>
     ${alert({ notice, error })}
     <section class="detail">
-      ${poster(entry, 'poster-lg')}
+      ${poster({ ...entry, posterPath: entry.posterPath ?? details?.posterPath ?? null }, 'poster-lg')}
       <div class="detail-body">
         <h1>${escapeHtml(entry.title)}</h1>
         ${details?.tagline ? `<p class="tagline">${escapeHtml(details.tagline)}</p>` : ''}
         <p class="media-meta">${escapeHtml(meta)}</p>
-        <p class="overview">${escapeHtml(entry.overview || 'No description available yet.')}</p>
+        <p class="overview">${escapeHtml(entry.overview || details?.overview || 'No description available yet.')}</p>
         ${factsHtml}
         ${
           seasonRows.length
             ? `<div class="panel"><h2 style="margin: 0">Seasons</h2><div class="season-list">${seasonRows.join('')}</div></div>`
             : ''
         }
+        ${plexRow}
         ${action}
       </div>
     </section>
@@ -537,86 +792,67 @@ function regionOptions(current) {
   ).join('')}`
 }
 
-function serviceFields(kind, label, settings, options) {
-  const service = serviceSummary(kind)
-  const list = options?.[kind] ?? null
-  const profileValue = service.qualityProfileId
-    ? `${service.qualityProfileId}${service.qualityProfileName ? `|${service.qualityProfileName}` : ''}`
-    : ''
-
-  const rootField = list?.rootFolders?.length
-    ? `<label>Root folder
-        <select name="${kind}RootFolder">
-          ${list.rootFolders
-            .map(
-              (folder) =>
-                `<option value="${escapeHtml(folder.path)}" ${folder.path === service.rootFolder ? 'selected' : ''}>${escapeHtml(folder.path)}</option>`
-            )
-            .join('')}
-        </select>
-      </label>`
-    : `<label>Root folder
-        <input type="text" name="${kind}RootFolder" value="${escapeHtml(service.rootFolder)}" placeholder="/media/movies" />
-      </label>`
-
-  const profileField = list?.qualityProfiles?.length
-    ? `<label>Default quality profile
-        <select name="${kind}QualityProfile">
-          ${list.qualityProfiles
-            .map(
-              (profile) =>
-                `<option value="${profile.id}|${escapeHtml(profile.name)}" ${String(profile.id) === String(service.qualityProfileId) ? 'selected' : ''}>${escapeHtml(profile.name)}</option>`
-            )
-            .join('')}
-        </select>
-      </label>`
-    : `<label>Quality profile id
-        <input type="text" name="${kind}QualityProfile" value="${escapeHtml(profileValue)}" placeholder="1" />
-      </label>`
-
-  // Once named profiles exist they decide the folder and quality profile for
-  // every request, so the one-click defaults step aside instead of quietly
-  // overriding them.
-  const defaults = service.profiles.length
-    ? `<p class="muted small">Using ${service.profiles.length} saved profile(s); the default is
-        <strong>${escapeHtml(service.profiles.find((profile) => profile.isDefault)?.name ?? service.profiles[0].name)}</strong>.
-        Add or change them in the ${label} profiles panel below.</p>`
-    : `${rootField}${profileField}`
-
-  return `<fieldset class="panel">
-    <legend>${label} <span class="badge badge-${service.enabled ? 'approved' : 'pending'}">${service.enabled ? 'enabled' : 'disabled'}</span></legend>
-    <input type="hidden" name="${kind}EnabledSubmitted" value="1" />
-    <label class="checkbox">
-      <input type="checkbox" name="${kind}Enabled" ${service.enabled ? 'checked' : ''} />
-      <span>Enable ${label} integration</span>
-    </label>
-    <label>Base URL
-      <input type="url" name="${kind}Url" value="${escapeHtml(settings[`services.${kind}.url`])}" placeholder="http://192.168.1.20:8989" />
-    </label>
-    <label>API key
-      <input type="password" name="${kind}ApiKey" value="${escapeHtml(settings[`services.${kind}.apiKey`])}" autocomplete="off" />
-    </label>
-    ${defaults}
-    <div class="request-actions">
-      <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/options/${kind}">Load folders and profiles</button>
-      <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/test/${kind}">Save and test connection</button>
-    </div>
-  </fieldset>`
+function serviceIcon(kind) {
+  return kind === 'radarr'
+    ? '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 2v3h3V6H5Zm5 0v12h9V6h-9ZM8 11v2H5v-2h3Zm0 4v2H5v-2h3Z"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 5h18a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm1 2v7h16V7H4Z"/></svg>'
 }
 
-function profileDialog(kind, label, options) {
+/** One saved profile as a bubble: service icon, name and edit/delete buttons. */
+function profileBubble(kind, profile, index, total) {
+  const name = escapeHtml(profile.name)
+  const icon = serviceIcon(kind)
+
+  return `<div class="profile-bubble${profile.isDefault ? ' is-default' : ''}">
+    <span class="bubble-icon" aria-hidden="true">${icon}</span>
+    <span class="bubble-text">
+      <span class="bubble-name"><strong>${name}</strong>${
+        profile.isDefault ? ' <span class="badge badge-approved">default</span>' : ''
+      }</span>
+      <span class="muted small">${escapeHtml(profile.profileName)} · <code>${escapeHtml(
+        profile.rootFolder || '—'
+      )}</code></span>
+    </span>
+    <span class="bubble-actions">
+      <button class="icon-btn" type="button" data-dialog-open="profile-${kind}-${index}" title="Edit ${name}" aria-label="Edit ${name}">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M4 20h4l10-10-4-4L4 16v4Zm12.7-12.7 2-2a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0l-2 2 4 4Z"/></svg>
+      </button>
+      <form method="post" action="/settings/profiles/${kind}/delete">
+        <input type="hidden" name="name" value="${name}" />
+        <button class="icon-btn icon-btn-danger" type="submit" title="Delete ${name}" aria-label="Delete ${name}" ${
+          total <= 1 ? 'disabled' : ''
+        }>
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 12H7L6 9Zm4 2v8h2v-8h-2Zm4 0v8h2v-8h-2Z"/></svg>
+        </button>
+      </form>
+    </span>
+  </div>`
+}
+
+/** The add dialog (profile = null) or the edit dialog for one saved profile. */
+function profileDialog(kind, label, options, profile = null, index = null) {
   const list = options?.[kind] ?? null
+  const editing = Boolean(profile)
+  const id = editing ? `profile-${kind}-${index}` : `profile-${kind}`
+  const selectedId = profile?.profileId ?? null
 
   const qualityField = list?.qualityProfiles?.length
     ? `<label>Quality profile
         <select name="profileSelect" required>
           ${list.qualityProfiles
-            .map((profile) => `<option value="${profile.id}|${escapeHtml(profile.name)}">${escapeHtml(profile.name)}</option>`)
+            .map(
+              (entry) =>
+                `<option value="${entry.id}|${escapeHtml(entry.name)}"${
+                  String(entry.id) === String(selectedId) ? ' selected' : ''
+                }>${escapeHtml(entry.name)}</option>`
+            )
             .join('')}
         </select>
       </label>`
     : `<label>Quality profile
-        <input type="text" name="profileSelect" required placeholder="4|HD-1080p" />
+        <input type="text" name="profileSelect" required value="${escapeHtml(
+          profile ? `${profile.profileId}|${profile.profileName}` : ''
+        )}" placeholder="4|HD-1080p" />
         <span class="muted small">Format: id|name — load folders and profiles first for a list.</span>
       </label>`
 
@@ -624,75 +860,143 @@ function profileDialog(kind, label, options) {
     ? `<label>Root folder
         <select name="rootFolder" required>
           ${list.rootFolders
-            .map((folder) => `<option value="${escapeHtml(folder.path)}">${escapeHtml(folder.path)}</option>`)
+            .map(
+              (folder) =>
+                `<option value="${escapeHtml(folder.path)}"${
+                  folder.path === profile?.rootFolder ? ' selected' : ''
+                }>${escapeHtml(folder.path)}</option>`
+            )
             .join('')}
+          ${
+            profile?.rootFolder && !list.rootFolders.some((folder) => folder.path === profile.rootFolder)
+              ? `<option value="${escapeHtml(profile.rootFolder)}" selected>${escapeHtml(profile.rootFolder)}</option>`
+              : ''
+          }
         </select>
       </label>`
     : `<label>Root folder
-        <input type="text" name="rootFolder" required placeholder="/media/movies" />
+        <input type="text" name="rootFolder" required value="${escapeHtml(profile?.rootFolder ?? '')}" placeholder="/media/movies" />
       </label>`
 
-  return `<dialog class="dialog" id="profile-${kind}">
-    <form method="post" action="/settings/profiles/${kind}/add" class="stack">
-      <h2 style="margin: 0">Add a ${label} profile</h2>
-      <p class="muted small">The name is what requesters see. The quality profile and root folder are what ${label} uses for that choice.</p>
-      <label>Profile name <input type="text" name="name" required maxlength="60" placeholder="4K Movies" /></label>
+  return `<dialog class="dialog" id="${id}">
+    <form method="post" action="/settings/profiles/${kind}/${editing ? 'edit' : 'add'}" class="stack">
+      <h2 style="margin: 0">${editing ? `Edit ${escapeHtml(profile.name)}` : `Add a ${label} profile`}</h2>
+      <p class="muted small">${
+        editing
+          ? 'Change the name, quality profile or root folder. Requests already sent keep the profile they were filed with.'
+          : `The name is what requesters see. The quality profile and root folder are what ${label} uses for that choice.`
+      }</p>
+      ${
+        editing
+          ? `<input type="hidden" name="originalName" value="${escapeHtml(profile.name)}" />`
+          : ''
+      }
+      <label>Profile name <input type="text" name="name" required maxlength="60" value="${escapeHtml(
+        profile?.name ?? ''
+      )}" placeholder="4K Movies" /></label>
       ${qualityField}
       ${rootField}
-      <label class="checkbox"><input type="checkbox" name="makeDefault" /> <span>Make this the default profile</span></label>
+      ${
+        profile?.isDefault
+          ? '<p class="muted small">This is the default profile. Pick another one to make it the default instead.</p>'
+          : `<label class="checkbox"><input type="checkbox" name="makeDefault" /> <span>Make this the default profile</span></label>`
+      }
       <div class="request-actions">
-        <button class="btn" type="submit">Add profile</button>
+        <button class="btn" type="submit">${editing ? 'Save profile' : 'Add profile'}</button>
         <button class="btn btn-ghost" type="button" data-dialog-close>Cancel</button>
       </div>
     </form>
   </dialog>`
 }
 
-function profilePanel(kind, label, options) {
+function profileStrip(kind, label, options) {
   const profiles = serviceProfiles(kind)
 
-  const rows = profiles
-    .map(
-      (profile) => `<tr>
-        <td><strong>${escapeHtml(profile.name)}</strong>${
-          profile.isDefault ? ' <span class="badge badge-approved">default</span>' : ''
-        }</td>
-        <td>${escapeHtml(profile.profileName)}</td>
-        <td><code>${escapeHtml(profile.rootFolder || '—')}</code></td>
-        <td><div class="request-actions">
-          ${
-            profile.isDefault
-              ? ''
-              : `<form method="post" action="/settings/profiles/${kind}/default">
-                  <input type="hidden" name="name" value="${escapeHtml(profile.name)}" />
-                  <button class="btn btn-sm btn-ghost" type="submit">Make default</button>
-                </form>`
-          }
-          <form method="post" action="/settings/profiles/${kind}/delete">
-            <input type="hidden" name="name" value="${escapeHtml(profile.name)}" />
-            <button class="btn btn-sm btn-danger" type="submit" ${profiles.length <= 1 ? 'disabled' : ''}>Delete</button>
-          </form>
-        </div></td>
-      </tr>`
-    )
-    .join('')
-
-  return `<section class="panel">
+  return `<div class="profiles">
     <div class="panel-head">
-      <h2 style="margin: 0">${label} profiles</h2>
-      <button class="btn btn-sm" type="button" data-dialog-open="profile-${kind}">Add profile</button>
+      <h3>${label} profiles</h3>
+      <button class="btn btn-sm btn-ghost" type="button" data-dialog-open="profile-${kind}">+ Add profile</button>
     </div>
-    <p class="muted small">Each profile is a name, a quality profile and a root folder. Requesters choose one when more than one exists.</p>
-    ${
-      profiles.length
-        ? `<table class="table">
-            <thead><tr><th>Name</th><th>Quality profile</th><th>Root folder</th><th></th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>`
-        : '<p class="empty">No profiles yet. Add one so requests know which quality and folder to use.</p>'
-    }
+    <p class="muted small">Each bubble is a quality profile and root folder. Requesters choose one, and approval dispatches with it.</p>
+    <div class="profile-bubbles">
+      ${
+        profiles.length
+          ? profiles.map((profile, index) => profileBubble(kind, profile, index, profiles.length)).join('')
+          : '<p class="empty small">No profiles yet — add one so requests know which quality and folder to use.</p>'
+      }
+    </div>
+    ${profiles.map((profile, index) => profileDialog(kind, label, options, profile, index)).join('')}
     ${profileDialog(kind, label, options)}
+  </div>`
+}
+
+/** One service: its connection form and its profile bubbles, side by side. */
+function servicePanel(kind, label, settings, options) {
+  const service = serviceSummary(kind)
+
+  return `<section class="panel service-panel">
+    <div class="service-head">
+      <span class="service-icon">${serviceIcon(kind)}</span>
+      <h2>${label}</h2>
+      <span class="badge badge-${service.enabled ? 'approved' : 'pending'}">${service.enabled ? 'enabled' : 'disabled'}</span>
+    </div>
+    <form method="post" action="/settings" class="stack">
+      <input type="hidden" name="settingsSection" value="integrations" />
+      <input type="hidden" name="settingsTab" value="integrations" />
+      <input type="hidden" name="${kind}EnabledSubmitted" value="1" />
+      <label class="checkbox">
+        <input type="checkbox" name="${kind}Enabled" ${service.enabled ? 'checked' : ''} />
+        <span>Enable ${label} integration</span>
+      </label>
+      <label>Base URL
+        <input type="url" name="${kind}Url" value="${escapeHtml(
+          settings[`services.${kind}.url`]
+        )}" placeholder="http://192.168.1.20:8989" />
+      </label>
+      <label>API key
+        <input type="password" name="${kind}ApiKey" value="${escapeHtml(
+          settings[`services.${kind}.apiKey`]
+        )}" autocomplete="off" />
+      </label>
+      <div class="request-actions">
+        <button class="btn btn-sm" type="submit">Save</button>
+        <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/options/${kind}">Load folders and profiles</button>
+        <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/test/${kind}">Save and test connection</button>
+      </div>
+    </form>
+    ${profileStrip(kind, label, options)}
   </section>`
+}
+
+function plexPanel(settings) {
+  const plex = plexSettings()
+
+  return `<fieldset class="panel">
+    <legend>Plex <span class="badge badge-${plex.enabled ? 'approved' : 'pending'}">${
+      plex.enabled ? 'enabled' : 'disabled'
+    }</span></legend>
+    <form method="post" action="/settings" class="stack">
+      <input type="hidden" name="settingsSection" value="integrations" />
+      <input type="hidden" name="settingsTab" value="integrations" />
+      <input type="hidden" name="plexEnabledSubmitted" value="1" />
+      <label class="checkbox">
+        <input type="checkbox" name="plexEnabled" ${plex.enabled ? 'checked' : ''} />
+        <span>Enable Plex integration</span>
+      </label>
+      <label>Plex URL
+        <input type="url" name="plexUrl" value="${escapeHtml(settings['plex.url'])}" placeholder="http://192.168.1.20:32400" />
+      </label>
+      <label>Plex token
+        <input type="password" name="plexToken" value="${escapeHtml(settings['plex.token'])}" autocomplete="off" />
+      </label>
+      <p class="muted small">Used to check that a title really is in Plex and to link cards straight to playback. The token is the
+        <code>X-Plex-Token</code> value in any Plex item's <code>Get Info → View XML</code> link.</p>
+      <div class="request-actions">
+        <button class="btn btn-sm" type="submit">Save</button>
+        <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/test/plex">Save and test connection</button>
+      </div>
+    </form>
+  </fieldset>`
 }
 
 function userRow(member, actor) {
@@ -749,12 +1053,11 @@ function settingsBody({ user, settings, users, audit, options, tab, notice, erro
       <input type="hidden" name="settingsSection" value="integrations" />
       <input type="hidden" name="settingsTab" value="integrations" />
       ${generalPanel}
-      ${serviceFields('radarr', 'Radarr', settings, options)}
-      ${serviceFields('sonarr', 'Sonarr', settings, options)}
-      <button class="btn" type="submit">Save integration settings</button>
+      <button class="btn" type="submit">Save general settings</button>
     </form>
-    ${profilePanel('radarr', 'Radarr', options)}
-    ${profilePanel('sonarr', 'Sonarr', options)}`
+    ${servicePanel('radarr', 'Radarr', settings, options)}
+    ${servicePanel('sonarr', 'Sonarr', settings, options)}
+    ${plexPanel(settings)}`
 
   const usersTab = `<h2>Users</h2>
     <div class="user-list">${users.map((member) => userRow(member, user)).join('')}</div>
@@ -947,8 +1250,21 @@ function settingsFromBody(body) {
     if (body.tmdbRegion !== undefined) input.tmdbRegion = body.tmdbRegion
   }
 
-  if (section === 'integrations') {
+  // Only the general form carries the policy checkbox; saving a service must
+  // not read an absent checkbox as "turn auto-approve off".
+  if (section === 'integrations' && body.appName !== undefined) {
     input.autoApprove = body.autoApprove !== undefined
+  }
+
+  if (
+    body.plexUrl !== undefined ||
+    body.plexToken !== undefined ||
+    body.plexEnabledSubmitted !== undefined
+  ) {
+    input.plex = {}
+    if (body.plexUrl !== undefined) input.plex.url = body.plexUrl
+    if (body.plexToken !== undefined) input.plex.token = body.plexToken
+    if (body.plexEnabledSubmitted !== undefined) input.plex.enabled = body.plexEnabled !== undefined
   }
 
   if (section === 'notifications') {
@@ -1064,6 +1380,13 @@ export function registerPageRoutes(router) {
         const found = query ? await searchTmdb(query, type) : await trendingTmdb(type)
         source = 'tmdb'
         items = found.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
+        // Seeded rows have no artwork; the first browse fills it in from TMDB so
+        // posters keep working on later visits without another lookup.
+        for (const { item, local } of items) {
+          if (local && !local.posterPath && item.posterPath) {
+            store.setMediaArtwork(local.id, item.posterPath, item.backdropPath ?? null)
+          }
+        }
       } catch (tmdbError) {
         error = `TMDB unavailable, showing the local catalog: ${tmdbError.message}`
       }
@@ -1073,7 +1396,65 @@ export function registerPageRoutes(router) {
       title: 'Discover',
       user,
       active: 'discover',
-      body: discoverBody({ user, type, query, source, items, error }),
+      body: discoverBody({ user, type, query, source, items, error, plex: await plexEntries() }),
+    })
+  })
+
+  router.get('/networks', async ({ req, res, url }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const networkId = url.searchParams.get('network')
+    render(res, 200, {
+      title: 'Networks',
+      user,
+      active: 'discover',
+      body: await networksBody({ networkId, plex: await plexEntries() }),
+    })
+  })
+
+  router.get('/studios', async ({ req, res, url }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const studioId = url.searchParams.get('studio')
+    render(res, 200, {
+      title: 'Studios',
+      user,
+      active: 'discover',
+      body: await studiosBody({ studioId, plex: await plexEntries() }),
+    })
+  })
+
+  router.get('/genres/:mediaType', async ({ req, res, url, params }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const mediaType =
+      params.mediaType === MediaType.MOVIE || params.mediaType === MediaType.TV ? params.mediaType : null
+    if (!mediaType) throw new HttpError(404, 'Unknown genre list')
+
+    render(res, 200, {
+      title: mediaType === MediaType.MOVIE ? 'Movie Genres' : 'Series Genres',
+      user,
+      active: 'discover',
+      body: await genresBody({
+        mediaType,
+        genreId: url.searchParams.get('genre'),
+        plex: await plexEntries(),
+      }),
+    })
+  })
+
+  router.get('/recommendations', async ({ req, res }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    render(res, 200, {
+      title: 'Recommendations',
+      user,
+      active: 'discover',
+      body: await recommendationsBody({ user, plex: await plexEntries() }),
     })
   })
 
@@ -1104,6 +1485,7 @@ export function registerPageRoutes(router) {
           details,
           notice: url.searchParams.get('notice'),
           error: url.searchParams.get('err'),
+          plex: plexEntryFor(await plexEntries(), media.mediaType, media.tmdbId),
         }),
       })
     } catch (error) {
@@ -1143,6 +1525,7 @@ export function registerPageRoutes(router) {
           details,
           notice: url.searchParams.get('notice'),
           error: url.searchParams.get('err'),
+          plex: plexEntryFor(await plexEntries(), mediaType, tmdbId),
         }),
       })
     } catch (error) {
@@ -1341,6 +1724,9 @@ export function registerPageRoutes(router) {
 
     try {
       updateSettings(settingsFromBody(body), actor)
+      if (body.plexUrl !== undefined || body.plexToken !== undefined || body.plexEnabledSubmitted !== undefined) {
+        forgetPlex()
+      }
       const tab = ['integrations', 'users', 'notifications', 'logs', 'tasks'].includes(body.settingsTab)
         ? body.settingsTab
         : 'integrations'
@@ -1353,15 +1739,36 @@ export function registerPageRoutes(router) {
   router.post('/settings/test/:kind', async ({ req, res, params }) => {
     const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
 
-    if (!['sonarr', 'radarr'].includes(params.kind)) {
+    if (!['sonarr', 'radarr', 'plex'].includes(params.kind)) {
       return redirect(res, withMessage('/settings', 'err', 'Unknown service'))
     }
 
     try {
       updateSettings(settingsFromBody(await readBody(req)), actor)
-      forgetServiceOptions(params.kind)
+      if (params.kind === 'plex') forgetPlex()
+      else forgetServiceOptions(params.kind)
     } catch (error) {
       return failure(res, '/settings', error)
+    }
+
+    if (params.kind === 'plex') {
+      const plexResult = await testPlexConnection()
+
+      return render(res, 200, {
+        title: 'Settings',
+        user: actor,
+        active: 'settings',
+        body: settingsBody({
+          user: actor,
+          settings: store.getSettings(),
+          users: store.listUsers(),
+          audit: store.listAudit(30),
+          options: await loadOptionsForPage(),
+          tab: 'integrations',
+          notice: plexResult.ok ? plexResult.detail : null,
+          error: plexResult.ok ? null : plexResult.error,
+        }),
+      })
     }
 
     const result = await testServiceConnection(params.kind)
@@ -1470,6 +1877,36 @@ export function registerPageRoutes(router) {
       redirect(
         res,
         withMessage('/settings?tab=integrations', 'notice', `Profile "${String(body.name ?? '').trim()}" added`)
+      )
+    } catch (error) {
+      failure(res, '/settings?tab=integrations', error)
+    }
+  })
+
+  router.post('/settings/profiles/:kind/edit', async ({ req, res, params }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+
+    if (!['sonarr', 'radarr'].includes(params.kind)) {
+      return redirect(res, withMessage('/settings?tab=integrations', 'err', 'Unknown service'))
+    }
+
+    const body = await readBody(req)
+
+    try {
+      editServiceProfile(
+        params.kind,
+        body.originalName,
+        {
+          name: body.name,
+          qualityProfile: body.profileSelect,
+          rootFolder: body.rootFolder,
+          isDefault: body.makeDefault !== undefined,
+        },
+        actor
+      )
+      redirect(
+        res,
+        withMessage('/settings?tab=integrations', 'notice', `Profile "${String(body.name ?? '').trim()}" saved`)
       )
     } catch (error) {
       failure(res, '/settings?tab=integrations', error)

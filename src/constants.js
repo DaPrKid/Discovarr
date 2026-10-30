@@ -98,6 +98,10 @@ export const SETTING_DEFAULTS = Object.freeze({
   'services.radarr.qualityProfiles': '',
   'services.radarr.profiles': '',
 
+  'plex.enabled': 'false',
+  'plex.url': '',
+  'plex.token': '',
+
   'sync.intervalMinutes': '30',
 
   'notifications.webhookUrl': '',

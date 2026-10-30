@@ -141,26 +141,37 @@ function requestAction(item, local, returnTo) {
   </form>`
 }
 
-export function mediaCard(item, { returnTo = '/', local = null } = {}) {
+export function mediaCard(item, { returnTo = '/', local = null, plex = null } = {}) {
   const entry = local ?? (item.id ? item : null)
-  const mediaType = entry?.mediaType ?? item.mediaType
+  // A seeded or imported row can lack artwork while TMDB has it; prefer the
+  // local record but borrow the poster rather than falling back to initials.
+  const view = { ...(entry ?? item) }
+  if (!view.posterPath && item?.posterPath) view.posterPath = item.posterPath
+
+  const mediaType = view.mediaType ?? item.mediaType
   const meta =
     mediaType === MediaType.TV
-      ? `Series${(entry?.seasonsCount ?? item.seasonsCount) ? ` · ${entry?.seasonsCount ?? item.seasonsCount} seasons` : ''}`
-      : `Movie${(entry?.runtime ?? item.runtime) ? ` · ${entry?.runtime ?? item.runtime} min` : ''}`
+      ? `Series${view.seasonsCount ? ` · ${view.seasonsCount} seasons` : ''}`
+      : `Movie${view.runtime ? ` · ${view.runtime} min` : ''}`
 
-  const year = (entry?.releaseDate ?? item.releaseDate)?.slice(0, 4)
+  const year = view.releaseDate?.slice(0, 4)
   // Every card opens a detail page: the local record when it exists, otherwise
   // the TMDB-backed page for a title that has not been requested yet.
   const href = entry ? `/media/${entry.id}` : `/title/${mediaType}/${item.tmdbId}`
-  const title = escapeHtml(entry?.title ?? item.title)
+  const title = escapeHtml(view.title ?? item.title)
 
   return `<article class="media-card">
-    <a href="${href}" class="poster-link">${poster(entry ?? item)}</a>
+    <a href="${href}" class="poster-link">${poster(view)}${
+      plex ? '<span class="plex-ribbon" title="Available on Plex">Plex</span>' : ''
+    }</a>
     <div class="media-body">
       <a class="media-title" href="${href}">${title}</a>
       <p class="media-meta">${escapeHtml(meta)}${year ? ` · ${escapeHtml(year)}` : ''}</p>
-      <div class="media-actions">${requestAction(item, entry, returnTo)}</div>
+      <div class="media-actions">${requestAction(item, entry, returnTo)}${
+        plex
+          ? `<a class="btn btn-sm btn-plex" href="${escapeHtml(plex.playUrl)}" target="_blank" rel="noreferrer noopener">▶ Play on Plex</a>`
+          : ''
+      }</div>
     </div>
   </article>`
 }

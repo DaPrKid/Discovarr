@@ -270,6 +270,13 @@ export function setMediaStatus(id, status) {
   db.prepare('UPDATE media SET status = ? WHERE id = ?').run(status, Number(id))
 }
 
+/** Fills artwork on a title that was seeded or imported without it. */
+export function setMediaArtwork(id, posterPath, backdropPath = null) {
+  db.prepare(
+    'UPDATE media SET poster_path = ?, backdrop_path = COALESCE(?, backdrop_path) WHERE id = ?'
+  ).run(posterPath ?? null, backdropPath ?? null, Number(id))
+}
+
 export function setMediaExternalId(id, externalId) {
   db.prepare('UPDATE media SET external_id = ? WHERE id = ?').run(externalId ?? null, Number(id))
 }

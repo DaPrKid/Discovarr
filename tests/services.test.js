@@ -22,6 +22,7 @@ const ARR_ROUTES = {
 
 let server
 let arr
+let plex
 let baseUrl
 let dataDir
 let adminCookie
@@ -97,6 +98,40 @@ before(async () => {
   await new Promise((resolve) => arr.listen(arrPort, '127.0.0.1', resolve))
   arr.url = `http://127.0.0.1:${arrPort}`
 
+  // A stand-in Plex: identity, two libraries and one item in each, so the app
+  // can prove a download is playable and build a deep link for it.
+  plex = createHttpServer((req, res) => {
+    if (req.headers['x-plex-token'] !== 'plex-token') {
+      res.writeHead(401, { 'content-type': 'application/json' })
+      return res.end('{"error":"unauthorized"}')
+    }
+
+    const body =
+      req.url === '/'
+        ? { MediaContainer: { version: '1.40.1', machineIdentifier: 'machine-1' } }
+        : req.url === '/library/sections'
+          ? {
+              MediaContainer: {
+                Directory: [
+                  { key: '1', type: 'movie', title: 'Movies' },
+                  { key: '2', type: 'show', title: 'TV Shows' },
+                ],
+              },
+            }
+          : req.url.startsWith('/library/sections/1/all')
+            ? { MediaContainer: { Metadata: [{ ratingKey: '501', Guid: [{ id: 'tmdb://693134' }] }] } }
+            : req.url.startsWith('/library/sections/2/all')
+              ? { MediaContainer: { Metadata: [{ ratingKey: '601', Guid: [{ id: 'tmdb://95396' }] }] } }
+              : null
+
+    res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(body ?? {}))
+  })
+
+  const plexPort = await freePort()
+  await new Promise((resolve) => plex.listen(plexPort, '127.0.0.1', resolve))
+  plex.url = `http://127.0.0.1:${plexPort}`
+
   dataDir = mkdtempSync(join(tmpdir(), 'discovarr-services-test-'))
   const port = await freePort()
   baseUrl = `http://127.0.0.1:${port}`
@@ -132,6 +167,7 @@ before(async () => {
 after(() => {
   server?.kill('SIGTERM')
   arr?.close()
+  plex?.close()
   if (dataDir) rmSync(dataDir, { recursive: true, force: true })
 })
 
@@ -162,7 +198,9 @@ test('the same click pulls root folders and quality profiles', async () => {
   assert.match(html, /1 root folder\(s\) and 2 profile\(s\) loaded/)
   assert.match(html, /data-dialog-open="profile-radarr"/)
   assert.match(html, /Add profile/)
-  // The add-profile dialog is filled with what the service reported.
+  // Profiles sit in the Radarr panel as bubbles, and the add dialog is filled
+  // with what the service reported.
+  assert.match(html, /class="profile-bubble is-default"/)
   assert.match(html, /<select name="profileSelect" required>/)
   assert.match(html, /<option value="5\|Ultra-HD">/)
   assert.match(html, /<option value="\/movies">\/movies<\/option>/)
@@ -176,10 +214,13 @@ test('the same click pulls root folders and quality profiles', async () => {
 test('the settings page fills its dropdowns without another click', async () => {
   const html = await (await fetch(`${baseUrl}/settings`, { headers: { cookie: adminCookie } })).text()
 
-  // The stored default is shown as a profile, and the add-profile dialog offers
-  // the live quality profiles and root folders from Radarr.
-  assert.match(html, /<strong>HD-1080p<\/strong> <span class="badge badge-approved">default<\/span>/)
-  assert.match(html, /<option value="4\|HD-1080p">/)
+  // The stored default is a bubble with edit and delete buttons, and the
+  // dialogs offer the live quality profiles and root folders from Radarr.
+  assert.match(html, /profile-bubble is-default/)
+  assert.match(html, /<strong>HD-1080p<\/strong>/)
+  assert.match(html, /aria-label="Edit HD-1080p"/)
+  assert.match(html, /aria-label="Delete HD-1080p"/)
+  assert.match(html, /<option value="4\|HD-1080p" selected>/)
   assert.match(html, /<option value="5\|Ultra-HD">/)
   assert.match(html, /<option value="\/movies">\/movies<\/option>/)
 })
@@ -335,4 +376,69 @@ test('notification settings survive saving another tab', async () => {
   const afterIntegrations = await settings()
   assert.equal(afterIntegrations.raw['notifications.webhookUrl'], 'https://example.com/hook')
   assert.equal(afterIntegrations.raw['services.radarr.url'], arr.url)
+})
+
+test('a profile can be edited in place', async () => {
+  const response = await postForm('/settings/profiles/radarr/edit', {
+    originalName: 'Kids HD',
+    name: 'Kids 4K',
+    profileSelect: '4|HD-1080p',
+    rootFolder: '/movies-kids',
+  })
+  assert.equal(response.status, 303)
+
+  const { service } = await settings()
+  const edited = service.profiles.find((profile) => profile.name === 'Kids 4K')
+  assert.ok(edited, 'the renamed profile should still be listed')
+  assert.equal(edited.profileId, 4)
+  assert.equal(edited.profileName, 'HD-1080p')
+  assert.equal(edited.isDefault, true, 'the edited profile keeps its default flag')
+
+  const page = await (await fetch(`${baseUrl}/settings?tab=integrations`, { headers: { cookie: adminCookie } })).text()
+  assert.match(page, /Kids 4K/)
+  assert.match(page, /data-dialog-open="profile-radarr-\d+"/)
+})
+
+test('Plex availability is checked and linked from the cards', async () => {
+  const tested = await (await postForm('/settings/test/plex', {
+    settingsSection: 'integrations',
+    settingsTab: 'integrations',
+    plexEnabledSubmitted: '1',
+    plexEnabled: 'on',
+    plexUrl: plex.url,
+    plexToken: 'plex-token',
+  })).text()
+
+  assert.match(tested, /Plex 1\.40\.1 is reachable/)
+
+  // Dune (tmdb 693134) is seeded and reported by the stand-in Plex.
+  const catalog = await (await fetch(`${baseUrl}/api/v1/media`, { headers: { cookie: adminCookie } })).json()
+  const dune = (catalog.results ?? []).find((item) => item.tmdbId === 693134)
+  assert.ok(dune, 'the seeded catalog should hold Dune')
+
+  const discover = await (await fetch(`${baseUrl}/`, { headers: { cookie: adminCookie } })).text()
+  assert.match(discover, /Play on Plex/)
+  assert.match(discover, /app\.plex\.tv\/desktop\/#!\/server\/machine-1/)
+
+  const detail = await (await fetch(`${baseUrl}/media/${dune.id}`, { headers: { cookie: adminCookie } })).text()
+  assert.match(detail, /On Plex/)
+  assert.match(detail, /library%2Fmetadata%2F501/)
+})
+
+test('Discover carries the browse sidebar and pages degrade without TMDB', async () => {
+  const discover = await (await fetch(`${baseUrl}/`, { headers: { cookie: adminCookie } })).text()
+
+  assert.match(discover, /class="browse-nav"/)
+  assert.match(discover, /href="\/networks"/)
+  assert.match(discover, /href="\/studios"/)
+  assert.match(discover, /href="\/genres\/movie"/)
+  assert.match(discover, /href="\/genres\/tv"/)
+  assert.match(discover, /href="\/recommendations"/)
+
+  for (const path of ['/networks', '/studios', '/genres/movie', '/genres/tv', '/recommendations']) {
+    const response = await fetch(`${baseUrl}${path}`, { headers: { cookie: adminCookie } })
+    const html = await response.text()
+    assert.equal(response.status, 200, `${path} should render without a TMDB key`)
+    assert.match(html, /TMDB API key/, `${path} should explain the missing key`)
+  }
 })

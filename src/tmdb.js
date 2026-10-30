@@ -106,6 +106,145 @@ export async function tmdbDetails(mediaType, tmdbId) {
   return normalizeTmdbItem(raw, mediaType)
 }
 
+// ---------------------------------------------------------------------------
+// Browsing: networks, studios and genres
+// ---------------------------------------------------------------------------
+
+// TMDB ids for the networks and studios worth a shelf. A wrong id simply yields
+// no titles on that shelf, which is why the shelf list is filtered below.
+const NETWORKS = Object.freeze([
+  { id: 213, name: 'Netflix' },
+  { id: 49, name: 'HBO' },
+  { id: 1024, name: 'Amazon Prime Video' },
+  { id: 2739, name: 'Disney+' },
+  { id: 2552, name: 'Apple TV+' },
+  { id: 453, name: 'Hulu' },
+  { id: 174, name: 'AMC' },
+  { id: 88, name: 'FX' },
+  { id: 67, name: 'Showtime' },
+  { id: 6, name: 'NBC' },
+  { id: 16, name: 'CBS' },
+  { id: 2, name: 'ABC' },
+  { id: 71, name: 'The CW' },
+  { id: 4, name: 'BBC One' },
+])
+
+const STUDIOS = Object.freeze([
+  { id: 420, name: 'Marvel Studios' },
+  { id: 3, name: 'Pixar' },
+  { id: 2, name: 'Walt Disney Pictures' },
+  { id: 174, name: 'Warner Bros. Pictures' },
+  { id: 33, name: 'Universal Pictures' },
+  { id: 4, name: 'Paramount Pictures' },
+  { id: 5, name: 'Columbia Pictures' },
+  { id: 127928, name: '20th Century Studios' },
+  { id: 41077, name: 'A24' },
+  { id: 1632, name: 'Lionsgate' },
+  { id: 10342, name: 'Studio Ghibli' },
+  { id: 521, name: 'DreamWorks Pictures' },
+])
+
+const browseCache = new Map()
+const BROWSE_TTL_MS = 10 * 60 * 1000
+
+/** Browsing shelves change slowly; caching them keeps page loads quick. */
+async function cachedJson(key, loader) {
+  const hit = browseCache.get(key)
+  if (hit && Date.now() - hit.at < BROWSE_TTL_MS) return hit.value
+
+  const value = await loader()
+  browseCache.set(key, { at: Date.now(), value })
+  return value
+}
+
+/** Titles for one network, studio or genre through the discover endpoint. */
+export async function discoverTitles(mediaType, params = {}, limit = 24) {
+  const query = { include_adult: 'false', page: 1, sort_by: 'popularity.desc', ...params }
+  const key = `discover:${mediaType}:${JSON.stringify(query)}`
+
+  const data = await cachedJson(key, () => tmdbGet(`/discover/${mediaType}`, query))
+
+  return (data.results ?? [])
+    .map((item) => normalizeTmdbItem(item, mediaType))
+    .filter(Boolean)
+    .slice(0, limit)
+}
+
+export async function networkShelves(limit = 12) {
+  const shelves = await Promise.all(
+    NETWORKS.map(async (network) => ({
+      ...network,
+      items: await discoverTitles(MediaType.TV, { with_networks: network.id }, limit).catch(() => []),
+    }))
+  )
+
+  return shelves.filter((shelf) => shelf.items.length > 0)
+}
+
+export function networkById(id) {
+  return NETWORKS.find((network) => String(network.id) === String(id)) ?? null
+}
+
+export async function studioShelves(limit = 12) {
+  const shelves = await Promise.all(
+    STUDIOS.map(async (studio) => ({
+      ...studio,
+      items: await discoverTitles(MediaType.MOVIE, { with_companies: studio.id }, limit).catch(() => []),
+    }))
+  )
+
+  return shelves.filter((shelf) => shelf.items.length > 0)
+}
+
+export function studioById(id) {
+  return STUDIOS.find((studio) => String(studio.id) === String(id)) ?? null
+}
+
+export async function genreList(mediaType) {
+  const data = await cachedJson(`genres:${mediaType}`, () => tmdbGet(`/genre/${mediaType}/list`))
+  return (data.genres ?? []).map((genre) => ({ id: genre.id, name: genre.name })).filter((genre) => genre.id)
+}
+
+/**
+ * Recommendations seeded by the titles a user already asked for. Falls back to
+ * popular titles for a brand new account, so the page is never empty.
+ */
+export async function recommendedTitles(seeds = [], limit = 30) {
+  const lists = await Promise.all(
+    seeds.slice(0, 3).map(async (seed) => {
+      const data = await cachedJson(`recommendations:${seed.mediaType}:${seed.tmdbId}`, () =>
+        tmdbGet(`/${seed.mediaType}/${seed.tmdbId}/recommendations`)
+      )
+      return (data.results ?? []).map((item) => normalizeTmdbItem(item, seed.mediaType)).filter(Boolean)
+    })
+  )
+
+  const seen = new Set()
+  const merged = []
+
+  for (const item of lists.flat()) {
+    const key = `${item.mediaType}:${item.tmdbId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(item)
+  }
+
+  if (merged.length > 0) return merged.slice(0, limit)
+
+  const [movies, series] = await Promise.all([
+    discoverTitles(MediaType.MOVIE, {}, Math.ceil(limit / 2)),
+    discoverTitles(MediaType.TV, {}, Math.ceil(limit / 2)),
+  ])
+
+  const mixed = []
+  for (let index = 0; index < Math.max(movies.length, series.length); index += 1) {
+    if (movies[index]) mixed.push(movies[index])
+    if (series[index]) mixed.push(series[index])
+  }
+
+  return mixed.slice(0, limit)
+}
+
 /** Region used for the "where to watch" block, set on the settings page. */
 export function watchRegion() {
   return String(getSetting('tmdb.region') ?? 'US').trim().toUpperCase() || 'US'

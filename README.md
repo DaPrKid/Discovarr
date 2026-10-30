@@ -81,6 +81,8 @@ bootstrapping, which is only useful for demos.
   data via TMDB). Titles nobody has requested yet get a page too.
 - **Settings tabs** — Integrations, Users, Notifications, Logs and Tasks, so the
   page stays readable as features grow. Signing in always opens Discover.
+- **Browse** — a sidebar on Discover for Networks, Studios, Movie Genres, Series
+  Genres and Recommendations (seeded by the titles you actually request).
 - **Requests** — movies or individual seasons, duplicate and already-available
   protection, pagination and status filters.
 - **Approval workflow** — `pending → approved → completed`, or `declined` /
@@ -88,8 +90,13 @@ bootstrapping, which is only useful for demos.
   `partly available`, `available`.
 - **Named profiles** — each Radarr/Sonarr profile pairs a name with a quality
   profile and a root folder, so "4K Movies" and "Kids" can point at different
-  libraries. One profile is the default; requesters pick another per title.
-  Approval dispatches with the chosen profile's quality and folder.
+  libraries. Profiles sit as bubbles inside the Radarr/Sonarr panel, each with
+  an edit and a delete button; one is the default and requesters pick another
+  per title. Approval dispatches with the chosen profile's quality and folder.
+- **Plex** — point it at your Plex server and every card Plex can play is marked
+  *Plex* with a **Play on Plex** button that opens the item in Plex Web. This
+  checks the actual library, so a download that *arr reports but Plex lacks is
+  not advertised as watchable.
 - **Dispatch on approval** — approving adds the title to Radarr/Sonarr. Failures
   mark the request `failed` with the service's error, and can be retried.
 - **Library sync** — every N minutes (default 30) the app reads the Radarr/Sonarr
@@ -115,17 +122,26 @@ saves the settings, checks the service and, in the same click, pulls its root
 folders and quality profiles. The first folder and profile are stored as the
 default profile when the service has none yet.
 
-**Add profile** opens a dialog with a name, the quality profile to use, the root
-folder for that profile, and a *make this the default* checkbox. Profiles are
-listed per service with their quality profile, root folder and default badge;
-**Make default** and **Delete** sit on each row. The last profile cannot be
-deleted.
+Profiles are bubbles inside the Radarr and Sonarr panels: the service icon, the
+name, its quality profile and root folder, and two buttons — the pencil edits the
+bubble, the bin deletes it. **+ Add profile** opens a dialog with a name, the
+quality profile to use, the root folder, and a *make this the default* checkbox;
+the edit dialog is the same form, pre-filled, and can promote a profile to
+default. The last profile cannot be deleted.
 
 When more than one profile exists the title page shows a profile select, and the
 choice is stored on the request, so approval dispatches with that profile's
 quality profile and root folder. Requests without a pick use the default.
 Settings saved before profiles existed are read as a single default profile, so
 nothing needs re-entering after an upgrade.
+
+### Plex
+
+Enter the Plex URL (`http://192.168.1.20:32400`), the token and press **Save and
+test connection**. The token is the `X-Plex-Token` value in any item's
+`Get Info → View XML` link in Plex Web. Matching is by TMDB id, so it works with
+either the new Plex agent or the legacy one, and the deep link opens
+`app.plex.tv` on the right server and item.
 
 ## Running as a specific user (Unraid, LinuxServer-style)
 
@@ -137,7 +153,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.4.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.5.0
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -214,6 +230,7 @@ discovarr/
     ├── core.js           # lifecycle, quotas, permissions, dispatch, audit
     ├── sync.js           # library reconciliation + scheduler
     ├── services.js       # Radarr/Sonarr client
+    ├── plex.js           # Plex library check and deep links
     ├── tmdb.js           # metadata client
     ├── images.js         # cached artwork proxy
     ├── notifications.js  # webhooks
@@ -234,8 +251,10 @@ exercises login, permissions, quotas, request/approval/dispatch, retry,
 pagination, password change, CSRF rejection and the image proxy guard. The
 services suite runs a stand-in Radarr that rejects a wrong API key and records
 the POST it receives, which covers connection testing, folder and profile
-loading, named profiles, dispatch with a non-default profile's root folder, the
-tabbed settings page and sign-in landing on Discover.
+loading, named profiles (adding, editing and dispatching with a non-default one),
+the tabbed settings page and sign-in landing on Discover. A stand-in Plex
+provides an identity, two libraries and one item, which covers the availability
+badge, the play deep link and the browse sidebar.
 
 ## Limitations
 
