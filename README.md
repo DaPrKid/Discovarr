@@ -83,6 +83,9 @@ bootstrapping, which is only useful for demos.
   page stays readable as features grow. Signing in always opens Discover.
 - **Browse** — a sidebar on Discover for Networks, Studios, Movie Genres, Series
   Genres and Recommendations (seeded by the titles you actually request).
+- **Search that answers while you type** — Discover suggests matches with
+  posters, year and availability as you type, keyboard-navigable, and the plain
+  search form still submits when JavaScript is off.
 - **Requests** — movies or individual seasons, duplicate and already-available
   protection, pagination and status filters.
 - **Approval workflow** — `pending → approved → completed`, or `declined` /
@@ -153,7 +156,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.5.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.6.0
 ```
 
 If you prefer to run the process without root at all, start the container with
