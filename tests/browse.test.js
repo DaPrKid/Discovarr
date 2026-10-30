@@ -200,26 +200,30 @@ test('the stylesheet keeps the wide sidebar, the old poster size and the rail', 
   assert.match(css, /\.browse-nav \{[\s\S]*?padding: 16px 14px 18px;/)
   assert.match(css, /\.discover \{[\s\S]*?grid-template-columns: 252px minmax\(0, 1fr\);/)
   assert.match(css, /\.grid \{\n  display: grid;\n  grid-template-columns: repeat\(auto-fill, minmax\(148px, 1fr\)\);/)
-  assert.match(css, /\.logo-wall \{/)
+  assert.match(css, /\.page:has\(> \.discover\) \{\n  max-width: none;/)
+  assert.match(css, /\.discover\.has-rail \{\n  grid-template-columns: 252px minmax\(0, 1fr\) 252px;/)
   assert.match(css, /\.filter-rail \{/)
   assert.match(css, /\.toggle input:checked \+ span \{/)
   assert.match(css, /\.person-head \{/)
 })
 
-test('networks show a logo wall and a filter panel per network', async () => {
+test('the networks page opens onto titles and filters from the rail', async () => {
   const index = await (await page('/networks')).text()
-  assert.ok((index.match(/class="logo-tile"/g) ?? []).length >= 25, 'the wall should list every network')
-  assert.match(index, /\/img\/w154\/network-213\.png/)
-  assert.match(index, /Netflix/)
-  assert.match(index, /See all →/)
+  assert.match(index, /class="filter-rail"/)
+  assert.match(index, /name="network" value="213"/)
+  assert.match(index, /class="media-card"/)
+  assert.match(index, /Page 1 of 2/)
+  assert.doesNotMatch(index, /class="logo-wall"|class="logo-tile"/)
 
   const netflix = await (await page('/networks?network=213')).text()
   assert.match(netflix, /class="filter-rail"/)
   assert.match(netflix, /name="network" value="213" checked/)
   assert.match(netflix, /name="genre" value="18"/)
+  assert.match(netflix, /name="kind" value="anime"/)
   assert.match(netflix, /name="rating"/)
   assert.match(netflix, /name="votes"/)
   assert.match(netflix, /name="sort"/)
+  assert.match(netflix, /brand-logo/)
   assert.match(netflix, /Apply filters/)
   assert.match(netflix, /Page 1 of 2/)
 
@@ -241,29 +245,18 @@ test('networks show a logo wall and a filter panel per network', async () => {
   assert.equal(discover.query.sort_by, 'vote_average.desc')
 })
 
-test('the discover filter panel narrows the grid and switches to discover', async () => {
-  const html = await (await page('/?type=movie&genre=28&rating=8')).text()
-  assert.match(html, /class="filter-rail"/)
-  assert.match(html, /name="genre" value="28" checked/)
-  assert.match(html, /name="type" value="movie" checked/)
-  assert.match(html, /name="studio"/)
-  assert.match(html, /Page 1 of 2/)
-  assert.match(html, /class="media-card"/)
-
-  const discover = lastRequest('/3/discover/movie')
-  assert.equal(discover.query.with_genres, '28')
-  assert.equal(discover.query['vote_average.gte'], '8')
-  assert.equal(discover.query.sort_by, 'popularity.desc')
-})
-
-test('studios mirror the network page with their own toggles', async () => {
+test('the studios page shares the rail and sends studio filters', async () => {
   const index = await (await page('/studios')).text()
-  assert.ok((index.match(/class="logo-tile"/g) ?? []).length >= 15)
-  assert.match(index, /\/img\/w154\/studio-420\.png/)
-  assert.match(index, /Marvel Studios/)
+  assert.match(index, /class="filter-rail"/)
+  assert.match(index, /name="studio" value="420"/)
+  assert.match(index, /class="media-card"/)
+  assert.doesNotMatch(index, /class="logo-wall"|class="logo-tile"/)
+
+  const single = await (await page('/studios?studio=420')).text()
+  assert.match(single, /brand-logo/)
+  assert.match(single, /<h1>Marvel Studios<\/h1>/)
 
   const marvel = await (await page('/studios?studio=420&studio=3&sort=upcoming&genre=28')).text()
-  assert.match(marvel, /class="filter-rail"/)
   assert.match(marvel, /name="studio" value="420" checked/)
   assert.match(marvel, /name="studio" value="3" checked/)
   assert.match(marvel, /name="genre" value="28" checked/)
@@ -278,28 +271,43 @@ test('studios mirror the network page with their own toggles', async () => {
 
 test('genre pages list titles and combine a multi-select', async () => {
   const index = await (await page('/genres/movie')).text()
-  assert.match(index, /chip-link[^>]*genre=28/)
-  assert.match(index, /class="shelf"/)
+  assert.match(index, /class="filter-rail"/)
+  assert.match(index, /name="genre" value="28"/)
   assert.match(index, /class="media-card"/)
-  assert.match(index, /See all →/)
+  assert.doesNotMatch(index, /class="chip-link|class="shelf"/)
 
   const action = await (await page('/genres/movie?genre=28')).text()
   assert.match(action, /<h1>Action<\/h1>/)
-  assert.match(action, /class="filter-rail"/)
   assert.match(action, /name="genre" value="28" checked/)
   assert.match(action, /Page 1 of 2/)
 
   const both = await (await page('/genres/movie?genre=28&genre=35')).text()
   assert.match(both, /Action \+ Comedy/)
 
-  // The genre shelves on the index already cached this query, so look for it
-  // among every request rather than only the most recent one.
   assert.ok(
     tmdb.requests.some(
       (request) => request.path === '/3/discover/movie' && request.query.with_genres === '28,35'
     ),
     'a multi-select should ask TMDB for both genres'
   )
+})
+
+test('content types cover anime separately from animation', async () => {
+  const anime = await (await page('/genres/tv?kind=anime')).text()
+  assert.match(anime, /name="kind" value="anime" checked/)
+  assert.match(anime, /<h1>Anime<\/h1>/)
+
+  const keyword = lastRequest('/3/discover/tv')
+  assert.equal(keyword.query.with_keywords, '210024')
+  assert.equal(keyword.query.with_genres, undefined)
+
+  await page('/?type=movie&kind=animation')
+  assert.equal(lastRequest('/3/discover/movie').query.with_genres, '16')
+
+  // Reality is a series-only switch, so a film page drops it rather than asking
+  // TMDB for a genre that does not exist there.
+  const realityOnFilm = await (await page('/?type=movie&kind=reality')).text()
+  assert.doesNotMatch(realityOnFilm, /name="kind" value="reality"/)
 })
 
 test('a title page links its cast to a person page with their credits', async () => {

@@ -43,27 +43,23 @@ import {
   testServiceConnection,
 } from './services.js'
 import {
+  CONTENT_TYPE_IDS,
+  contentTypeOptions,
   discoverPage,
   discoverQuery,
   genreList,
-  genreShelves,
-  networkById,
-  networkDirectory,
   networkOptions,
-  networkShelves,
   networkWithLogo,
   personDetails,
   recommendedTitles,
   searchPage,
   searchTmdb,
-  studioById,
-  studioDirectory,
   studioOptions,
-  studioShelves,
   studioWithLogo,
   titleDetails,
   tmdbConfigured,
   trendingPage,
+  TYPE_GENRE_IDS,
 } from './tmdb.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
@@ -251,6 +247,12 @@ function parseIds(value) {
   return [...new Set(parts.map((part) => part.trim()).filter((part) => /^\d+$/.test(part)))]
 }
 
+/** Content-type switches (?kind=anime) are named, not numbered. */
+function parseKinds(value) {
+  const parts = [].concat(value ?? []).flatMap((entry) => String(entry).split(','))
+  return [...new Set(parts.map((part) => part.trim()).filter((part) => CONTENT_TYPE_IDS.has(part)))]
+}
+
 /** Reads the right-hand filter panel out of the query string. */
 function filtersFromParams(params) {
   const number = (key, min, max) => {
@@ -260,6 +262,7 @@ function filtersFromParams(params) {
 
   const language = String(params.get('lang') ?? '')
   return {
+    kinds: parseKinds(params.getAll('kind')),
     genres: parseIds(params.getAll('genre')),
     networks: parseIds(params.getAll('network')),
     studios: parseIds(params.getAll('studio')),
@@ -274,6 +277,7 @@ function filtersFromParams(params) {
 
 function hasFilters(filters) {
   return Boolean(
+    filters.kinds.length ||
     filters.genres.length ||
       filters.networks.length ||
       filters.studios.length ||
@@ -288,6 +292,7 @@ function hasFilters(filters) {
 /** The filter state as query parameters, for page links and the pager. */
 function filterParams(filters) {
   return {
+    kind: filters.kinds.join(','),
     genre: filters.genres.join(','),
     network: filters.networks.join('|'),
     studio: filters.studios.join('|'),
@@ -341,49 +346,12 @@ function mediaGrid(items, { returnTo = '/', plex = {} } = {}) {
     .join('')}</div>`
 }
 
-/** One browsable row: a network, studio or genre and the titles it made. */
-function shelf(title, items, href, plex, { logoPath = null } = {}) {
-  if (!items.length) return ''
-
-  const logo = logoPath
-    ? `<img class="shelf-logo" src="${escapeHtml(artwork(logoPath, 'w154'))}" alt="" loading="lazy" />`
-    : ''
-
-  return `<section class="shelf">
-    <div class="shelf-head">
-      <div class="shelf-title">${logo}<h2>${escapeHtml(title)}</h2></div>
-      <a class="inline-link" href="${escapeHtml(href)}">See all →</a>
-    </div>
-    <div class="shelf-row">${items
-      .map((item) =>
-        mediaCard(item, {
-          returnTo: href,
-          local: store.getMediaByTmdb(item.tmdbId, item.mediaType),
-          plex: plexFor(plex, item.mediaType, item.tmdbId),
-        })
-      )
-      .join('')}</div>
-  </section>`
-}
-
 function brandLogo(name, logoPath) {
   const inner = logoPath
     ? `<img src="${escapeHtml(artwork(logoPath, 'w154'))}" alt="${escapeHtml(name)} logo" loading="lazy" />`
     : `<span class="logo-fallback">${escapeHtml(initials(name))}</span>`
 
   return `<span class="brand-logo">${inner}</span>`
-}
-
-function logoTile(name, logoPath, href) {
-  const inner = logoPath
-    ? `<img src="${escapeHtml(artwork(logoPath, 'w154'))}" alt="" loading="lazy" />`
-    : `<span class="logo-fallback">${escapeHtml(initials(name))}</span>`
-
-  return `<a class="logo-tile" href="${escapeHtml(href)}">
-    ${inner}
-    <span>${escapeHtml(name)}</span>
-    <em>See all →</em>
-  </a>`
 }
 
 function toggleField(name, value, label, checked) {
@@ -439,6 +407,7 @@ function filterRail({
   genres,
   networks = [],
   studios = [],
+  types = [],
   typeSwitch = false,
   clearHref,
 }) {
@@ -494,7 +463,17 @@ function filterRail({
       <a class="rail-clear" href="${escapeHtml(clearHref ?? action)}">Clear all</a>
     </div>
     ${typeRow}
-    ${railGroup('Genres', filters.genres.length, true, toggleList('genre', genres, filters.genres))}
+    ${railGroup('Type', filters.kinds.length, filters.kinds.length > 0, toggleList('kind', types, filters.kinds))}
+    ${railGroup(
+      'Genres',
+      filters.genres.length,
+      true,
+      toggleList(
+        'genre',
+        genres.filter((genre) => !TYPE_GENRE_IDS.has(Number(genre.id))),
+        filters.genres
+      )
+    )}
     ${brandGroup}
     ${railGroup('Advanced', advancedCount, advancedCount > 0, advanced)}
     <button class="btn btn-sm rail-apply" type="submit">Apply filters</button>
@@ -513,6 +492,7 @@ async function discoverRail(mediaType, filters) {
     genres,
     networks: networkOptions(),
     studios: studioOptions(),
+    types: contentTypeOptions(mediaType),
     typeSwitch: true,
     clearHref: '/',
   })
@@ -611,223 +591,78 @@ function discoverBody({
   )
 }
 
-async function networksBody({ filters, page = 1, plex }) {
-  if (!tmdbConfigured()) return discoverLayout('networks', browseUnavailable('Networks'))
-
-  const networks = networkOptions()
-
-  if (filters.networks.length) {
-    const chosen = filters.networks
-      .map((id) => networks.find((network) => String(network.id) === String(id)))
-      .filter(Boolean)
-    const primary = chosen[0] ?? { id: Number(filters.networks[0]), name: 'Selected networks' }
-    const network = await networkWithLogo(primary)
-    const genres = await genreList(MediaType.TV).catch(() => [])
-    const result = await discoverPage(MediaType.TV, discoverQuery(MediaType.TV, filters, filters.sort), {
-      page,
-      sort: filters.sort,
-    })
-    const names = chosen.map((entry) => entry.name)
-    const genreNames = genres
-      .filter((genre) => filters.genres.some((id) => String(id) === String(genre.id)))
-      .map((genre) => genre.name)
-    const subject = genreNames.length ? `${genreNames.join(' + ')} series` : 'Series'
-    const subtitle = names.length ? `${subject} from ${names.join(', ')}.` : `${subject}.`
-
-    return discoverLayout(
-      'networks',
-      `<a class="back" href="/networks">← All networks</a>
-      <div class="brand-head">
-        ${brandLogo(network.name, network.logoPath)}
-        <div>
-          <h1>${escapeHtml(names.length ? names.join(' + ') : network.name)}</h1>
-          <p class="muted">${escapeHtml(subtitle)}</p>
-        </div>
-      </div>
-      ${mediaGrid(result.items, { returnTo: browseHref('/networks', filterParams(filters)), plex })}
-      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/networks', params: filterParams(filters) })}`,
-      filterRail({
-        action: '/networks',
-        mediaType: MediaType.TV,
-        filters,
-        genres,
-        networks,
-        clearHref: '/networks',
-      })
-    )
-  }
-
-  const [directory, rows] = await Promise.all([networkDirectory(), networkShelves(10, 8)])
-
-  return discoverLayout(
-    'networks',
-    `<div class="page-head">
-      <div>
-        <h1>Networks</h1>
-        <p class="muted">All ${directory.length} networks and streaming services. Open one for its
-          popular, recently released and upcoming series.</p>
-      </div>
-    </div>
-    <div class="logo-wall">${directory
-      .map((network) => logoTile(network.name, network.logoPath, browseHref('/networks', { network: network.id })))
-      .join('')}</div>
-    ${
-      rows.length
-        ? `<h2 class="section-title">Popular on each network</h2>${rows
-            .map((row) =>
-              shelf(row.name, row.items, browseHref('/networks', { network: row.id }), plex, {
-                logoPath: row.logoPath,
-              })
-            )
-            .join('')}`
-        : '<p class="empty">TMDB returned no networks just now.</p>'
-    }`
-  )
-}
-
-async function studiosBody({ filters, page = 1, plex }) {
-  if (!tmdbConfigured()) return discoverLayout('studios', browseUnavailable('Studios'))
-
-  const studios = studioOptions()
-
-  if (filters.studios.length) {
-    const chosen = filters.studios
-      .map((id) => studios.find((studio) => String(studio.id) === String(id)))
-      .filter(Boolean)
-    const primary = chosen[0] ?? { id: Number(filters.studios[0]), name: 'Selected studios' }
-    const studio = await studioWithLogo(primary)
-    const genres = await genreList(MediaType.MOVIE).catch(() => [])
-    const result = await discoverPage(MediaType.MOVIE, discoverQuery(MediaType.MOVIE, filters, filters.sort), {
-      page,
-      sort: filters.sort,
-    })
-    const names = chosen.map((entry) => entry.name)
-    const genreNames = genres
-      .filter((genre) => filters.genres.some((id) => String(id) === String(genre.id)))
-      .map((genre) => genre.name)
-    const subject = genreNames.length ? `${genreNames.join(' + ')} films` : 'Films'
-    const subtitle = names.length ? `${subject} from ${names.join(', ')}.` : `${subject}.`
-
-    return discoverLayout(
-      'studios',
-      `<a class="back" href="/studios">← All studios</a>
-      <div class="brand-head">
-        ${brandLogo(studio.name, studio.logoPath)}
-        <div>
-          <h1>${escapeHtml(names.length ? names.join(' + ') : studio.name)}</h1>
-          <p class="muted">${escapeHtml(subtitle)}</p>
-        </div>
-      </div>
-      ${mediaGrid(result.items, { returnTo: browseHref('/studios', filterParams(filters)), plex })}
-      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/studios', params: filterParams(filters) })}`,
-      filterRail({
-        action: '/studios',
-        mediaType: MediaType.MOVIE,
-        filters,
-        genres,
-        studios,
-        clearHref: '/studios',
-      })
-    )
-  }
-
-  const [directory, rows] = await Promise.all([studioDirectory(), studioShelves(10, 8)])
-
-  return discoverLayout(
-    'studios',
-    `<div class="page-head">
-      <div>
-        <h1>Studios</h1>
-        <p class="muted">All ${directory.length} studios. Open one for its popular, recently
-          released and upcoming films.</p>
-      </div>
-    </div>
-    <div class="logo-wall">${directory
-      .map((studio) => logoTile(studio.name, studio.logoPath, browseHref('/studios', { studio: studio.id })))
-      .join('')}</div>
-    ${
-      rows.length
-        ? `<h2 class="section-title">Popular from each studio</h2>${rows
-            .map((row) =>
-              shelf(row.name, row.items, browseHref('/studios', { studio: row.id }), plex, {
-                logoPath: row.logoPath,
-              })
-            )
-            .join('')}`
-        : '<p class="empty">TMDB returned no studios just now.</p>'
-    }`
-  )
-}
-
-async function genresBody({ mediaType, filters, page = 1, plex }) {
+/**
+ * The shared browse page for networks, studios and genre lists. The old pages
+ * printed a wall of every logo or genre above the results; those lists now live
+ * in the right-hand rail as toggles, so the grid gets the whole page.
+ */
+async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, plex }) {
   const isMovie = mediaType === MediaType.MOVIE
-  const key = isMovie ? 'movie-genres' : 'tv-genres'
-  const label = isMovie ? 'Movie Genres' : 'Series Genres'
+  const label =
+    browse === 'networks' ? 'Networks' : browse === 'studios' ? 'Studios' : isMovie ? 'Movie genres' : 'Series genres'
 
-  if (!tmdbConfigured()) return discoverLayout(key, browseUnavailable(label))
+  if (!tmdbConfigured()) return discoverLayout(browse, browseUnavailable(label))
 
-  const genres = await genreList(mediaType)
-  const chosen = filters.genres
-    .map((id) => genres.find((genre) => String(genre.id) === String(id)))
+  const genres = await genreList(mediaType).catch(() => [])
+  const types = contentTypeOptions(mediaType)
+  const brands = isMovie ? studioOptions() : networkOptions()
+  const brandIds = isMovie ? filters.studios : filters.networks
+
+  const brandNames = brandIds
+    .map((id) => brands.find((brand) => String(brand.id) === String(id))?.name)
     .filter(Boolean)
-  const rail = filterRail({
-    action: `/genres/${mediaType}`,
-    mediaType,
-    filters,
-    genres,
-    networks: networkOptions(),
-    studios: studioOptions(),
-    clearHref: `/genres/${mediaType}`,
+  const genreNames = genres
+    .filter((genre) => filters.genres.some((id) => String(id) === String(genre.id)))
+    .map((genre) => genre.name)
+  const typeNames = types.filter((type) => filters.kinds.includes(type.id)).map((type) => type.name)
+
+  const leading = [...typeNames, ...genreNames]
+  const noun = isMovie ? 'Films' : 'Series'
+  const title = brandNames.length ? brandNames.join(' + ') : leading.length ? leading.join(' + ') : label
+  const subtitle = brandNames.length
+    ? `${leading.length ? `${leading.join(' + ')} ${noun.toLowerCase()}` : noun} from ${brandNames.join(', ')}.`
+    : leading.length
+      ? `${noun} in ${leading.join(' + ')}.`
+      : `Every ${isMovie ? 'film' : 'series'} we can find, most popular first — narrow it with the panel on the right.`
+
+  const brand = brandIds.length === 1 ? brands.find((entry) => String(entry.id) === String(brandIds[0])) : null
+  const logo = brand ? await (isMovie ? studioWithLogo : networkWithLogo)(brand) : null
+
+  const result = await discoverPage(mediaType, discoverQuery(mediaType, filters, filters.sort), {
+    page,
+    sort: filters.sort,
   })
 
-  if (chosen.length) {
-    const names = chosen.map((genre) => genre.name)
-    const noun = isMovie ? 'Films' : 'Series'
-    const result = await discoverPage(mediaType, discoverQuery(mediaType, filters, filters.sort), {
-      page,
-      sort: filters.sort,
-    })
-
-    return discoverLayout(
-      key,
-      `<a class="back" href="/genres/${mediaType}">← All ${label.toLowerCase()}</a>
-      <div class="page-head">
+  const head = logo
+    ? `<div class="brand-head">
+        ${brandLogo(logo.name, logo.logoPath)}
         <div>
-          <h1>${escapeHtml(names.join(' + '))}</h1>
-          <p class="muted">${
-            names.length > 1 ? `${noun} in any of these genres.` : `${noun} in ${escapeHtml(names[0])}.`
-          }</p>
+          <h1>${escapeHtml(title)}</h1>
+          <p class="muted">${escapeHtml(subtitle)}</p>
         </div>
-      </div>
-      ${mediaGrid(result.items, { returnTo: browseHref(`/genres/${mediaType}`, filterParams(filters)), plex })}
-      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: `/genres/${mediaType}`, params: filterParams(filters) })}`,
-      rail
-    )
-  }
-
-  const rows = await genreShelves(mediaType)
+      </div>`
+    : `<div class="page-head">
+        <div>
+          <h1>${escapeHtml(title)}</h1>
+          <p class="muted">${escapeHtml(subtitle)}</p>
+        </div>
+      </div>`
 
   return discoverLayout(
-    key,
-    `<div class="page-head">
-      <div>
-        <h1>${label}</h1>
-        <p class="muted">Pick a genre for its most popular titles, or scroll through a few below.</p>
-      </div>
-    </div>
-    <div class="chips">${genres
-      .map(
-        (genre) =>
-          `<a class="chip-link" href="${escapeHtml(browseHref(`/genres/${mediaType}`, { genre: genre.id }))}">${escapeHtml(genre.name)}</a>`
-      )
-      .join('')}</div>
-    ${
-      rows.length
-        ? rows
-            .map((row) => shelf(row.name, row.items, browseHref(`/genres/${mediaType}`, { genre: row.id }), plex))
-            .join('')
-        : '<p class="empty">TMDB returned no genres just now.</p>'
-    }`
+    browse,
+    `${head}
+    ${mediaGrid(result.items, { returnTo: browseHref(basePath, filterParams(filters)), plex })}
+    ${pagination({ page: result.page, totalPages: result.totalPages, basePath, params: filterParams(filters) })}`,
+    filterRail({
+      action: basePath,
+      mediaType,
+      filters,
+      genres,
+      networks: networkOptions(),
+      studios: studioOptions(),
+      types,
+      clearHref: basePath,
+    })
   )
 }
 
@@ -1992,7 +1827,10 @@ export function registerPageRoutes(router) {
       title: 'Networks',
       user,
       active: 'discover',
-      body: await networksBody({
+      body: await catalogueBody({
+        browse: 'networks',
+        basePath: '/networks',
+        mediaType: MediaType.TV,
         filters: filtersFromParams(url.searchParams),
         page: pageNumber(url.searchParams.get('page')),
         plex: await plexEntries(),
@@ -2008,7 +1846,10 @@ export function registerPageRoutes(router) {
       title: 'Studios',
       user,
       active: 'discover',
-      body: await studiosBody({
+      body: await catalogueBody({
+        browse: 'studios',
+        basePath: '/studios',
+        mediaType: MediaType.MOVIE,
         filters: filtersFromParams(url.searchParams),
         page: pageNumber(url.searchParams.get('page')),
         plex: await plexEntries(),
@@ -2028,7 +1869,9 @@ export function registerPageRoutes(router) {
       title: mediaType === MediaType.MOVIE ? 'Movie Genres' : 'Series Genres',
       user,
       active: 'discover',
-      body: await genresBody({
+      body: await catalogueBody({
+        browse: mediaType === MediaType.MOVIE ? 'movie-genres' : 'tv-genres',
+        basePath: `/genres/${mediaType}`,
         mediaType,
         filters: filtersFromParams(url.searchParams),
         page: pageNumber(url.searchParams.get('page')),

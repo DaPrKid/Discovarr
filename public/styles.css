@@ -820,13 +820,18 @@ code {
 
 /* --- browse sidebar, shelves, profile bubbles, Plex --------------------- */
 
+/* Browse pages run to the window edges so the sidebars sit at the edges and the
+   poster grid gets every spare pixel in between. */
+.page:has(> .discover) {
+  max-width: none;
+  padding: 24px 14px 64px;
+}
+
 .discover {
   display: grid;
   grid-template-columns: 252px minmax(0, 1fr);
-  gap: 30px;
+  gap: 24px;
   align-items: start;
-  /* Pull the sidebar towards the edge of the viewport, not the page gutter. */
-  margin-left: -24px;
 }
 
 .browse-nav {
@@ -1441,15 +1446,13 @@ code {
 @media (max-width: 1180px) {
   .discover {
     grid-template-columns: 224px minmax(0, 1fr);
-    gap: 22px;
-    margin-left: 0;
+    gap: 20px;
   }
 }
 
 @media (max-width: 760px) {
   .discover {
     grid-template-columns: minmax(0, 1fr);
-    margin-left: 0;
   }
 
   .brand-head {
@@ -1471,8 +1474,8 @@ code {
 /* --- right-hand filter panel -------------------------------------------- */
 
 .discover.has-rail {
-  grid-template-columns: 252px minmax(0, 1fr) 268px;
-  gap: 24px;
+  grid-template-columns: 252px minmax(0, 1fr) 252px;
+  gap: 20px;
 }
 
 .filter-rail {
@@ -1647,7 +1650,7 @@ code {
   justify-content: center;
 }
 
-@media (max-width: 1400px) {
+@media (max-width: 1200px) {
   .discover.has-rail {
     grid-template-columns: 224px minmax(0, 1fr);
   }

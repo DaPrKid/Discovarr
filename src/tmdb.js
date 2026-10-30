@@ -191,6 +191,35 @@ const STUDIOS = Object.freeze([
   { id: 1, name: 'Lucasfilm' },
 ])
 
+/**
+ * Content types that TMDB has no single genre for. Anime is a keyword, not a
+ * genre, which is why it gets its own switch instead of being folded into
+ * Animation. The rest are genres that read better as "type of show" than as a
+ * genre, so they move into their own group in the rail.
+ */
+const CONTENT_TYPES = Object.freeze([
+  { id: 'anime', name: 'Anime', keyword: 210024 },
+  { id: 'animation', name: 'Animation', genre: 16 },
+  { id: 'documentary', name: 'Documentary', genre: 99 },
+  { id: 'reality', name: 'Reality', genre: 10764, tvOnly: true },
+  { id: 'kids', name: 'Kids', genre: 10762, tvOnly: true },
+  { id: 'talk', name: 'Talk show', genre: 10767, tvOnly: true },
+])
+
+/** Genre ids owned by the content-type switches, hidden from the genre list. */
+export const TYPE_GENRE_IDS = new Set(CONTENT_TYPES.filter((type) => type.genre).map((type) => type.genre))
+
+/** Names of every content switch, used to validate the query string. */
+export const CONTENT_TYPE_IDS = new Set(CONTENT_TYPES.map((type) => type.id))
+
+/** The content-type switches that make sense for one media type. */
+export function contentTypeOptions(mediaType) {
+  return CONTENT_TYPES.filter((type) => !type.tvOnly || mediaType === MediaType.TV).map((type) => ({
+    id: type.id,
+    name: type.name,
+  }))
+}
+
 const browseCache = new Map()
 const BROWSE_TTL_MS = 10 * 60 * 1000
 
@@ -239,8 +268,18 @@ export function discoverQuery(mediaType, filters = {}, sort = 'popular') {
   const query = { ...browseSort(mediaType, sort) }
   const ids = (list) => (Array.isArray(list) ? list.map(String).filter((id) => /^\d+$/.test(id)) : [])
 
-  const genres = ids(filters.genres)
-  if (genres.length) query.with_genres = genres.join(',')
+  // Content switches feed the same genre field, plus a keyword for anime.
+  const genres = new Set(ids(filters.genres))
+  const keywords = []
+  for (const type of CONTENT_TYPES) {
+    if (!(filters.kinds ?? []).includes(type.id)) continue
+    if (type.tvOnly && !isTv) continue
+    if (type.genre) genres.add(String(type.genre))
+    if (type.keyword) keywords.push(String(type.keyword))
+  }
+
+  if (genres.size) query.with_genres = [...genres].join(',')
+  if (keywords.length) query.with_keywords = keywords.join(',')
 
   // TMDB only accepts networks on television and companies on films, so a
   // stray filter for the wrong media type is dropped instead of sent.
@@ -312,62 +351,9 @@ export async function studioWithLogo(studio) {
   return { ...studio, logoPath: await logoPathFor('company', studio.id) }
 }
 
-/** Every network we know, with its logo, for the logo wall. */
-export function networkDirectory() {
-  return Promise.all(NETWORKS.map(networkWithLogo))
-}
-
-export async function networkShelves(limit = 10, count = NETWORKS.length) {
-  const shelves = await Promise.all(
-    NETWORKS.slice(0, count).map(async (network) => ({
-      ...(await networkWithLogo(network)),
-      items: await discoverTitles(MediaType.TV, { with_networks: network.id }, limit).catch(() => []),
-    }))
-  )
-
-  return shelves.filter((shelf) => shelf.items.length > 0)
-}
-
-export function networkById(id) {
-  return NETWORKS.find((network) => String(network.id) === String(id)) ?? null
-}
-
-/** Every studio we know, with its logo, for the logo wall. */
-export function studioDirectory() {
-  return Promise.all(STUDIOS.map(studioWithLogo))
-}
-
-export async function studioShelves(limit = 10, count = STUDIOS.length) {
-  const shelves = await Promise.all(
-    STUDIOS.slice(0, count).map(async (studio) => ({
-      ...(await studioWithLogo(studio)),
-      items: await discoverTitles(MediaType.MOVIE, { with_companies: studio.id }, limit).catch(() => []),
-    }))
-  )
-
-  return shelves.filter((shelf) => shelf.items.length > 0)
-}
-
-export function studioById(id) {
-  return STUDIOS.find((studio) => String(studio.id) === String(id)) ?? null
-}
-
 export async function genreList(mediaType) {
   const data = await cachedJson(`genres:${mediaType}`, () => tmdbGet(`/genre/${mediaType}/list`))
   return (data.genres ?? []).map((genre) => ({ id: genre.id, name: genre.name })).filter((genre) => genre.id)
-}
-
-/** The busiest genres up front, each with a shelf of titles. */
-export async function genreShelves(mediaType, { count = 8, limit = 10 } = {}) {
-  const genres = (await genreList(mediaType)).slice(0, count)
-  const shelves = await Promise.all(
-    genres.map(async (genre) => ({
-      ...genre,
-      items: await discoverTitles(mediaType, { with_genres: genre.id }, limit).catch(() => []),
-    }))
-  )
-
-  return shelves.filter((shelf) => shelf.items.length > 0)
 }
 
 /**
