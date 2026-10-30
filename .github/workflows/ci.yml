@@ -47,14 +47,17 @@ jobs:
           echo "--- entrypoint output ---"
           docker logs discovarr-ci
 
-      - name: The app runs as 99:100, not root
+      - name: The app process runs as 99:100, not root
         run: |
           set -euo pipefail
-          ids=$(docker exec discovarr-ci id)
-          echo "$ids"
-          echo "$ids" | grep -q 'uid=99'
-          echo "$ids" | grep -q 'gid=100'
-          docker exec discovarr-ci sh -c 'test "$(id -u)" = 99 && test "$(id -g)" = 100'
+          # `docker exec` starts a new process as the image's default user (root),
+          # so it cannot observe the drop. su-exec replaces the entrypoint, which
+          # makes PID 1 the app itself.
+          docker exec discovarr-ci cat /proc/1/status > "$RUNNER_TEMP/proc1.txt"
+          grep -E '^(Name|Uid|Gid):' "$RUNNER_TEMP/proc1.txt"
+          test "$(awk '/^Uid:/{print $2}' "$RUNNER_TEMP/proc1.txt")" = 99
+          test "$(awk '/^Gid:/{print $2}' "$RUNNER_TEMP/proc1.txt")" = 100
+          docker logs discovarr-ci 2>&1 | grep -q 'starting as 99:100'
 
       - name: /data belongs to 99:100 and the database landed there
         run: |

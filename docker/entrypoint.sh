@@ -20,6 +20,7 @@ if [ "$(id -u)" = "0" ]; then
 
   # Unraid-style group-writable files.
   umask 002
+  echo "[entrypoint] starting as $PUID:$PGID"
   exec su-exec "$PUID:$PGID" "$@"
 fi
 
