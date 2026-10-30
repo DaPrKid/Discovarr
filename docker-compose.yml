@@ -1,0 +1,25 @@
+services:
+  discovarr:
+    build:
+      context: .
+    image: discovarr:local
+    container_name: discovarr
+    ports:
+      - "5055:5055"
+    environment:
+      PORT: "5055"
+      DATABASE_FILE: /data/discovarr.db
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@discovarr.local}
+      # Override before exposing the instance: docker compose up with
+      # ADMIN_PASSWORD=... in .env or the shell environment.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-now}
+      SEED_DEMO_USER: "true"
+      # Unraid defaults: nobody (99) / users (100). Override with PUID/PGID.
+      PUID: ${PUID:-99}
+      PGID: ${PGID:-100}
+    volumes:
+      - discovarr-data:/data
+    restart: unless-stopped
+
+volumes:
+  discovarr-data:
