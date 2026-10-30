@@ -21,19 +21,19 @@ It is a self-contained implementation inspired by the domain model of
 ## Quick start
 
 ```bash
-# then open http://localhost:5055 and create the administrator
+# then open http://localhost:5057 and create the administrator
 docker compose up --build
 ```
 
 ```bash
 # plain Docker
 docker build -t discovarr .
-docker run --rm -p 5055:5055 -v discovarr-data:/data discovarr
+docker run --rm -p 5057:5057 -v discovarr-data:/data discovarr
 ```
 
 ```bash
 # without Docker
-npm start          # http://localhost:5055, database in ./data
+npm start          # http://localhost:5057, database in ./data
 npm test           # end-to-end HTTP tests
 ```
 
@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.3.0
+docker pull ghcr.io/daprkid/discovarr:0.3.1
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -106,10 +106,10 @@ The container starts as root, fixes ownership of `/data`, then runs the app as
 without manual `chown`:
 
 ```bash
-docker run -d --name discovarr -p 5060:5055 \
+docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.3.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.3.1
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -120,7 +120,7 @@ created with `umask 002` so the group can write them.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `5055` | Listen port |
+| `PORT` | `5057` | Listen port |
 | `HOST` | `0.0.0.0` | Listen address |
 | `DATABASE_FILE` | `./data/discovarr.db` | SQLite file (image: `/data/discovarr.db`) |
 | `IMAGE_CACHE_DIR` | `<database dir>/images` | TMDB artwork cache |

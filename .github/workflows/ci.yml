@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/data"
           docker run -d --name discovarr-ci \
-            -p 5055:5055 \
+            -p 5057:5057 \
             -e PUID=99 -e PGID=100 \
             -e ADMIN_PASSWORD=ci-password-not-secret \
             -v "$RUNNER_TEMP/data:/data" \
@@ -69,7 +69,7 @@ jobs:
           docker exec discovarr-ci test -f /data/discovarr.db
 
       - name: HTTP health endpoint answers
-        run: curl -fsS http://127.0.0.1:5055/api/v1/health
+        run: curl -fsS http://127.0.0.1:5057/api/v1/health
 
       - name: Docker HEALTHCHECK reaches healthy
         run: |

@@ -5,9 +5,9 @@ services:
     image: discovarr:local
     container_name: discovarr
     ports:
-      - "5055:5055"
+      - "5057:5057"
     environment:
-      PORT: "5055"
+      PORT: "5057"
       DATABASE_FILE: /data/discovarr.db
       # Optional hands-off bootstrap. Leave ADMIN_PASSWORD empty and the first
       # administrator is created in the browser at /setup on first start.

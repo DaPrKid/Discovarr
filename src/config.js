@@ -8,7 +8,7 @@ function bool(value, fallback) {
 const databaseFile = process.env.DATABASE_FILE ?? './data/discovarr.db'
 
 export const config = {
-  port: Number(process.env.PORT ?? 5055),
+  port: Number(process.env.PORT ?? 5057),
   host: process.env.HOST ?? '0.0.0.0',
   databaseFile,
   // TMDB artwork is cached next to the database so it survives restarts.
