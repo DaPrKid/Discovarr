@@ -180,6 +180,17 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           if (!form.contains(event.target)) close()
         })
       })()
+
+      // The filter panel applies as soon as a toggle or menu changes; the
+      // Apply button keeps it usable (and submit-only) without this script.
+      ;(function () {
+        var panel = document.querySelector('form.filter-rail[data-filter-form]')
+        if (!panel) return
+        panel.addEventListener('change', function (event) {
+          var field = event.target
+          if (field.matches('input[type=checkbox], input[type=radio], select')) panel.requestSubmit()
+        })
+      })()
     </script>
   </body>
 </html>`

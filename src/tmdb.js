@@ -221,7 +221,52 @@ export function browseSort(mediaType, sort = 'popular') {
     return { sort_by: `${dateField}.asc`, [`${dateField}.gte`]: today }
   }
 
+  if (sort === 'rating') {
+    return { sort_by: 'vote_average.desc', 'vote_count.gte': '200' }
+  }
+
   return { sort_by: 'popularity.desc' }
+}
+
+/**
+ * TMDB discover parameters for the filter panel. Genres, networks and studios
+ * combine with OR (a comma for genres, a pipe for the others), and the year
+ * bounds override the date window implied by the chosen sort.
+ */
+export function discoverQuery(mediaType, filters = {}, sort = 'popular') {
+  const isTv = mediaType === MediaType.TV
+  const dateField = isTv ? 'first_air_date' : 'primary_release_date'
+  const query = { ...browseSort(mediaType, sort) }
+  const ids = (list) => (Array.isArray(list) ? list.map(String).filter((id) => /^\d+$/.test(id)) : [])
+
+  const genres = ids(filters.genres)
+  if (genres.length) query.with_genres = genres.join(',')
+
+  // TMDB only accepts networks on television and companies on films, so a
+  // stray filter for the wrong media type is dropped instead of sent.
+  const networks = isTv ? ids(filters.networks) : []
+  if (networks.length) query.with_networks = networks.join('|')
+
+  const studios = isTv ? [] : ids(filters.studios)
+  if (studios.length) query.with_companies = studios.join('|')
+
+  if (filters.from) query[`${dateField}.gte`] = `${filters.from}-01-01`
+  if (filters.to) query[`${dateField}.lte`] = `${filters.to}-12-31`
+  if (filters.rating) query['vote_average.gte'] = String(filters.rating)
+  if (filters.votes) query['vote_count.gte'] = String(filters.votes)
+  if (filters.language) query.with_original_language = filters.language
+
+  return query
+}
+
+/** The networks offered as toggles in the filter panel. */
+export function networkOptions() {
+  return NETWORKS.map((network) => ({ ...network }))
+}
+
+/** The studios offered as toggles in the filter panel. */
+export function studioOptions() {
+  return STUDIOS.map((studio) => ({ ...studio }))
 }
 
 /** One paged slice of /discover for a network, studio or genre. */
@@ -425,4 +470,40 @@ export function normalizeTmdbDetails(raw, mediaType) {
 export async function titleDetails(mediaType, tmdbId) {
   const raw = await tmdbGet(`/${mediaType}/${tmdbId}`, { append_to_response: 'credits,watch/providers' })
   return normalizeTmdbDetails(raw, mediaType)
+}
+
+/** Everything one person page needs: biography plus every credited title. */
+export async function personDetails(id) {
+  const raw = await cachedJson(`person:${id}`, () =>
+    tmdbGet(`/person/${id}`, { append_to_response: 'combined_credits' })
+  )
+
+  const seen = new Set()
+  const credits = []
+
+  for (const credit of raw.combined_credits?.cast ?? []) {
+    const mediaType =
+      credit.media_type === MediaType.TV || credit.media_type === MediaType.MOVIE ? credit.media_type : null
+    if (!mediaType) continue
+    const item = normalizeTmdbItem(credit, mediaType)
+    if (!item) continue
+    const key = `${item.mediaType}:${item.tmdbId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    credits.push({ ...item, character: credit.character ?? '' })
+  }
+
+  credits.sort((left, right) => String(right.releaseDate ?? '').localeCompare(String(left.releaseDate ?? '')))
+
+  return {
+    id: raw.id,
+    name: raw.name ?? 'Unknown',
+    biography: raw.biography ?? '',
+    birthday: raw.birthday ?? null,
+    deathday: raw.deathday ?? null,
+    placeOfBirth: raw.place_of_birth ?? null,
+    knownFor: raw.known_for_department ?? null,
+    profilePath: raw.profile_path ?? null,
+    credits,
+  }
 }

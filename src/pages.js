@@ -44,17 +44,21 @@ import {
 } from './services.js'
 import {
   discoverPage,
+  discoverQuery,
   genreList,
   genreShelves,
   networkById,
   networkDirectory,
+  networkOptions,
   networkShelves,
   networkWithLogo,
+  personDetails,
   recommendedTitles,
   searchPage,
   searchTmdb,
   studioById,
   studioDirectory,
+  studioOptions,
   studioShelves,
   studioWithLogo,
   titleDetails,
@@ -189,6 +193,40 @@ const SORT_TABS = Object.freeze([
   ['popular', 'Popular'],
   ['new', 'Recently released'],
   ['upcoming', 'Upcoming'],
+  ['rating', 'Highest rated'],
+])
+
+const LANGUAGES = Object.freeze([
+  ['', 'Any language'],
+  ['en', 'English'],
+  ['es', 'Spanish'],
+  ['fr', 'French'],
+  ['de', 'German'],
+  ['it', 'Italian'],
+  ['ja', 'Japanese'],
+  ['ko', 'Korean'],
+  ['hi', 'Hindi'],
+  ['pt', 'Portuguese'],
+  ['zh', 'Chinese'],
+  ['sv', 'Swedish'],
+  ['da', 'Danish'],
+  ['no', 'Norwegian'],
+])
+
+const RATINGS = Object.freeze([
+  ['', 'Any rating'],
+  ['6', '6 or more'],
+  ['7', '7 or more'],
+  ['8', '8 or more'],
+  ['9', '9 or more'],
+])
+
+const VOTES = Object.freeze([
+  ['', 'Any votes'],
+  ['100', '100+ votes'],
+  ['500', '500+ votes'],
+  ['1000', '1,000+ votes'],
+  ['5000', '5,000+ votes'],
 ])
 
 // Titles per page in the Discover and browse grids.
@@ -201,6 +239,65 @@ function sortKey(value) {
 function pageNumber(value) {
   const page = Number.parseInt(String(value ?? ''), 10)
   return Number.isFinite(page) && page > 0 ? page : 1
+}
+
+/**
+ * Multi-select filters arrive either repeated (?genre=18&genre=35, straight
+ * from the toggles) or joined (?genre=18,35 from the pager), so both shapes
+ * are flattened into one list of ids.
+ */
+function parseIds(value) {
+  const parts = [].concat(value ?? []).flatMap((entry) => String(entry).split(/[,|]/))
+  return [...new Set(parts.map((part) => part.trim()).filter((part) => /^\d+$/.test(part)))]
+}
+
+/** Reads the right-hand filter panel out of the query string. */
+function filtersFromParams(params) {
+  const number = (key, min, max) => {
+    const value = Number.parseInt(String(params.get(key) ?? ''), 10)
+    return Number.isFinite(value) && value >= min && value <= max ? value : null
+  }
+
+  const language = String(params.get('lang') ?? '')
+  return {
+    genres: parseIds(params.getAll('genre')),
+    networks: parseIds(params.getAll('network')),
+    studios: parseIds(params.getAll('studio')),
+    from: number('from', 1900, 2100),
+    to: number('to', 1900, 2100),
+    rating: number('rating', 0, 10),
+    votes: number('votes', 0, 100000),
+    language: /^[a-z]{2}$/.test(language) ? language : '',
+    sort: sortKey(params.get('sort')),
+  }
+}
+
+function hasFilters(filters) {
+  return Boolean(
+    filters.genres.length ||
+      filters.networks.length ||
+      filters.studios.length ||
+      filters.from ||
+      filters.to ||
+      filters.rating ||
+      filters.votes ||
+      filters.language
+  )
+}
+
+/** The filter state as query parameters, for page links and the pager. */
+function filterParams(filters) {
+  return {
+    genre: filters.genres.join(','),
+    network: filters.networks.join('|'),
+    studio: filters.studios.join('|'),
+    sort: filters.sort === 'popular' ? '' : filters.sort,
+    from: filters.from ?? '',
+    to: filters.to ?? '',
+    rating: filters.rating ?? '',
+    votes: filters.votes ?? '',
+    lang: filters.language,
+  }
 }
 
 /** Builds a query string, dropping empty values so links stay tidy. */
@@ -224,8 +321,8 @@ function browseNav(browse) {
   </aside>`
 }
 
-function discoverLayout(browse, body) {
-  return `<div class="discover">${browseNav(browse)}<div class="discover-main">${body}</div></div>`
+function discoverLayout(browse, body, rail = '') {
+  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${body}</div>${rail}</div>`
 }
 
 function plexFor(plex, mediaType, tmdbId) {
@@ -289,30 +386,136 @@ function logoTile(name, logoPath, href) {
   </a>`
 }
 
-/** Popular / recently released / upcoming, as pills that keep the other filters. */
-function sortBar(basePath, params, sort) {
-  return `<div class="filter-row">${SORT_TABS.map(([key, label]) => {
-    const href = browseHref(basePath, { ...params, sort: key === 'popular' ? '' : key })
-    return `<a class="filter-pill ${sort === key ? 'is-active' : ''}" href="${escapeHtml(href)}">${label}</a>`
-  }).join('')}</div>`
+function toggleField(name, value, label, checked) {
+  const type = name === 'type' ? 'radio' : 'checkbox'
+  return `<label class="toggle"><input type="${type}" name="${escapeHtml(name)}" value="${escapeHtml(
+    value
+  )}"${checked ? ' checked' : ''} /><span>${escapeHtml(label)}</span></label>`
 }
 
-/** Genre chips for a single network, studio or genre page. */
-function genreChips(basePath, params, genres, selectedId) {
-  const all = `<a class="chip-link chip-sm ${selectedId ? '' : 'is-active'}" href="${escapeHtml(
-    browseHref(basePath, params)
-  )}">All genres</a>`
+function selectField(name, label, options, current) {
+  const value = current === null || current === undefined ? '' : String(current)
+  const known = options.some(([option]) => option === value)
 
-  const links = genres
-    .map((genre) => {
-      const active = String(selectedId) === String(genre.id)
-      return `<a class="chip-link chip-sm ${active ? 'is-active' : ''}" href="${escapeHtml(
-        browseHref(basePath, { ...params, genre: genre.id })
-      )}">${escapeHtml(genre.name)}</a>`
-    })
-    .join('')
+  return `<label class="rail-field">${escapeHtml(label)}
+    <select name="${escapeHtml(name)}">
+      ${known ? '' : `<option value="${escapeHtml(value)}" selected>${escapeHtml(value || 'Any')}</option>`}
+      ${options
+        .map(
+          ([option, text]) =>
+            `<option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(text)}</option>`
+        )
+        .join('')}
+    </select>
+  </label>`
+}
 
-  return `<div class="chips chips-sm">${all}${links}</div>`
+function toggleList(name, options, selected) {
+  return `<div class="toggle-list">${options
+    .map((option) =>
+      toggleField(name, option.id, option.name, selected.some((id) => String(id) === String(option.id)))
+    )
+    .join('')}</div>`
+}
+
+function railGroup(title, count, open, body) {
+  if (!body) return ''
+
+  return `<details class="rail-group"${open ? ' open' : ''}>
+    <summary>${escapeHtml(title)}${count ? `<span class="rail-count">${escapeHtml(count)}</span>` : ''}</summary>
+    ${body}
+  </details>`
+}
+
+/**
+ * The right-hand filter panel: genres, studios and networks as toggles, plus
+ * year, rating, vote, language and sort controls. It is a plain GET form, so it
+ * works without JavaScript; the page script applies it on every change.
+ */
+function filterRail({
+  action,
+  mediaType,
+  filters,
+  genres,
+  networks = [],
+  studios = [],
+  typeSwitch = false,
+  clearHref,
+}) {
+  const advancedCount = [
+    filters.from,
+    filters.to,
+    filters.rating,
+    filters.votes,
+    filters.language,
+    filters.sort !== 'popular' ? '1' : '',
+  ].filter(Boolean).length
+
+  const advanced = `<div class="rail-advanced">
+    <div class="rail-field">
+      <span>Released between</span>
+      <div class="rail-years">
+        <input type="number" name="from" min="1900" max="2100" step="1" placeholder="From" aria-label="Released from year" value="${filters.from ?? ''}" />
+        <span class="muted small">–</span>
+        <input type="number" name="to" min="1900" max="2100" step="1" placeholder="To" aria-label="Released up to year" value="${filters.to ?? ''}" />
+      </div>
+    </div>
+    ${selectField('rating', 'Minimum rating', RATINGS, filters.rating ?? '')}
+    ${selectField('votes', 'Minimum votes', VOTES, filters.votes ?? '')}
+    ${selectField('lang', 'Original language', LANGUAGES, filters.language)}
+    ${selectField('sort', 'Sort by', SORT_TABS, filters.sort)}
+  </div>`
+
+  const brandGroup =
+    mediaType === MediaType.MOVIE
+      ? railGroup(
+          'Studios',
+          filters.studios.length,
+          filters.studios.length > 0,
+          toggleList('studio', studios, filters.studios)
+        )
+      : railGroup(
+          'Networks',
+          filters.networks.length,
+          filters.networks.length > 0,
+          toggleList('network', networks, filters.networks)
+        )
+
+  const typeRow = typeSwitch
+    ? `<div class="rail-types" role="group" aria-label="Media type">
+        ${toggleField('type', MediaType.MOVIE, 'Movies', mediaType === MediaType.MOVIE)}
+        ${toggleField('type', MediaType.TV, 'Series', mediaType === MediaType.TV)}
+      </div>`
+    : ''
+
+  return `<form class="filter-rail" method="get" action="${escapeHtml(action)}" data-filter-form>
+    <div class="rail-head">
+      <strong>Filters</strong>
+      <a class="rail-clear" href="${escapeHtml(clearHref ?? action)}">Clear all</a>
+    </div>
+    ${typeRow}
+    ${railGroup('Genres', filters.genres.length, true, toggleList('genre', genres, filters.genres))}
+    ${brandGroup}
+    ${railGroup('Advanced', advancedCount, advancedCount > 0, advanced)}
+    <button class="btn btn-sm rail-apply" type="submit">Apply filters</button>
+    <p class="muted small">Toggles apply straight away; year and number fields with the button.</p>
+  </form>`
+}
+
+/** The Discover panel: a media-type switch plus the shared filter rail. */
+async function discoverRail(mediaType, filters) {
+  const genres = await genreList(mediaType).catch(() => [])
+
+  return filterRail({
+    action: '/',
+    mediaType,
+    filters,
+    genres,
+    networks: networkOptions(),
+    studios: studioOptions(),
+    typeSwitch: true,
+    clearHref: '/',
+  })
 }
 
 function browseUnavailable(what) {
@@ -329,7 +532,20 @@ function browseUnavailable(what) {
     </section>`
 }
 
-function discoverBody({ user, type, query, source, items, page = 1, totalPages = 1, error, plex = {} }) {
+function discoverBody({
+  user,
+  type,
+  query,
+  source,
+  items,
+  page = 1,
+  totalPages = 1,
+  error,
+  plex = {},
+  rail = '',
+  filtered = false,
+  filters = null,
+}) {
   const tabs = [
     ['all', 'All'],
     ['movie', 'Movies'],
@@ -355,14 +571,22 @@ function discoverBody({ user, type, query, source, items, page = 1, totalPages =
           })
         )
         .join('')}</div>`
-    : `<p class="empty">Nothing found. ${source === 'local' ? 'Add a TMDB API key in settings to search the full catalog.' : ''}</p>`
+    : `<p class="empty">Nothing found. ${source === 'local' ? 'Add a TMDB API key in settings to search the full catalog.' : 'Try a wider filter.'}</p>`
+
+  const subtitle = query
+    ? 'Request anything you find for the library.'
+    : filtered
+      ? 'Filtered with the panel on the right — change it any time.'
+      : source === 'tmdb'
+        ? 'Trending on TMDB — request anything for the library.'
+        : 'Local catalog (offline demo data).'
 
   return discoverLayout(
     '',
     `<div class="page-head">
       <div>
         <h1>${query ? `Results for “${escapeHtml(query)}”` : 'Discover'}</h1>
-        <p class="muted">${source === 'tmdb' ? 'Trending on TMDB — request anything for the library.' : 'Local catalog (offline demo data).'}</p>
+        <p class="muted">${subtitle}</p>
       </div>
       <form class="search" method="get" action="/" data-suggest="/search/suggest">
         ${type !== 'all' ? `<input type="hidden" name="type" value="${escapeHtml(type)}" />` : ''}
@@ -371,32 +595,44 @@ function discoverBody({ user, type, query, source, items, page = 1, totalPages =
       </form>
     </div>
     ${alert({ error })}
-    ${query ? '' : `<div class="tabs">${tabLinks}</div>`}
+    ${query || filtered ? '' : `<div class="tabs">${tabLinks}</div>`}
     ${grid}
     ${pagination({
       page,
       totalPages,
       basePath: '/',
-      params: { type: type === 'all' ? '' : type, q: query },
-    })}`
+      params: {
+        type: type === 'all' ? '' : type,
+        q: query,
+        ...(filtered && filters ? filterParams(filters) : {}),
+      },
+    })}`,
+    rail
   )
 }
 
-async function networksBody({ networkId, sort: rawSort, genreId, page = 1, plex }) {
+async function networksBody({ filters, page = 1, plex }) {
   if (!tmdbConfigured()) return discoverLayout('networks', browseUnavailable('Networks'))
 
-  const sort = sortKey(rawSort)
+  const networks = networkOptions()
 
-  if (networkId) {
-    const network = await networkWithLogo(networkById(networkId) ?? { id: Number(networkId), name: 'Network' })
+  if (filters.networks.length) {
+    const chosen = filters.networks
+      .map((id) => networks.find((network) => String(network.id) === String(id)))
+      .filter(Boolean)
+    const primary = chosen[0] ?? { id: Number(filters.networks[0]), name: 'Selected networks' }
+    const network = await networkWithLogo(primary)
     const genres = await genreList(MediaType.TV).catch(() => [])
-    const selectedGenre = genreId ? genres.find((genre) => String(genre.id) === String(genreId)) : null
-    const params = { network: network.id, sort: sort === 'popular' ? '' : sort, genre: genreId ?? '' }
-    const result = await discoverPage(
-      MediaType.TV,
-      { with_networks: network.id, ...(genreId ? { with_genres: genreId } : {}) },
-      { page, sort }
-    )
+    const result = await discoverPage(MediaType.TV, discoverQuery(MediaType.TV, filters, filters.sort), {
+      page,
+      sort: filters.sort,
+    })
+    const names = chosen.map((entry) => entry.name)
+    const genreNames = genres
+      .filter((genre) => filters.genres.some((id) => String(id) === String(genre.id)))
+      .map((genre) => genre.name)
+    const subject = genreNames.length ? `${genreNames.join(' + ')} series` : 'Series'
+    const subtitle = names.length ? `${subject} from ${names.join(', ')}.` : `${subject}.`
 
     return discoverLayout(
       'networks',
@@ -404,16 +640,20 @@ async function networksBody({ networkId, sort: rawSort, genreId, page = 1, plex 
       <div class="brand-head">
         ${brandLogo(network.name, network.logoPath)}
         <div>
-          <h1>${escapeHtml(network.name)}</h1>
-          <p class="muted">${
-            selectedGenre ? `${escapeHtml(selectedGenre.name)} series` : 'Series'
-          } from ${escapeHtml(network.name)}.</p>
+          <h1>${escapeHtml(names.length ? names.join(' + ') : network.name)}</h1>
+          <p class="muted">${escapeHtml(subtitle)}</p>
         </div>
       </div>
-      ${sortBar('/networks', { network: network.id, genre: genreId }, sort)}
-      ${genreChips('/networks', { network: network.id, sort: sort === 'popular' ? '' : sort }, genres, genreId)}
-      ${mediaGrid(result.items, { returnTo: browseHref('/networks', params), plex })}
-      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/networks', params })}`
+      ${mediaGrid(result.items, { returnTo: browseHref('/networks', filterParams(filters)), plex })}
+      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/networks', params: filterParams(filters) })}`,
+      filterRail({
+        action: '/networks',
+        mediaType: MediaType.TV,
+        filters,
+        genres,
+        networks,
+        clearHref: '/networks',
+      })
     )
   }
 
@@ -445,21 +685,28 @@ async function networksBody({ networkId, sort: rawSort, genreId, page = 1, plex 
   )
 }
 
-async function studiosBody({ studioId, sort: rawSort, genreId, page = 1, plex }) {
+async function studiosBody({ filters, page = 1, plex }) {
   if (!tmdbConfigured()) return discoverLayout('studios', browseUnavailable('Studios'))
 
-  const sort = sortKey(rawSort)
+  const studios = studioOptions()
 
-  if (studioId) {
-    const studio = await studioWithLogo(studioById(studioId) ?? { id: Number(studioId), name: 'Studio' })
+  if (filters.studios.length) {
+    const chosen = filters.studios
+      .map((id) => studios.find((studio) => String(studio.id) === String(id)))
+      .filter(Boolean)
+    const primary = chosen[0] ?? { id: Number(filters.studios[0]), name: 'Selected studios' }
+    const studio = await studioWithLogo(primary)
     const genres = await genreList(MediaType.MOVIE).catch(() => [])
-    const selectedGenre = genreId ? genres.find((genre) => String(genre.id) === String(genreId)) : null
-    const params = { studio: studio.id, sort: sort === 'popular' ? '' : sort, genre: genreId ?? '' }
-    const result = await discoverPage(
-      MediaType.MOVIE,
-      { with_companies: studio.id, ...(genreId ? { with_genres: genreId } : {}) },
-      { page, sort }
-    )
+    const result = await discoverPage(MediaType.MOVIE, discoverQuery(MediaType.MOVIE, filters, filters.sort), {
+      page,
+      sort: filters.sort,
+    })
+    const names = chosen.map((entry) => entry.name)
+    const genreNames = genres
+      .filter((genre) => filters.genres.some((id) => String(id) === String(genre.id)))
+      .map((genre) => genre.name)
+    const subject = genreNames.length ? `${genreNames.join(' + ')} films` : 'Films'
+    const subtitle = names.length ? `${subject} from ${names.join(', ')}.` : `${subject}.`
 
     return discoverLayout(
       'studios',
@@ -467,16 +714,20 @@ async function studiosBody({ studioId, sort: rawSort, genreId, page = 1, plex })
       <div class="brand-head">
         ${brandLogo(studio.name, studio.logoPath)}
         <div>
-          <h1>${escapeHtml(studio.name)}</h1>
-          <p class="muted">${
-            selectedGenre ? `${escapeHtml(selectedGenre.name)} films` : 'Films'
-          } from ${escapeHtml(studio.name)}.</p>
+          <h1>${escapeHtml(names.length ? names.join(' + ') : studio.name)}</h1>
+          <p class="muted">${escapeHtml(subtitle)}</p>
         </div>
       </div>
-      ${sortBar('/studios', { studio: studio.id, genre: genreId }, sort)}
-      ${genreChips('/studios', { studio: studio.id, sort: sort === 'popular' ? '' : sort }, genres, genreId)}
-      ${mediaGrid(result.items, { returnTo: browseHref('/studios', params), plex })}
-      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/studios', params })}`
+      ${mediaGrid(result.items, { returnTo: browseHref('/studios', filterParams(filters)), plex })}
+      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/studios', params: filterParams(filters) })}`,
+      filterRail({
+        action: '/studios',
+        mediaType: MediaType.MOVIE,
+        filters,
+        genres,
+        studios,
+        clearHref: '/studios',
+      })
     )
   }
 
@@ -508,33 +759,49 @@ async function studiosBody({ studioId, sort: rawSort, genreId, page = 1, plex })
   )
 }
 
-async function genresBody({ mediaType, genreId, sort: rawSort, page = 1, plex }) {
+async function genresBody({ mediaType, filters, page = 1, plex }) {
   const isMovie = mediaType === MediaType.MOVIE
   const key = isMovie ? 'movie-genres' : 'tv-genres'
   const label = isMovie ? 'Movie Genres' : 'Series Genres'
-  const sort = sortKey(rawSort)
 
   if (!tmdbConfigured()) return discoverLayout(key, browseUnavailable(label))
 
   const genres = await genreList(mediaType)
-  const selected = genreId ? genres.find((genre) => String(genre.id) === String(genreId)) : null
+  const chosen = filters.genres
+    .map((id) => genres.find((genre) => String(genre.id) === String(id)))
+    .filter(Boolean)
+  const rail = filterRail({
+    action: `/genres/${mediaType}`,
+    mediaType,
+    filters,
+    genres,
+    networks: networkOptions(),
+    studios: studioOptions(),
+    clearHref: `/genres/${mediaType}`,
+  })
 
-  if (selected) {
-    const params = { genre: selected.id, sort: sort === 'popular' ? '' : sort }
-    const result = await discoverPage(mediaType, { with_genres: selected.id }, { page, sort })
+  if (chosen.length) {
+    const names = chosen.map((genre) => genre.name)
+    const noun = isMovie ? 'Films' : 'Series'
+    const result = await discoverPage(mediaType, discoverQuery(mediaType, filters, filters.sort), {
+      page,
+      sort: filters.sort,
+    })
 
     return discoverLayout(
       key,
       `<a class="back" href="/genres/${mediaType}">← All ${label.toLowerCase()}</a>
       <div class="page-head">
         <div>
-          <h1>${escapeHtml(selected.name)}</h1>
-          <p class="muted">${isMovie ? 'Films' : 'Series'} in ${escapeHtml(selected.name)}.</p>
+          <h1>${escapeHtml(names.join(' + '))}</h1>
+          <p class="muted">${
+            names.length > 1 ? `${noun} in any of these genres.` : `${noun} in ${escapeHtml(names[0])}.`
+          }</p>
         </div>
       </div>
-      ${sortBar(`/genres/${mediaType}`, { genre: selected.id }, sort)}
-      ${mediaGrid(result.items, { returnTo: browseHref(`/genres/${mediaType}`, params), plex })}
-      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: `/genres/${mediaType}`, params })}`
+      ${mediaGrid(result.items, { returnTo: browseHref(`/genres/${mediaType}`, filterParams(filters)), plex })}
+      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: `/genres/${mediaType}`, params: filterParams(filters) })}`,
+      rail
     )
   }
 
@@ -663,7 +930,7 @@ function castPanel(details) {
     <div class="cast-grid">
       ${details.cast
         .map(
-          (member) => `<article class="cast">
+          (member) => `<a class="cast" href="/person/${escapeHtml(member.id)}">
             ${
               member.profilePath
                 ? `<img class="cast-photo" src="${artwork(member.profilePath, 'w185')}" alt="" loading="lazy" />`
@@ -671,11 +938,62 @@ function castPanel(details) {
             }
             <strong>${escapeHtml(member.name)}</strong>
             ${member.character ? `<span class="muted small">${escapeHtml(member.character)}</span>` : ''}
-          </article>`
+          </a>`
         )
         .join('')}
     </div>
   </section>`
+}
+
+/** One person: photo, biography and every title they are credited in. */
+function personBody({ person, page = 1, plex = {} }) {
+  const totalPages = Math.max(1, Math.ceil(person.credits.length / PER_PAGE))
+  const current = Math.min(page, totalPages)
+  const credits = person.credits.slice((current - 1) * PER_PAGE, current * PER_PAGE)
+
+  const born = [formatDate(person.birthday), person.placeOfBirth].filter(Boolean).join(' · ')
+  const facts = [
+    ['Known for', person.knownFor],
+    ['Born', born || null],
+    ['Died', formatDate(person.deathday)],
+    ['Credits', person.credits.length ? `${person.credits.length} titles` : null],
+  ].filter((fact) => fact[1])
+
+  const biography = String(person.biography ?? '').trim()
+  const bioHtml = biography
+    ? biography
+        .split(/\n{2,}/)
+        .slice(0, 5)
+        .map((paragraph) => `<p>${escapeHtml(paragraph.trim())}</p>`)
+        .join('')
+    : '<p class="muted">No biography for this person yet.</p>'
+
+  return `<a class="back" href="/">← Back to discover</a>
+    <section class="person-head">
+      ${
+        person.profilePath
+          ? `<div class="person-photo"><img src="${artwork(person.profilePath, 'w300')}" alt="${escapeHtml(
+              person.name
+            )}" loading="lazy" /></div>`
+          : `<div class="person-photo person-photo-empty">${escapeHtml(initials(person.name))}</div>`
+      }
+      <div class="person-info">
+        <h1>${escapeHtml(person.name)}</h1>
+        ${
+          facts.length
+            ? `<dl class="facts">${facts
+                .map(
+                  ([label, value]) => `<div class="fact"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`
+                )
+                .join('')}</dl>`
+            : ''
+        }
+        <div class="person-bio">${bioHtml}</div>
+      </div>
+    </section>
+    <h2 class="section-title">Known for</h2>
+    ${mediaGrid(credits, { returnTo: `/person/${person.id}`, plex })}
+    ${pagination({ page: current, totalPages, basePath: `/person/${person.id}` })}`
 }
 
 function detailBody({ user, media, details, notice, error, plex = null }) {
@@ -1530,40 +1848,78 @@ export function registerPageRoutes(router) {
     const user = pageUser(req, res, '/')
     if (!user) return
 
-    const type = parseType(url.searchParams.get('type'))
+    const requestedType = parseType(url.searchParams.get('type'))
     const query = url.searchParams.get('q') ?? ''
     const page = pageNumber(url.searchParams.get('page'))
+    const filters = filtersFromParams(url.searchParams)
+    const plex = await plexEntries()
+    const configured = tmdbConfigured()
+    // A filtered view needs one media type: the tab in the URL, or the one the
+    // filters imply (networks are television, studios are films).
+    const mediaType =
+      requestedType === MediaType.MOVIE || requestedType === MediaType.TV
+        ? requestedType
+        : filters.networks.length > 0 && filters.studios.length === 0
+          ? MediaType.TV
+          : MediaType.MOVIE
+
     let source = 'local'
-    let totalPages = 1
     let currentPage = page
-    let items = getCatalog({ type, query, userId: user.id }).map((item) => ({ item, local: item }))
+    let totalPages = 1
+    let items = []
+    let rail = ''
+    let filtered = false
     let error = url.searchParams.get('err')
 
-    if (tmdbConfigured()) {
+    if (configured && !query && hasFilters(filters)) {
       try {
-        const found = query ? await searchPage(query, type, page) : await trendingPage(type, page)
+        const result = await discoverPage(mediaType, discoverQuery(mediaType, filters, filters.sort), {
+          page,
+          sort: filters.sort,
+        })
         source = 'tmdb'
-        totalPages = found.totalPages
-        currentPage = Math.min(found.page, found.totalPages)
-        items = found.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
-        // Seeded rows have no artwork; the first browse fills it in from TMDB so
-        // posters keep working on later visits without another lookup.
-        for (const { item, local } of items) {
-          if (local && !local.posterPath && item.posterPath) {
-            store.setMediaArtwork(local.id, item.posterPath, item.backdropPath ?? null)
-          }
-        }
+        filtered = true
+        currentPage = Math.min(result.page, result.totalPages)
+        totalPages = result.totalPages
+        items = result.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
+        rail = await discoverRail(mediaType, filters)
       } catch (tmdbError) {
-        source = 'local'
-        error = `TMDB unavailable, showing the local catalog: ${tmdbError.message}`
-        items = getCatalog({ type, query, userId: user.id }).map((item) => ({ item, local: item }))
+        error = `TMDB unavailable: ${tmdbError.message}`
       }
     }
 
-    if (source === 'local') {
-      totalPages = Math.max(1, Math.ceil(items.length / PER_PAGE))
-      currentPage = Math.min(page, totalPages)
-      items = items.slice((currentPage - 1) * PER_PAGE, currentPage * PER_PAGE)
+    if (!filtered) {
+      items = getCatalog({ type: requestedType, query, userId: user.id }).map((item) => ({ item, local: item }))
+
+      if (configured) {
+        try {
+          const found = query
+            ? await searchPage(query, requestedType, page)
+            : await trendingPage(requestedType, page)
+          source = 'tmdb'
+          totalPages = found.totalPages
+          currentPage = Math.min(found.page, found.totalPages)
+          items = found.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
+          // Seeded rows have no artwork; the first browse fills it in from TMDB so
+          // posters keep working on later visits without another lookup.
+          for (const { item, local } of items) {
+            if (local && !local.posterPath && item.posterPath) {
+              store.setMediaArtwork(local.id, item.posterPath, item.backdropPath ?? null)
+            }
+          }
+          if (!query) rail = await discoverRail(mediaType, filters)
+        } catch (tmdbError) {
+          source = 'local'
+          error = `TMDB unavailable, showing the local catalog: ${tmdbError.message}`
+          items = getCatalog({ type: requestedType, query, userId: user.id }).map((item) => ({ item, local: item }))
+        }
+      }
+
+      if (source === 'local') {
+        totalPages = Math.max(1, Math.ceil(items.length / PER_PAGE))
+        currentPage = Math.min(page, totalPages)
+        items = items.slice((currentPage - 1) * PER_PAGE, currentPage * PER_PAGE)
+      }
     }
 
     render(res, 200, {
@@ -1572,14 +1928,17 @@ export function registerPageRoutes(router) {
       active: 'discover',
       body: discoverBody({
         user,
-        type,
+        type: filtered ? mediaType : requestedType,
         query,
         source,
         items,
         page: currentPage,
         totalPages,
         error,
-        plex: await plexEntries(),
+        plex,
+        rail,
+        filtered,
+        filters,
       }),
     })
   })
@@ -1634,9 +1993,7 @@ export function registerPageRoutes(router) {
       user,
       active: 'discover',
       body: await networksBody({
-        networkId: url.searchParams.get('network'),
-        sort: url.searchParams.get('sort'),
-        genreId: url.searchParams.get('genre'),
+        filters: filtersFromParams(url.searchParams),
         page: pageNumber(url.searchParams.get('page')),
         plex: await plexEntries(),
       }),
@@ -1652,9 +2009,7 @@ export function registerPageRoutes(router) {
       user,
       active: 'discover',
       body: await studiosBody({
-        studioId: url.searchParams.get('studio'),
-        sort: url.searchParams.get('sort'),
-        genreId: url.searchParams.get('genre'),
+        filters: filtersFromParams(url.searchParams),
         page: pageNumber(url.searchParams.get('page')),
         plex: await plexEntries(),
       }),
@@ -1675,12 +2030,52 @@ export function registerPageRoutes(router) {
       active: 'discover',
       body: await genresBody({
         mediaType,
-        genreId: url.searchParams.get('genre'),
-        sort: url.searchParams.get('sort'),
+        filters: filtersFromParams(url.searchParams),
         page: pageNumber(url.searchParams.get('page')),
         plex: await plexEntries(),
       }),
     })
+  })
+
+  router.get('/person/:id', async ({ req, res, url, params }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const id = Number(params.id)
+    if (!Number.isInteger(id) || id <= 0) throw new HttpError(404, 'Person not found')
+
+    if (!tmdbConfigured()) {
+      return render(res, 200, {
+        title: 'Person',
+        user,
+        active: 'discover',
+        body: `<a class="back" href="/">← Back to discover</a>
+          <h1>Person</h1>
+          <p class="muted">This page is built from TMDB metadata. Add an API key under
+            <a class="inline-link" href="/settings?tab=integrations">Settings → Integrations</a>.</p>`,
+      })
+    }
+
+    try {
+      const person = await personDetails(id)
+      render(res, 200, {
+        title: person.name,
+        user,
+        active: 'discover',
+        body: personBody({
+          person,
+          page: pageNumber(url.searchParams.get('page')),
+          plex: await plexEntries(),
+        }),
+      })
+    } catch (error) {
+      render(res, 502, {
+        title: 'Person unavailable',
+        user,
+        active: 'discover',
+        body: `<h1>Person unavailable</h1><p class="muted">${escapeHtml(error.message)}</p><a class="back" href="/">← Back to discover</a>`,
+      })
+    }
   })
 
   router.get('/recommendations', async ({ req, res }) => {

@@ -89,8 +89,13 @@ bootstrapping, which is only useful for demos.
 - **A denser Discover grid with pages** — a full poster wall per screen and
   Previous/Next paging over trending titles and search results.
 - **Network and studio walls** — logos for 31 networks and 18 studios, each one
-  opening a page filtered by Popular, Recently released and Upcoming, with genre
-  chips for that network or studio.
+  opening its own page of titles.
+- **A filter panel on every browse page** — the right-hand rail toggles genres,
+  studios and networks, then narrows further by year, minimum rating, vote
+  count, original language and sort order. It applies as soon as a toggle
+  changes and still works as a plain GET form without JavaScript.
+- **Person pages** — every name in a title's cast opens that person's biography,
+  dates and the full list of films and series they appear in.
 - **Genre shelves** — the genre pages lead with titles from the busiest
   categories instead of a bare list of names.
 - **Requests** — movies or individual seasons, duplicate and already-available
@@ -163,7 +168,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.7.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.8.0
 ```
 
 If you prefer to run the process without root at all, start the container with
