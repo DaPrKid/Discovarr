@@ -3,7 +3,7 @@
 node_modules
 data
 tests
-docker
+# docker/entrypoint.sh is copied into the image, so it must stay in the build context.
 *.log
 .env
 .env.*
