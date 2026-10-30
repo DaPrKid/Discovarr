@@ -23,6 +23,7 @@ import {
   quotaSummary,
   requestMedia,
   retryRequest,
+  saveServiceSelection,
   updateSettings,
   updateUserByAdmin,
 } from './core.js'
@@ -30,7 +31,12 @@ import * as store from './db.js'
 import { HttpError, readBody, redirect, sendHtml } from './http.js'
 import { verifyPassword } from './passwords.js'
 import { clientKey, createRateLimiter } from './ratelimit.js'
-import { serviceOptions, serviceSummary, testServiceConnection } from './services.js'
+import {
+  forgetServiceOptions,
+  loadServiceOptions,
+  serviceSummary,
+  testServiceConnection,
+} from './services.js'
 import { searchTmdb, tmdbConfigured, trendingTmdb } from './tmdb.js'
 import { syncLibrary, syncState } from './sync.js'
 import {
@@ -225,6 +231,30 @@ function detailBody({ user, media, notice, error }) {
       </fieldset>`
     : ''
 
+  // The default profile plus the extra ones the admin allowed, so a requester
+  // can pick a different one per title.
+  const service = serviceSummary(media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr')
+  const requestProfiles = service.qualityProfileId
+    ? [
+        { id: Number(service.qualityProfileId), name: service.qualityProfileName },
+        ...service.extraProfiles,
+      ]
+    : []
+
+  const profilePicker =
+    requestProfiles.length > 1
+      ? `<label>Quality profile
+        <select name="qualityProfile">
+          ${requestProfiles
+            .map(
+              (profile) =>
+                `<option value="${profile.id}">${escapeHtml(profile.name || `Profile ${profile.id}`)}</option>`
+            )
+            .join('')}
+        </select>
+      </label>`
+      : ''
+
   let action
 
   if (isAvailable) {
@@ -236,6 +266,7 @@ function detailBody({ user, media, notice, error }) {
       <input type="hidden" name="returnTo" value="/media/${media.id}" />
       <input type="hidden" name="seasonsSubmitted" value="1" />
       ${picker}
+      ${profilePicker}
       <button class="btn" type="submit">Request ${media.mediaType === MediaType.TV ? 'seasons' : 'movie'}</button>
       ${quota.limit > 0 ? `<p class="muted small">${quota.used}/${quota.limit} requests used this month</p>` : ''}
     </form>`
@@ -335,7 +366,7 @@ function serviceFields(kind, label, settings, options) {
     ? `${service.qualityProfileId}${service.qualityProfileName ? `|${service.qualityProfileName}` : ''}`
     : ''
 
-  const list = options?.kind === kind ? options : null
+  const list = options?.[kind] ?? null
 
   const rootField = list?.rootFolders?.length
     ? `<label>Root folder
@@ -353,7 +384,7 @@ function serviceFields(kind, label, settings, options) {
       </label>`
 
   const profileField = list?.qualityProfiles?.length
-    ? `<label>Quality profile
+    ? `<label>Default quality profile
         <select name="${kind}QualityProfile">
           ${list.qualityProfiles
             .map(
@@ -366,6 +397,28 @@ function serviceFields(kind, label, settings, options) {
     : `<label>Quality profile id
         <input type="text" name="${kind}QualityProfile" value="${escapeHtml(profileValue)}" placeholder="1" />
       </label>`
+
+  const extraChoices = list?.qualityProfiles?.length
+    ? list.qualityProfiles
+        .filter((profile) => String(profile.id) !== String(service.qualityProfileId))
+        .map(
+          (profile) => `<label class="checkbox">
+            <input type="checkbox" name="${kind}ExtraProfile" value="${profile.id}|${escapeHtml(profile.name)}" ${
+              service.extraProfiles.some((extra) => String(extra.id) === String(profile.id)) ? 'checked' : ''
+            } />
+            <span>${escapeHtml(profile.name)}</span>
+          </label>`
+        )
+        .join('')
+    : ''
+
+  const extraField = extraChoices
+    ? `<div class="panel-inline">
+        <input type="hidden" name="${kind}ProfilesSubmitted" value="1" />
+        <p class="muted small">Additional profiles requesters may choose</p>
+        <div class="permissions">${extraChoices}</div>
+      </div>`
+    : ''
 
   return `<fieldset class="panel">
     <legend>${label} <span class="badge badge-${service.enabled ? 'approved' : 'pending'}">${service.enabled ? 'enabled' : 'disabled'}</span></legend>
@@ -381,6 +434,7 @@ function serviceFields(kind, label, settings, options) {
     </label>
     ${rootField}
     ${profileField}
+    ${extraField}
     <div class="request-actions">
       <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/options/${kind}">Load folders and profiles</button>
       <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/test/${kind}">Save and test connection</button>
@@ -501,17 +555,69 @@ function settingsBody({ user, settings, users, audit, options, notice, error }) 
 // ---------------------------------------------------------------------------
 
 function serviceFromBody(body, kind) {
-  const profile = String(body[`${kind}QualityProfile`] ?? '')
-  const [id, name] = profile.split('|')
+  const service = { enabled: body[`${kind}Enabled`] !== undefined }
 
-  return {
-    enabled: body[`${kind}Enabled`] !== undefined,
-    url: body[`${kind}Url`],
-    apiKey: body[`${kind}ApiKey`],
-    rootFolder: body[`${kind}RootFolder`],
-    qualityProfileId: id ?? '',
-    qualityProfileName: name ?? '',
+  // Only fields that were actually submitted are written, so a partial post
+  // cannot blank a URL or key that is already saved.
+  for (const [field, suffix] of [
+    ['url', 'Url'],
+    ['apiKey', 'ApiKey'],
+    ['rootFolder', 'RootFolder'],
+  ]) {
+    if (body[`${kind}${suffix}`] !== undefined) service[field] = body[`${kind}${suffix}`]
   }
+
+  const profile = body[`${kind}QualityProfile`]
+  if (profile !== undefined) {
+    const [id, name] = String(profile).split('|')
+    service.qualityProfileId = id ?? ''
+    service.qualityProfileName = name ?? ''
+  }
+
+  if (body[`${kind}ProfilesSubmitted`] !== undefined) {
+    const picked = body[`${kind}ExtraProfile`]
+    service.qualityProfiles = picked === undefined ? [] : [].concat(picked)
+  }
+
+  return service
+}
+
+/**
+ * Root folders and profiles for every configured service, so the settings page
+ * can show dropdowns without the extra "load" round trip. Failures are
+ * swallowed: the form then falls back to free-text inputs.
+ */
+async function loadOptionsForPage({ fresh = false, kinds = ['radarr', 'sonarr'] } = {}) {
+  const entries = await Promise.all(
+    kinds.map(async (kind) => {
+      if (!serviceSummary(kind).configured) return [kind, null]
+      try {
+        return [kind, await loadServiceOptions(kind, { fresh })]
+      } catch {
+        return [kind, null]
+      }
+    })
+  )
+
+  return Object.fromEntries(entries)
+}
+
+/** Stores the first folder and profile when the service has neither yet. */
+function applyFirstServiceDefaults(kind, loaded, actor) {
+  const service = serviceSummary(kind)
+  const selection = {
+    rootFolder: service.rootFolder || loaded.rootFolders[0]?.path || '',
+    qualityProfileId:
+      service.qualityProfileId || (loaded.qualityProfiles[0] ? String(loaded.qualityProfiles[0].id) : ''),
+    qualityProfileName: service.qualityProfileName || loaded.qualityProfiles[0]?.name || '',
+  }
+
+  const unchanged =
+    selection.rootFolder === String(service.rootFolder ?? '') &&
+    selection.qualityProfileId === String(service.qualityProfileId ?? '') &&
+    selection.qualityProfileName === String(service.qualityProfileName ?? '')
+
+  if (!unchanged) saveServiceSelection(kind, selection, actor)
 }
 
 function settingsFromBody(body) {
@@ -675,7 +781,12 @@ export function registerPageRoutes(router) {
         ? (rawSeasons === undefined ? [] : [].concat(rawSeasons)).map(Number)
         : null
 
-      await requestMedia({ mediaId: Number(params.id), userId: user.id, seasonNumbers })
+      await requestMedia({
+        mediaId: Number(params.id),
+        userId: user.id,
+        seasonNumbers,
+        qualityProfileId: body.qualityProfile ? Number(body.qualityProfile) : null,
+      })
       redirect(res, withMessage(returnTo, 'notice', 'Request submitted'))
     } catch (error) {
       failure(res, returnTo, error)
@@ -812,7 +923,7 @@ export function registerPageRoutes(router) {
     }
   })
 
-  router.get('/settings', ({ req, res, url }) => {
+  router.get('/settings', async ({ req, res, url }) => {
     const user = pageUser(req, res, '/settings')
     if (!user) return
 
@@ -829,7 +940,7 @@ export function registerPageRoutes(router) {
         settings: store.getSettings(),
         users: store.listUsers(),
         audit: store.listAudit(15),
-        options: null,
+        options: await loadOptionsForPage(),
         notice: url.searchParams.get('notice'),
         error: url.searchParams.get('err'),
       }),
@@ -857,11 +968,23 @@ export function registerPageRoutes(router) {
 
     try {
       updateSettings(settingsFromBody(await readBody(req)), actor)
+      forgetServiceOptions(params.kind)
     } catch (error) {
       return failure(res, '/settings', error)
     }
 
     const result = await testServiceConnection(params.kind)
+
+    // A working connection means the folders and profiles can be pulled in the
+    // same click, instead of asking for a second "load" round trip.
+    const options = result.ok ? await loadOptionsForPage({ fresh: true, kinds: [params.kind] }) : {}
+    const loaded = options[params.kind] ?? null
+    if (loaded) applyFirstServiceDefaults(params.kind, loaded, actor)
+
+    const loadedDetail = loaded
+      ? ` · ${loaded.rootFolders.length} root folder(s) and ${loaded.qualityProfiles.length} profile(s) loaded`
+      : ''
+
     render(res, 200, {
       title: 'Settings',
       user: actor,
@@ -871,8 +994,8 @@ export function registerPageRoutes(router) {
         settings: store.getSettings(),
         users: store.listUsers(),
         audit: store.listAudit(15),
-        options: null,
-        notice: result.ok ? result.detail : null,
+        options,
+        notice: result.ok ? `${result.detail}${loadedDetail}` : null,
         error: result.ok ? null : result.error,
       }),
     })
@@ -894,7 +1017,10 @@ export function registerPageRoutes(router) {
     }
 
     try {
-      const options = { kind: params.kind, ...(await serviceOptions(params.kind)) }
+      forgetServiceOptions(params.kind)
+      const loaded = await loadServiceOptions(params.kind, { fresh: true })
+      const options = { [params.kind]: loaded }
+      applyFirstServiceDefaults(params.kind, loaded, actor)
       render(res, 200, {
         title: 'Settings',
         user: actor,
@@ -905,7 +1031,7 @@ export function registerPageRoutes(router) {
           users: store.listUsers(),
           audit: store.listAudit(15),
           options,
-          notice: `Loaded ${options.rootFolders.length} root folder(s) and ${options.qualityProfiles.length} profile(s)`,
+          notice: `Loaded ${loaded.rootFolders.length} root folder(s) and ${loaded.qualityProfiles.length} profile(s)`,
           error: null,
         }),
       })

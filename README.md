@@ -99,6 +99,18 @@ bootstrapping, which is only useful for demos.
 - **Security** — scrypt password hashes, server-side sessions, HttpOnly cookies,
   cross-site mutation blocking, login rate limiting.
 
+### Radarr and Sonarr
+
+Enter the base URL and API key, then press **Save and test connection**. That
+saves the settings, checks the service and, in the same click, pulls its root
+folders and quality profiles into dropdowns. The first folder and profile are
+stored as the defaults when nothing is chosen yet.
+
+Tick any **additional profiles** to let requesters choose between them: the title
+page then offers a quality-profile select with the default plus those extras, and
+the choice is kept on the request so approval dispatches with it. Requests made
+without a pick use the default profile.
+
 ## Running as a specific user (Unraid, LinuxServer-style)
 
 The container starts as root, fixes ownership of `/data`, then runs the app as

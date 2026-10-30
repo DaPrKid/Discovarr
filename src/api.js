@@ -33,7 +33,7 @@ import { serviceOptions, serviceSummary } from './services.js'
 import { searchTmdb, tmdbConfigured } from './tmdb.js'
 import { syncLibrary, syncState } from './sync.js'
 
-const APP_VERSION = '0.3.1'
+const APP_VERSION = '0.3.2'
 
 function parseType(value) {
   return value === MediaType.MOVIE || value === MediaType.TV ? value : 'all'
@@ -153,6 +153,7 @@ export function registerApiRoutes(router) {
       mediaType: body.mediaType,
       tmdbId: body.tmdbId ? Number(body.tmdbId) : null,
       userId: user.id,
+      qualityProfileId: body.qualityProfileId ? Number(body.qualityProfileId) : null,
       seasonNumbers: Array.isArray(body.seasons) ? body.seasons.map(Number) : null,
     })
 

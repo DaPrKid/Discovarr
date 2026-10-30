@@ -13,7 +13,7 @@ import * as store from './db.js'
 import { HttpError } from './http.js'
 import { notifyLater } from './notifications.js'
 import { verifyPassword } from './passwords.js'
-import { dispatchToService } from './services.js'
+import { dispatchToService, requestProfileFor } from './services.js'
 import { tmdbDetails } from './tmdb.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -95,7 +95,14 @@ async function resolveMedia({ mediaId, mediaType, tmdbId }) {
   throw new HttpError(400, 'Provide mediaId, or mediaType and tmdbId')
 }
 
-export async function requestMedia({ mediaId, mediaType, tmdbId, userId, seasonNumbers = null }) {
+export async function requestMedia({
+  mediaId,
+  mediaType,
+  tmdbId,
+  userId,
+  seasonNumbers = null,
+  qualityProfileId = null,
+}) {
   const user = store.findUserById(userId)
   if (!user) throw new HttpError(401, 'Sign in to continue')
 
@@ -147,11 +154,19 @@ export async function requestMedia({ mediaId, mediaType, tmdbId, userId, seasonN
     (user.role !== Role.ADMIN &&
       (Number(user.permissions ?? 0) & Permission.AUTO_APPROVE) === Permission.AUTO_APPROVE)
 
+  // The profile the requester picked, if it is one of the allowed ones.
+  const profile = requestProfileFor(
+    media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr',
+    qualityProfileId
+  )
+
   const request = store.createRequest({
     mediaId: media.id,
     userId: user.id,
     status: MediaRequestStatus.PENDING,
     seasons,
+    qualityProfileId: profile?.id ?? null,
+    qualityProfileName: profile?.name ?? null,
   })
 
   store.setMediaStatus(media.id, autoApprove ? MediaStatus.PROCESSING : MediaStatus.PENDING)
@@ -189,7 +204,7 @@ async function approveAndDispatch(request, media, actor) {
   }
 
   try {
-    const result = await dispatchToService(media, request)
+    const result = await dispatchToService(media, request, request.qualityProfileId)
 
     if (result.dispatched) store.setMediaExternalId(media.id, result.externalId)
 
@@ -439,6 +454,27 @@ export function changePassword(user, currentPassword, newPassword, keepToken) {
   return { revoked }
 }
 
+/**
+ * Stores the root folder and quality profile picked for one service without
+ * rewriting the other settings, which a partial updateSettings call would do.
+ */
+export function saveServiceSelection(kind, selection, actor) {
+  const entries = {}
+  if (selection.rootFolder !== undefined) {
+    entries[`services.${kind}.rootFolder`] = String(selection.rootFolder)
+  }
+  if (selection.qualityProfileId !== undefined) {
+    entries[`services.${kind}.qualityProfileId`] = String(selection.qualityProfileId)
+  }
+  if (selection.qualityProfileName !== undefined) {
+    entries[`services.${kind}.qualityProfileName`] = String(selection.qualityProfileName)
+  }
+  if (Object.keys(entries).length === 0) return
+
+  store.saveSettings(entries)
+  store.recordAudit(actor?.id ?? null, 'settings.updated', `${kind} root folder and profile`)
+}
+
 export function updateSettings(input, actor) {
   const entries = {
     'app.name': String(input.appName ?? '').trim() || 'Discovarr',
@@ -452,13 +488,31 @@ export function updateSettings(input, actor) {
   }
 
   for (const kind of ['sonarr', 'radarr']) {
-    const service = input[kind] ?? {}
-    entries[`services.${kind}.enabled`] = service.enabled ? 'true' : 'false'
-    entries[`services.${kind}.url`] = String(service.url ?? '').trim()
-    entries[`services.${kind}.apiKey`] = String(service.apiKey ?? '').trim()
-    entries[`services.${kind}.rootFolder`] = String(service.rootFolder ?? '').trim()
-    entries[`services.${kind}.qualityProfileId`] = String(service.qualityProfileId ?? '').trim()
-    entries[`services.${kind}.qualityProfileName`] = String(service.qualityProfileName ?? '').trim()
+    const service = input[kind]
+    if (!service) continue
+
+    // A field missing from the submitted form must not erase what is already
+    // saved: only values that were actually sent are written back.
+    const assign = (field, key) => {
+      if (service[field] === undefined) return
+      entries[`services.${kind}.${key}`] = String(service[field] ?? '').trim()
+    }
+
+    if (typeof service.enabled === 'boolean') {
+      entries[`services.${kind}.enabled`] = service.enabled ? 'true' : 'false'
+    }
+    assign('url', 'url')
+    assign('apiKey', 'apiKey')
+    assign('rootFolder', 'rootFolder')
+    assign('qualityProfileId', 'qualityProfileId')
+    assign('qualityProfileName', 'qualityProfileName')
+
+    if (service.qualityProfiles !== undefined) {
+      const profiles = [].concat(service.qualityProfiles)
+        .map((value) => String(value).trim())
+        .filter(Boolean)
+      entries[`services.${kind}.qualityProfiles`] = [...new Set(profiles)].join('\n')
+    }
   }
 
   store.saveSettings(entries)

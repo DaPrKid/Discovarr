@@ -109,6 +109,10 @@ ensureColumn('media', 'synced_at', 'TEXT')
 ensureColumn('users', 'permissions', 'INTEGER NOT NULL DEFAULT 0')
 ensureColumn('users', 'quota_movie', 'INTEGER NOT NULL DEFAULT 0')
 ensureColumn('users', 'quota_tv', 'INTEGER NOT NULL DEFAULT 0')
+// The quality profile a request was filed with, so a dispatch honours the
+// choice made on the request form instead of always using the default.
+ensureColumn('requests', 'quality_profile_id', 'INTEGER')
+ensureColumn('requests', 'quality_profile_name', 'TEXT')
 
 // Usernames identify an account on the sign-in form, so they are unique
 // regardless of case. Older databases may hold duplicates, which makes the
@@ -373,6 +377,8 @@ function mapRequest(row) {
     status: row.status,
     seasons: row.seasons ? JSON.parse(row.seasons) : null,
     note: row.note,
+    qualityProfileId: row.quality_profile_id ?? null,
+    qualityProfileName: row.quality_profile_name ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     media: row.title
@@ -473,13 +479,29 @@ export function findActiveRequest(mediaId, userId) {
   )
 }
 
-export function createRequest({ mediaId, userId, status, seasons }) {
+export function createRequest({
+  mediaId,
+  userId,
+  status,
+  seasons,
+  qualityProfileId = null,
+  qualityProfileName = null,
+}) {
   const now = timestamp()
   const info = db
     .prepare(
-      'INSERT INTO requests (media_id, user_id, status, seasons, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO requests (media_id, user_id, status, seasons, quality_profile_id, quality_profile_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(Number(mediaId), Number(userId), status, seasons ? JSON.stringify(seasons) : null, now, now)
+    .run(
+      Number(mediaId),
+      Number(userId),
+      status,
+      seasons ? JSON.stringify(seasons) : null,
+      qualityProfileId === null ? null : Number(qualityProfileId),
+      qualityProfileName,
+      now,
+      now
+    )
 
   return getRequestById(Number(info.lastInsertRowid))
 }

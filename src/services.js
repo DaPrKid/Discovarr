@@ -4,6 +4,19 @@ import { getSetting } from './db.js'
 const LABELS = { sonarr: 'Sonarr', radarr: 'Radarr' }
 const TIMEOUT_MS = 8000
 
+/** "1|HD-1080p" lines from settings turned back into profile objects. */
+function parseProfiles(value) {
+  return String(value ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [id, name = ''] = line.split('|')
+      return { id: Number(id), name }
+    })
+    .filter((profile) => Number.isInteger(profile.id))
+}
+
 export function serviceSummary(kind) {
   const enabled = getSetting(`services.${kind}.enabled`) === 'true'
   const url = getSetting(`services.${kind}.url`)
@@ -15,13 +28,17 @@ export function serviceSummary(kind) {
     rootFolder: getSetting(`services.${kind}.rootFolder`),
     qualityProfileId: getSetting(`services.${kind}.qualityProfileId`),
     qualityProfileName: getSetting(`services.${kind}.qualityProfileName`),
+    extraProfiles: parseProfiles(getSetting(`services.${kind}.qualityProfiles`)),
   }
 }
 
 /** Any *arr API call; throws a readable error instead of a raw fetch failure. */
 async function arrRequest(kind, path, { method = 'GET', body } = {}) {
-  const { url, apiKey } = serviceSummary(kind)
+  const { url } = serviceSummary(kind)
   const label = LABELS[kind]
+  // The key is deliberately absent from serviceSummary, which the API also
+  // returns, so it is read straight from settings here.
+  const apiKey = getSetting(`services.${kind}.apiKey`)
 
   if (!url || !apiKey) throw new Error(`${label} URL and API key are required`)
 
@@ -73,6 +90,36 @@ export async function testServiceConnection(kind) {
   }
 }
 
+const optionsCache = new Map()
+const OPTIONS_TTL_MS = 60_000
+
+/**
+ * Root folders and profiles, cached for a minute. The settings page fills its
+ * dropdowns from this on every view, so an offline or slow *arr must not make
+ * the page hang: failures are cached too and the page falls back to free text.
+ */
+export async function loadServiceOptions(kind, { fresh = false } = {}) {
+  const cached = optionsCache.get(kind)
+  if (!fresh && cached && Date.now() - cached.at < OPTIONS_TTL_MS) {
+    if (cached.error) throw cached.error
+    return cached.value
+  }
+
+  try {
+    const value = await serviceOptions(kind)
+    optionsCache.set(kind, { at: Date.now(), value })
+    return value
+  } catch (error) {
+    optionsCache.set(kind, { at: Date.now(), error })
+    throw error
+  }
+}
+
+/** Drops the cache, so a changed URL or key is picked up immediately. */
+export function forgetServiceOptions(kind) {
+  optionsCache.delete(kind)
+}
+
 export async function serviceOptions(kind) {
   const [folders, profiles] = await Promise.all([
     arrRequest(kind, '/rootfolder'),
@@ -91,8 +138,20 @@ export async function serviceOptions(kind) {
   }
 }
 
+/**
+ * The default profile, or one of the extra profiles the administrator marked
+ * as available. Anything else falls back to the default.
+ */
+export function requestProfileFor(kind, requestedId = null) {
+  const { qualityProfileId, qualityProfileName, extraProfiles } = serviceSummary(kind)
+  if (!qualityProfileId) return null
+
+  const allowed = [{ id: Number(qualityProfileId), name: qualityProfileName }, ...extraProfiles]
+  return allowed.find((profile) => String(profile.id) === String(requestedId)) ?? allowed[0]
+}
+
 /** Adds a title to Radarr/Sonarr on approval. */
-export async function dispatchToService(media, request) {
+export async function dispatchToService(media, request, profileId = null) {
   const kind = media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr'
   const { enabled, configured, rootFolder, qualityProfileId } = serviceSummary(kind)
 
@@ -102,6 +161,9 @@ export async function dispatchToService(media, request) {
     throw new Error(`${LABELS[kind]} needs a root folder and quality profile in settings`)
   }
 
+  const chosen = requestProfileFor(kind, profileId ?? request?.qualityProfileId)
+  if (!chosen) throw new Error(`${LABELS[kind]} needs a quality profile in settings`)
+
   if (media.mediaType === MediaType.MOVIE) {
     const created = await arrRequest(kind, '/movie', {
       method: 'POST',
@@ -109,7 +171,7 @@ export async function dispatchToService(media, request) {
         tmdbId: media.tmdbId,
         title: media.title,
         year: media.releaseDate ? Number(media.releaseDate.slice(0, 4)) : undefined,
-        qualityProfileId: Number(qualityProfileId),
+        qualityProfileId: chosen.id,
         rootFolderPath: rootFolder,
         monitored: true,
         minimumAvailability: 'released',
@@ -139,7 +201,7 @@ export async function dispatchToService(media, request) {
       images: candidate.images ?? [],
       seasons,
       rootFolderPath: rootFolder,
-      qualityProfileId: Number(qualityProfileId),
+      qualityProfileId: chosen.id,
       seasonFolder: true,
       monitored: true,
       addOptions: { monitor: 'none', searchForMissingEpisodes: true },

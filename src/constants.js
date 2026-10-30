@@ -82,12 +82,15 @@ export const SETTING_DEFAULTS = Object.freeze({
   'services.sonarr.rootFolder': '',
   'services.sonarr.qualityProfileId': '',
   'services.sonarr.qualityProfileName': '',
+  // Extra profiles users may pick, one "id|name" per line.
+  'services.sonarr.qualityProfiles': '',
   'services.radarr.enabled': 'false',
   'services.radarr.url': '',
   'services.radarr.apiKey': '',
   'services.radarr.rootFolder': '',
   'services.radarr.qualityProfileId': '',
   'services.radarr.qualityProfileName': '',
+  'services.radarr.qualityProfiles': '',
 
   'sync.intervalMinutes': '30',
 
