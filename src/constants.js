@@ -1,3 +1,5 @@
+export const APP_VERSION = '0.6.0'
+
 // Lifecycle values mirror the enums Seerr uses, so the API and database stay
 // familiar to anyone coming from that codebase.
 export const MediaType = Object.freeze({

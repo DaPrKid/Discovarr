@@ -32,7 +32,7 @@ import {
   updateUserByAdmin,
 } from './core.js'
 import * as store from './db.js'
-import { HttpError, readBody, redirect, sendHtml } from './http.js'
+import { HttpError, readBody, redirect, sendHtml, sendJson } from './http.js'
 import { verifyPassword } from './passwords.js'
 import { clientKey, createRateLimiter } from './ratelimit.js'
 import {
@@ -280,9 +280,9 @@ function discoverBody({ user, type, query, source, items, error, plex = {} }) {
         <h1>Discover</h1>
         <p class="muted">${source === 'tmdb' ? 'Trending on TMDB — request anything for the library.' : 'Local catalog (offline demo data).'}</p>
       </div>
-      <form class="search" method="get" action="/">
+      <form class="search" method="get" action="/" data-suggest="/search/suggest">
         ${type !== 'all' ? `<input type="hidden" name="type" value="${escapeHtml(type)}" />` : ''}
-        <input type="search" name="q" value="${escapeHtml(query)}" placeholder="Search titles" />
+        <input type="search" name="q" value="${escapeHtml(query)}" placeholder="Search titles" aria-label="Search titles" />
         <button class="btn btn-ghost" type="submit">Search</button>
       </form>
     </div>
@@ -792,10 +792,18 @@ function regionOptions(current) {
   ).join('')}`
 }
 
+// The real Radarr and Sonarr marks, inlined so they render offline and stay
+// crisp at 20px. Radarr's dark strokes take the panel colour, its arrow keeps
+// the brand yellow.
+const SERVICE_ICONS = Object.freeze({
+  radarr:
+    '<svg viewBox="0 0 512 512" width="20" height="20" aria-hidden="true"><g transform="translate(70 21)"><path fill="currentColor" d="m10.3 59.8 3.9 372.4c-31.4 3.9-54.9-11.8-54.9-43.1l-3.9-309.7c0-98 90.2-121.5 145.1-82.3l278.3 160.7c39.2 27.4 47 78.4 27.4 113.7-3.9-27.4-15.7-43.1-39.2-58.8L53.4 36.2C29.9 20.6 10.3 24.5 10.3 59.8"/><path fill="currentColor" d="M-13.2 451.8c23.5 7.8 47 3.9 66.6-7.8l321.5-188.2c19.6 27.4 15.7 54.9-7.8 70.6L96.5 483.2c-39.2 19.6-90.1 0-109.7-31.4"/><path fill="#ffc230" d="M80.9 342 273 232.3 84.8 126.4z"/></g></svg>',
+  sonarr:
+    '<svg viewBox="0 0 512 512" width="20" height="20" aria-hidden="true"><path fill="#eee" d="M511.8 256c0 70.4-24.9 130.8-74.6 181.1-1.7 2-3.5 3.8-5.5 5.4-8.2 8-16.8 15.3-26 21.8Q341.05 512 256.3 512c-56.6 0-106.3-15.9-149.2-47.7-11.3-8-22-17.1-31.9-27.3C36.5 398.7 12.8 354 4 303.2c-1.7-9.9-2.9-20-3.4-30.2-.2-5.7-.4-11.3-.4-17 0-6 .1-11.7.4-17.1 0-.6.2-1.1.5-1.7 3.7-62.8 28.4-117 74.1-162.8C125.5 24.8 185.8 0 256.2 0c70.7 0 131 24.8 180.9 74.5q74.7 75.9 74.7 181.5"/><path fill="#3a3f51" d="m459.7 100.3-52.9 52.9c-30.9 30.9-33.6 57.8-33.6 105.3 0 42.3 6.7 81.1 38.2 112.6 23 23 44.9 44.7 44.9 44.7-5.9 7.2-12.3 14.3-19.1 21.2-1.7 2-3.5 3.8-5.5 5.4-6 5.9-12.2 11.4-18.6 16.4l-41.4-41.4C334.9 380.6 305.6 377 257 377c-46.7 0-78.4 4.3-112.6 38.5-20.4 20.4-43.8 43.9-43.8 43.9-8.9-6.8-17.3-14.2-25.3-22.4-6.6-6.6-12.8-13.4-18.5-20.3 0 0 23.1-23.2 45.2-45.3 32.7-32.7 38-70.6 38-113 0-41.3-6.8-79.8-36.8-109.9C82.2 127.7 53.3 99 53.3 99c6.7-8.5 14-16.7 21.8-24.5 6.9-6.8 14-13.1 21.2-19l48 48c30.7 30.7 70 38.6 112.4 38.6 43.6 0 82.8-8.4 114.7-40.4C391 82.1 417 56.3 417 56.3c6.8 5.6 13.5 11.6 20.1 18.2 8.3 8.3 15.8 16.9 22.6 25.8"/><path fill="#0cf" d="M186 269.1c-.5-2.8-.8-5.5-.9-8.4-.1-1.6-.1-3.1-.1-4.7 0-1.7 0-3.2.1-4.7 0-.2 0-.3.1-.5 1-17.4 7.9-32.4 20.5-45.1 13.9-13.8 30.6-20.7 50.2-20.7s36.3 6.9 50.2 20.7c13.8 14 20.7 30.8 20.7 50.3s-6.9 36.2-20.7 50.2c-.5.5-1 1.1-1.5 1.5q-3.45 3.3-7.2 6-18 13.2-41.4 13.2c-23.4 0-29.4-4.4-41.3-13.2-3.1-2.2-6.1-4.7-8.9-7.6-10.8-10.6-17.3-22.9-19.8-37"/></svg>',
+})
+
 function serviceIcon(kind) {
-  return kind === 'radarr'
-    ? '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 2v3h3V6H5Zm5 0v12h9V6h-9ZM8 11v2H5v-2h3Zm0 4v2H5v-2h3Z"/></svg>'
-    : '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 5h18a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm1 2v7h16V7H4Z"/></svg>'
+  return SERVICE_ICONS[kind] ?? SERVICE_ICONS.radarr
 }
 
 /** One saved profile as a bubble: service icon, name and edit/delete buttons. */
@@ -803,8 +811,8 @@ function profileBubble(kind, profile, index, total) {
   const name = escapeHtml(profile.name)
   const icon = serviceIcon(kind)
 
-  return `<div class="profile-bubble${profile.isDefault ? ' is-default' : ''}">
-    <span class="bubble-icon" aria-hidden="true">${icon}</span>
+  return `<div class="profile-bubble${profile.isDefault ? ' is-default' : ''} profile-bubble-${kind}">
+    <span class="bubble-icon bubble-icon-${kind}" aria-hidden="true">${icon}</span>
     <span class="bubble-text">
       <span class="bubble-name"><strong>${name}</strong>${
         profile.isDefault ? ' <span class="badge badge-approved">default</span>' : ''
@@ -936,7 +944,7 @@ function servicePanel(kind, label, settings, options) {
 
   return `<section class="panel service-panel">
     <div class="service-head">
-      <span class="service-icon">${serviceIcon(kind)}</span>
+      <span class="service-icon service-icon-${kind}">${serviceIcon(kind)}</span>
       <h2>${label}</h2>
       <span class="badge badge-${service.enabled ? 'approved' : 'pending'}">${service.enabled ? 'enabled' : 'disabled'}</span>
     </div>
@@ -1398,6 +1406,47 @@ export function registerPageRoutes(router) {
       active: 'discover',
       body: discoverBody({ user, type, query, source, items, error, plex: await plexEntries() }),
     })
+  })
+
+  // Suggestions for the Discover box. The form still submits normally, so a
+  // failure here just means no dropdown.
+  router.get('/search/suggest', async ({ req, res, url }) => {
+    const user = currentUser(req)
+    if (!user) {
+      sendJson(res, 401, { results: [] })
+      return
+    }
+
+    const query = (url.searchParams.get('q') ?? '').trim()
+    const type = parseType(url.searchParams.get('type'))
+    if (query.length < 2) {
+      sendJson(res, 200, { results: [] })
+      return
+    }
+
+    let found = []
+    if (tmdbConfigured()) {
+      try {
+        found = await searchTmdb(query, type)
+      } catch {
+        found = []
+      }
+    }
+    if (!found.length) found = getCatalog({ type, query, userId: user.id })
+
+    const results = found.slice(0, 8).map((item) => {
+      const local = item.tmdbId ? store.getMediaByTmdb(item.tmdbId, item.mediaType) : null
+      const year = String(item.releaseDate ?? '').slice(0, 4)
+      return {
+        title: item.title,
+        href: local ? `/media/${local.id}` : `/title/${item.mediaType}/${item.tmdbId}`,
+        posterPath: local?.posterPath ?? item.posterPath ?? null,
+        meta: `${item.mediaType === MediaType.TV ? 'Series' : 'Movie'}${year ? ` · ${year}` : ''}`,
+        available: local?.status === MediaStatus.AVAILABLE,
+      }
+    })
+
+    sendJson(res, 200, { results }, { 'cache-control': 'private, no-store' })
   })
 
   router.get('/networks', async ({ req, res, url }) => {

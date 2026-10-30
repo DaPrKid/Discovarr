@@ -1089,3 +1089,163 @@ code {
     width: 100%;
   }
 }
+
+
+/* --- bubble profiles: a card per profile, brand-tinted icon ------------- */
+
+.service-icon.radarr,
+.bubble-icon.radarr {
+  background: rgba(255, 194, 48, 0.14);
+  color: #ffc230;
+}
+
+.service-icon.sonarr,
+.bubble-icon.sonarr {
+  background: rgba(0, 204, 255, 0.14);
+  color: #0cf;
+}
+
+.profile-bubble {
+  min-width: 232px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: #10141d;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.01);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.profile-bubble:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.profile-bubble.is-default {
+  border-color: rgba(61, 220, 151, 0.5);
+  background: rgba(61, 220, 151, 0.07);
+}
+
+.bubble-icon.radarr,
+.bubble-icon.sonarr {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.bubble-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.bubble-name strong {
+  font-size: 0.9rem;
+}
+
+/* --- Plex action sits inside a narrow card ------------------------------ */
+
+.media-actions {
+  gap: 6px;
+}
+
+.media-card .media-actions .btn {
+  padding: 5px 10px;
+  font-size: 0.76rem;
+  border-radius: 8px;
+}
+
+.media-card .btn-plex {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  letter-spacing: 0.01em;
+}
+
+.plex-ribbon {
+  padding: 2px 7px;
+  font-size: 0.62rem;
+}
+
+/* --- live search suggestions -------------------------------------------- */
+
+.search {
+  position: relative;
+}
+
+.search-suggest {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  min-width: 300px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #0d1018;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+
+.search-suggest[hidden] {
+  display: none;
+}
+
+.suggest-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 9px;
+  color: var(--text);
+}
+
+.suggest-item:hover,
+.suggest-item.is-active {
+  background: var(--surface-2);
+}
+
+.suggest-poster {
+  width: 34px;
+  height: 50px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #1a1f2b;
+}
+
+.suggest-poster.is-empty {
+  display: block;
+}
+
+.suggest-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.suggest-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-meta {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.suggest-item .badge {
+  font-size: 0.62rem;
+}
+
+@media (max-width: 760px) {
+  .profile-bubble {
+    width: 100%;
+  }
+
+  .search-suggest {
+    min-width: 0;
+  }
+}

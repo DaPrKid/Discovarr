@@ -200,7 +200,10 @@ test('the same click pulls root folders and quality profiles', async () => {
   assert.match(html, /Add profile/)
   // Profiles sit in the Radarr panel as bubbles, and the add dialog is filled
   // with what the service reported.
-  assert.match(html, /class="profile-bubble is-default"/)
+  assert.match(html, /class="profile-bubble is-default profile-bubble-radarr"/)
+  // The bubble carries the real Radarr mark, not a generic film glyph.
+  assert.match(html, /bubble-icon bubble-icon-radarr/)
+  assert.match(html, /#ffc230/)
   assert.match(html, /<select name="profileSelect" required>/)
   assert.match(html, /<option value="5\|Ultra-HD">/)
   assert.match(html, /<option value="\/movies">\/movies<\/option>/)
@@ -217,6 +220,8 @@ test('the settings page fills its dropdowns without another click', async () => 
   // The stored default is a bubble with edit and delete buttons, and the
   // dialogs offer the live quality profiles and root folders from Radarr.
   assert.match(html, /profile-bubble is-default/)
+  assert.match(html, /profile-bubble-radarr/)
+  assert.match(html, /service-icon service-icon-sonarr/)
   assert.match(html, /<strong>HD-1080p<\/strong>/)
   assert.match(html, /aria-label="Edit HD-1080p"/)
   assert.match(html, /aria-label="Delete HD-1080p"/)
@@ -417,7 +422,9 @@ test('Plex availability is checked and linked from the cards', async () => {
   assert.ok(dune, 'the seeded catalog should hold Dune')
 
   const discover = await (await fetch(`${baseUrl}/`, { headers: { cookie: adminCookie } })).text()
-  assert.match(discover, /Play on Plex/)
+  // The action is a compact pill inside the card, still a full sentence for
+  // screen readers and tooltips.
+  assert.match(discover, /title="Play Dune: Part Two on Plex"[\s\S]{0,140}?▶ Play<\/a>/)
   assert.match(discover, /app\.plex\.tv\/desktop\/#!\/server\/machine-1/)
 
   const detail = await (await fetch(`${baseUrl}/media/${dune.id}`, { headers: { cookie: adminCookie } })).text()
@@ -441,4 +448,38 @@ test('Discover carries the browse sidebar and pages degrade without TMDB', async
     assert.equal(response.status, 200, `${path} should render without a TMDB key`)
     assert.match(html, /TMDB API key/, `${path} should explain the missing key`)
   }
+})
+
+test('discover search suggests titles while typing', async () => {
+  const anonymous = await fetch(`${baseUrl}/search/suggest?q=du`)
+  assert.equal(anonymous.status, 401)
+
+  const page = await (await fetch(`${baseUrl}/`, { headers: { cookie: adminCookie } })).text()
+  assert.match(page, /data-suggest="\/search\/suggest"/)
+  // The stylesheet is versioned so a new build is never served from cache.
+  assert.match(page, /styles\.css\?v=\d+\.\d+\.\d+/)
+
+  const response = await fetch(`${baseUrl}/search/suggest?q=du`, { headers: { cookie: adminCookie } })
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'private, no-store')
+
+  const { results } = await response.json()
+  assert.ok(Array.isArray(results) && results.length > 0, 'the seeded catalog should answer a query')
+  const dune = results.find((entry) => entry.title === 'Dune: Part Two')
+  assert.ok(dune, 'Dune should be suggested for "du"')
+  assert.match(dune.href, /^\/media\/\d+$/)
+  assert.equal(dune.meta, 'Movie · 2024')
+  assert.equal(typeof dune.available, 'boolean')
+
+  const short = await (await fetch(`${baseUrl}/search/suggest?q=d`, { headers: { cookie: adminCookie } })).json()
+  assert.deepEqual(short.results, [], 'a single character is not worth a lookup')
+})
+
+test('the inline script parses as a browser script', async () => {
+  // A stray escape once turned a regex into /^// and killed every dialog and
+  // the live search in one go; parsing the rendered script catches that.
+  const page = await (await fetch(`${baseUrl}/`, { headers: { cookie: adminCookie } })).text()
+  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1])
+  assert.ok(scripts.length > 0, 'the layout should inline its script')
+  for (const script of scripts) assert.doesNotThrow(() => new Function(script))
 })

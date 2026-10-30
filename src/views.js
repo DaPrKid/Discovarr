@@ -1,4 +1,5 @@
 import {
+  APP_VERSION,
   MEDIA_STATUS_LABEL,
   MediaRequestStatus,
   MediaStatus,
@@ -53,14 +54,14 @@ function navigation({ user, active, appName, canManageSettings }) {
   </header>`
 }
 
-export function layout({ appName = 'Discovarr', title = '', user = null, active = '', body = '', canManageSettings = false }) {
+export function layout({ appName = 'Discovarr', title = '', user = null, active = '', body = '', canManageSettings = false, version = APP_VERSION }) {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)} · ${escapeHtml(appName)}</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=${escapeHtml(version)}" />
   </head>
   <body>
     ${
@@ -81,6 +82,104 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         const closer = event.target.closest('[data-dialog-close]')
         if (closer) closer.closest('dialog')?.close()
       })
+
+      // Discover search suggests titles as you type. Leaving the field and
+      // pressing the button still runs the plain GET form, so nothing depends
+      // on this script or on the suggestion endpoint being reachable.
+      ;(function () {
+        var form = document.querySelector('form.search[data-suggest]')
+        if (!form) return
+        var input = form.querySelector('input[type=search]')
+        var panel = document.createElement('div')
+        panel.className = 'search-suggest'
+        panel.setAttribute('role', 'listbox')
+        panel.hidden = true
+        form.appendChild(panel)
+
+        var timer = null
+        var controller = null
+        var active = -1
+        var items = []
+
+        function escapeText(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]
+          })
+        }
+
+        function close() {
+          panel.hidden = true
+          panel.innerHTML = ''
+          items = []
+          active = -1
+        }
+
+        function paint() {
+          if (!items.length) return close()
+          panel.innerHTML = items
+            .map(function (entry, index) {
+              var thumb = entry.posterPath
+                ? '<img class="suggest-poster" src="/img/w92/' +
+                  escapeText(String(entry.posterPath).charAt(0) === '/'
+                    ? String(entry.posterPath).slice(1)
+                    : String(entry.posterPath)) +
+                  '" alt="" loading="lazy" />'
+                : '<span class="suggest-poster is-empty" aria-hidden="true"></span>'
+              return (
+                '<a class="suggest-item' + (index === active ? ' is-active' : '') +
+                '" role="option" aria-selected="' + (index === active) +
+                '" href="' + escapeText(entry.href) + '">' + thumb +
+                '<span class="suggest-text"><span class="suggest-title">' + escapeText(entry.title) +
+                '</span><span class="suggest-meta">' + escapeText(entry.meta) + '</span></span>' +
+                (entry.available ? '<span class="badge badge-available">Available</span>' : '') +
+                '</a>'
+              )
+            })
+            .join('')
+          panel.hidden = false
+        }
+
+        function load() {
+          var value = input.value.trim()
+          if (value.length < 2) return close()
+          var type = form.querySelector('input[name=type]')
+          var url =
+            form.dataset.suggest + '?q=' + encodeURIComponent(value) +
+            (type && type.value ? '&type=' + encodeURIComponent(type.value) : '')
+          if (controller) controller.abort()
+          controller = new AbortController()
+          fetch(url, { headers: { accept: 'application/json' }, credentials: 'same-origin', signal: controller.signal })
+            .then(function (response) { return response.ok ? response.json() : { results: [] } })
+            .then(function (data) {
+              items = Array.isArray(data.results) ? data.results : []
+              active = -1
+              paint()
+            })
+            .catch(function () {})
+        }
+
+        input.setAttribute('autocomplete', 'off')
+        input.addEventListener('input', function () {
+          clearTimeout(timer)
+          timer = setTimeout(load, 180)
+        })
+        input.addEventListener('keydown', function (event) {
+          if (panel.hidden || !items.length) return
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault()
+            active = (active + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+            paint()
+          } else if (event.key === 'Enter' && active >= 0) {
+            event.preventDefault()
+            window.location.href = items[active].href
+          } else if (event.key === 'Escape') {
+            close()
+          }
+        })
+        document.addEventListener('click', function (event) {
+          if (!form.contains(event.target)) close()
+        })
+      })()
     </script>
   </body>
 </html>`
@@ -169,7 +268,7 @@ export function mediaCard(item, { returnTo = '/', local = null, plex = null } = 
       <p class="media-meta">${escapeHtml(meta)}${year ? ` · ${escapeHtml(year)}` : ''}</p>
       <div class="media-actions">${requestAction(item, entry, returnTo)}${
         plex
-          ? `<a class="btn btn-sm btn-plex" href="${escapeHtml(plex.playUrl)}" target="_blank" rel="noreferrer noopener">▶ Play on Plex</a>`
+          ? `<a class="btn btn-sm btn-plex" href="${escapeHtml(plex.playUrl)}" target="_blank" rel="noreferrer noopener" title="Play ${title} on Plex" aria-label="Play ${title} on Plex">▶ Play</a>`
           : ''
       }</div>
     </div>
