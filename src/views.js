@@ -69,6 +69,19 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         : `<header class="topbar"><span class="brand">${escapeHtml(appName)}</span></header>`
     }
     <main class="page">${body}</main>
+    <script>
+      // Profile dialogs and "where to watch" toggles: tiny, no dependencies.
+      document.addEventListener('click', (event) => {
+        const opener = event.target.closest('[data-dialog-open]')
+        if (opener) {
+          const dialog = document.getElementById(opener.dataset.dialogOpen)
+          if (dialog) dialog.showModal()
+          return
+        }
+        const closer = event.target.closest('[data-dialog-close]')
+        if (closer) closer.closest('dialog')?.close()
+      })
+    </script>
   </body>
 </html>`
 }
@@ -137,13 +150,15 @@ export function mediaCard(item, { returnTo = '/', local = null } = {}) {
       : `Movie${(entry?.runtime ?? item.runtime) ? ` · ${entry?.runtime ?? item.runtime} min` : ''}`
 
   const year = (entry?.releaseDate ?? item.releaseDate)?.slice(0, 4)
-  const href = entry ? `/media/${entry.id}` : null
+  // Every card opens a detail page: the local record when it exists, otherwise
+  // the TMDB-backed page for a title that has not been requested yet.
+  const href = entry ? `/media/${entry.id}` : `/title/${mediaType}/${item.tmdbId}`
   const title = escapeHtml(entry?.title ?? item.title)
 
   return `<article class="media-card">
-    ${href ? `<a href="${href}" class="poster-link">${poster(entry)}</a>` : poster(item)}
+    <a href="${href}" class="poster-link">${poster(entry ?? item)}</a>
     <div class="media-body">
-      ${href ? `<a class="media-title" href="${href}">${title}</a>` : `<span class="media-title">${title}</span>`}
+      <a class="media-title" href="${href}">${title}</a>
       <p class="media-meta">${escapeHtml(meta)}${year ? ` · ${escapeHtml(year)}` : ''}</p>
       <div class="media-actions">${requestAction(item, entry, returnTo)}</div>
     </div>

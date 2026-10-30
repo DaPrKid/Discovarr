@@ -75,6 +75,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   'requests.autoApprove': 'false',
 
   'tmdb.apiKey': '',
+  // Where-to-watch region for the title page (ISO 3166-1 alpha-2).
+  'tmdb.region': 'US',
 
   'services.sonarr.enabled': 'false',
   'services.sonarr.url': '',
@@ -82,8 +84,11 @@ export const SETTING_DEFAULTS = Object.freeze({
   'services.sonarr.rootFolder': '',
   'services.sonarr.qualityProfileId': '',
   'services.sonarr.qualityProfileName': '',
-  // Extra profiles users may pick, one "id|name" per line.
+  // Legacy single default plus "id|name" extra profiles, still read so an
+  // install from before named profiles keeps working.
   'services.sonarr.qualityProfiles': '',
+  // Named profiles: JSON [{ name, profileId, profileName, rootFolder, isDefault }].
+  'services.sonarr.profiles': '',
   'services.radarr.enabled': 'false',
   'services.radarr.url': '',
   'services.radarr.apiKey': '',
@@ -91,6 +96,7 @@ export const SETTING_DEFAULTS = Object.freeze({
   'services.radarr.qualityProfileId': '',
   'services.radarr.qualityProfileName': '',
   'services.radarr.qualityProfiles': '',
+  'services.radarr.profiles': '',
 
   'sync.intervalMinutes': '30',
 

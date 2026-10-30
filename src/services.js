@@ -1,11 +1,11 @@
 import { MediaStatus, MediaType } from './constants.js'
-import { getSetting } from './db.js'
+import { getSetting, saveSettings } from './db.js'
 
 const LABELS = { sonarr: 'Sonarr', radarr: 'Radarr' }
 const TIMEOUT_MS = 8000
 
-/** "1|HD-1080p" lines from settings turned back into profile objects. */
-function parseProfiles(value) {
+/** \"1|HD-1080p\" lines from older installs turned back into profiles. */
+function parseLegacyProfiles(value) {
   return String(value ?? '')
     .split('\n')
     .map((line) => line.trim())
@@ -17,19 +17,150 @@ function parseProfiles(value) {
     .filter((profile) => Number.isInteger(profile.id))
 }
 
+/** A stored profile: a label, the *arr quality profile and a root folder. */
+function normalizeProfile(raw) {
+  if (!raw || typeof raw !== 'object') return null
+
+  const profileId = Number(raw.profileId)
+  if (!Number.isInteger(profileId) || profileId <= 0) return null
+
+  const profileName = String(raw.profileName ?? raw.profile_name ?? raw.name ?? '').trim()
+  const name = String(raw.name ?? profileName).trim() || `Profile ${profileId}`
+
+  return {
+    name,
+    profileId,
+    profileName: profileName || name,
+    rootFolder: String(raw.rootFolder ?? raw.root_folder ?? '').trim(),
+    isDefault: raw.isDefault === true || raw.is_default === true,
+  }
+}
+
+function parseStoredProfiles(value) {
+  try {
+    const parsed = JSON.parse(String(value ?? '[]'))
+    if (!Array.isArray(parsed)) return []
+    return parsed.map(normalizeProfile).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+/** Exactly one profile is the default; the first wins if none was marked. */
+function withSingleDefault(profiles) {
+  let seen = false
+  return profiles.map((profile) => {
+    if (profile.isDefault && !seen) {
+      seen = true
+      return profile
+    }
+    return { ...profile, isDefault: false }
+  })
+}
+
+function listProfiles(kind, summary) {
+  const stored = withSingleDefault(parseStoredProfiles(getSetting(`services.${kind}.profiles`)))
+  if (stored.length > 0) {
+    if (!stored.some((profile) => profile.isDefault)) stored[0] = { ...stored[0], isDefault: true }
+    return stored
+  }
+
+  // Databases from before named profiles: the single default plus the extra
+  // profiles the administrator ticked.
+  const profiles = []
+  if (summary.qualityProfileId) {
+    const id = Number(summary.qualityProfileId)
+    profiles.push({
+      name: summary.qualityProfileName || `Profile ${id}`,
+      profileId: id,
+      profileName: summary.qualityProfileName || `Profile ${id}`,
+      rootFolder: summary.rootFolder || '',
+      isDefault: true,
+    })
+  }
+
+  for (const extra of summary.extraProfiles) {
+    profiles.push({
+      name: extra.name || `Profile ${extra.id}`,
+      profileId: extra.id,
+      profileName: extra.name || `Profile ${extra.id}`,
+      rootFolder: summary.rootFolder || '',
+      isDefault: false,
+    })
+  }
+
+  return withSingleDefault(profiles)
+}
+
 export function serviceSummary(kind) {
   const enabled = getSetting(`services.${kind}.enabled`) === 'true'
   const url = getSetting(`services.${kind}.url`)
   const apiKey = getSetting(`services.${kind}.apiKey`)
-  return {
+
+  const summary = {
     enabled,
     url,
     configured: Boolean(url && apiKey),
     rootFolder: getSetting(`services.${kind}.rootFolder`),
     qualityProfileId: getSetting(`services.${kind}.qualityProfileId`),
     qualityProfileName: getSetting(`services.${kind}.qualityProfileName`),
-    extraProfiles: parseProfiles(getSetting(`services.${kind}.qualityProfiles`)),
+    extraProfiles: parseLegacyProfiles(getSetting(`services.${kind}.qualityProfiles`)),
   }
+
+  summary.profiles = listProfiles(kind, summary)
+  return summary
+}
+
+/** The named profiles, the default first. */
+export function serviceProfiles(kind) {
+  return serviceSummary(kind).profiles
+}
+
+/**
+ * Writes the profile list and mirrors the default into the older
+ * single-profile settings, so the API and any older page keep agreeing.
+ */
+export function saveServiceProfiles(kind, profiles) {
+  const list = withSingleDefault(profiles.map(normalizeProfile).filter(Boolean))
+  if (list.length > 0 && !list.some((profile) => profile.isDefault)) list[0] = { ...list[0], isDefault: true }
+
+  const fallback = list.find((profile) => profile.isDefault) ?? list[0] ?? null
+  const entries = {
+    [`services.${kind}.profiles`]: JSON.stringify(list),
+    [`services.${kind}.qualityProfiles`]: list
+      .filter((profile) => !profile.isDefault)
+      .map((profile) => `${profile.profileId}|${profile.profileName}`)
+      .join('\n'),
+    [`services.${kind}.rootFolder`]: fallback?.rootFolder ?? '',
+    [`services.${kind}.qualityProfileId`]: fallback ? String(fallback.profileId) : '',
+    [`services.${kind}.qualityProfileName`]: fallback?.profileName ?? '',
+  }
+
+  saveSettings(entries)
+  return list
+}
+
+/** The profile a request should use, falling back to the default. */
+export function resolveProfile(kind, { id = null, name = null } = {}) {
+  const profiles = serviceProfiles(kind)
+  if (profiles.length === 0) return null
+
+  const byName = name ? profiles.find((profile) => profile.name === String(name)) : null
+  if (byName) return byName
+
+  if (id !== null && id !== undefined && String(id) !== '') {
+    const byId = profiles.find((profile) => String(profile.profileId) === String(id))
+    if (byId) return byId
+  }
+
+  return profiles.find((profile) => profile.isDefault) ?? profiles[0]
+}
+
+/** The profile at a position in the list shown on the request form. */
+export function profileAt(kind, index) {
+  const position = Number(index)
+  if (!Number.isInteger(position) || position < 0) return null
+  return serviceProfiles(kind)[position] ?? null
 }
 
 /** Any *arr API call; throws a readable error instead of a raw fetch failure. */
@@ -138,31 +269,25 @@ export async function serviceOptions(kind) {
   }
 }
 
-/**
- * The default profile, or one of the extra profiles the administrator marked
- * as available. Anything else falls back to the default.
- */
-export function requestProfileFor(kind, requestedId = null) {
-  const { qualityProfileId, qualityProfileName, extraProfiles } = serviceSummary(kind)
-  if (!qualityProfileId) return null
-
-  const allowed = [{ id: Number(qualityProfileId), name: qualityProfileName }, ...extraProfiles]
-  return allowed.find((profile) => String(profile.id) === String(requestedId)) ?? allowed[0]
-}
-
-/** Adds a title to Radarr/Sonarr on approval. */
-export async function dispatchToService(media, request, profileId = null) {
+/** Adds a title to Radarr/Sonarr on approval, using the request's profile. */
+export async function dispatchToService(media, request) {
   const kind = media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr'
-  const { enabled, configured, rootFolder, qualityProfileId } = serviceSummary(kind)
+  const { enabled, configured } = serviceSummary(kind)
 
   if (!configured) return { dispatched: false, reason: `${LABELS[kind]} is not configured` }
   if (!enabled) return { dispatched: false, reason: `${LABELS[kind]} is disabled` }
-  if (!rootFolder || !qualityProfileId) {
-    throw new Error(`${LABELS[kind]} needs a root folder and quality profile in settings`)
+
+  const profile = resolveProfile(kind, {
+    id: request?.qualityProfileId,
+    name: request?.qualityProfileName,
+  })
+
+  if (!profile) {
+    throw new Error(`${LABELS[kind]} needs a quality profile in settings`)
   }
 
-  const chosen = requestProfileFor(kind, profileId ?? request?.qualityProfileId)
-  if (!chosen) throw new Error(`${LABELS[kind]} needs a quality profile in settings`)
+  const rootFolder = profile.rootFolder || serviceSummary(kind).rootFolder
+  if (!rootFolder) throw new Error(`${LABELS[kind]} profile "${profile.name}" has no root folder`)
 
   if (media.mediaType === MediaType.MOVIE) {
     const created = await arrRequest(kind, '/movie', {
@@ -171,7 +296,7 @@ export async function dispatchToService(media, request, profileId = null) {
         tmdbId: media.tmdbId,
         title: media.title,
         year: media.releaseDate ? Number(media.releaseDate.slice(0, 4)) : undefined,
-        qualityProfileId: chosen.id,
+        qualityProfileId: profile.profileId,
         rootFolderPath: rootFolder,
         monitored: true,
         minimumAvailability: 'released',
@@ -179,7 +304,11 @@ export async function dispatchToService(media, request, profileId = null) {
       },
     })
 
-    return { dispatched: true, externalId: created.id ?? null, detail: `Added to Radarr (id ${created.id ?? '?'})` }
+    return {
+      dispatched: true,
+      externalId: created.id ?? null,
+      detail: `Added to Radarr with "${profile.name}" (id ${created.id ?? '?'})`,
+    }
   }
 
   const lookup = await arrRequest(kind, `/series/lookup?term=${encodeURIComponent(`tmdb:${media.tmdbId}`)}`)
@@ -201,14 +330,18 @@ export async function dispatchToService(media, request, profileId = null) {
       images: candidate.images ?? [],
       seasons,
       rootFolderPath: rootFolder,
-      qualityProfileId: chosen.id,
+      qualityProfileId: profile.profileId,
       seasonFolder: true,
       monitored: true,
       addOptions: { monitor: 'none', searchForMissingEpisodes: true },
     },
   })
 
-  return { dispatched: true, externalId: created.id ?? null, detail: `Added to Sonarr (id ${created.id ?? '?'})` }
+  return {
+    dispatched: true,
+    externalId: created.id ?? null,
+    detail: `Added to Sonarr with "${profile.name}" (id ${created.id ?? '?'})`,
+  }
 }
 
 /** Pulls the current library so statuses can be reconciled. */

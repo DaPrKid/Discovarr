@@ -132,7 +132,7 @@ test('setup rejects an invalid account before creating anything', async () => {
 test('the first signup becomes an authenticated administrator', async () => {
   const response = await postForm('/setup', OWNER)
   assert.equal(response.status, 303)
-  assert.match(response.headers.get('location'), /^\/settings/)
+  assert.match(response.headers.get('location'), /^\/\?notice=/)
 
   adminCookie = (response.headers.getSetCookie?.()[0] ?? response.headers.get('set-cookie')).split(';')[0]
 

@@ -75,14 +75,23 @@ bootstrapping, which is only useful for demos.
 - **Discover** — TMDB trending and multi-search once an API key is set, with a
   cached local image proxy (`/img/<size>/<file>`). Without a key the app runs on
   a seeded offline catalog instead of failing.
+- **Title pages** — every card opens a page with the release date, rating,
+  genres, runtime (or season and episode counts), description, top cast, and
+  streaming, rental and purchase options for the configured region (JustWatch
+  data via TMDB). Titles nobody has requested yet get a page too.
+- **Settings tabs** — Integrations, Users, Notifications, Logs and Tasks, so the
+  page stays readable as features grow. Signing in always opens Discover.
 - **Requests** — movies or individual seasons, duplicate and already-available
   protection, pagination and status filters.
 - **Approval workflow** — `pending → approved → completed`, or `declined` /
   `failed`. Media and season statuses track `requested`, `processing`,
   `partly available`, `available`.
-- **Dispatch on approval** — approving adds the title to Radarr/Sonarr using the
-  configured root folder and quality profile. Failures mark the request
-  `failed` with the service's error, and can be retried.
+- **Named profiles** — each Radarr/Sonarr profile pairs a name with a quality
+  profile and a root folder, so "4K Movies" and "Kids" can point at different
+  libraries. One profile is the default; requesters pick another per title.
+  Approval dispatches with the chosen profile's quality and folder.
+- **Dispatch on approval** — approving adds the title to Radarr/Sonarr. Failures
+  mark the request `failed` with the service's error, and can be retried.
 - **Library sync** — every N minutes (default 30) the app reads the Radarr/Sonarr
   library, updates media and season statuses, imports titles it did not know
   about, and completes requests whose content arrived. Also runnable on demand.
@@ -103,13 +112,20 @@ bootstrapping, which is only useful for demos.
 
 Enter the base URL and API key, then press **Save and test connection**. That
 saves the settings, checks the service and, in the same click, pulls its root
-folders and quality profiles into dropdowns. The first folder and profile are
-stored as the defaults when nothing is chosen yet.
+folders and quality profiles. The first folder and profile are stored as the
+default profile when the service has none yet.
 
-Tick any **additional profiles** to let requesters choose between them: the title
-page then offers a quality-profile select with the default plus those extras, and
-the choice is kept on the request so approval dispatches with it. Requests made
-without a pick use the default profile.
+**Add profile** opens a dialog with a name, the quality profile to use, the root
+folder for that profile, and a *make this the default* checkbox. Profiles are
+listed per service with their quality profile, root folder and default badge;
+**Make default** and **Delete** sit on each row. The last profile cannot be
+deleted.
+
+When more than one profile exists the title page shows a profile select, and the
+choice is stored on the request, so approval dispatches with that profile's
+quality profile and root folder. Requests without a pick use the default.
+Settings saved before profiles existed are read as a single default profile, so
+nothing needs re-entering after an upgrade.
 
 ## Running as a specific user (Unraid, LinuxServer-style)
 
@@ -121,7 +137,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.3.1
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.4.0
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -170,7 +186,7 @@ relevant. Admin-only endpoints require the matching permission.
 | `GET` | `/media/:id` | Title, seasons, requests |
 | `PATCH` | `/media/:id` | `{ status: 5 }` marks available |
 | `GET` | `/request?filter=&page=&take=` | Admin sees all |
-| `POST` | `/request` | `{ mediaId }`, `{ mediaType, tmdbId }`, optional `seasons` |
+| `POST` | `/request` | `{ mediaId }`, `{ mediaType, tmdbId }`, optional `seasons`, `qualityProfileId` or `profileIndex` |
 | `POST` | `/request/:id/approve` | Approves and dispatches |
 | `POST` | `/request/:id/decline` | |
 | `POST` | `/request/:id/retry` | Re-dispatch a failed request |
@@ -189,6 +205,8 @@ discovarr/
 ├── docker/entrypoint.sh  # chowns /data, then drops to PUID:PGID
 ├── public/styles.css
 ├── tests/lifecycle.test.js
+├── tests/services.test.js   # *arr client and profile dispatch against a fake service
+├── tests/setup.test.js
 └── src/
     ├── server.js         # bootstrap, static files, /img proxy, error pages
     ├── pages.js          # server-rendered routes
@@ -213,7 +231,11 @@ discovarr/
 
 `npm test` boots the real server on a free port against a temporary database and
 exercises login, permissions, quotas, request/approval/dispatch, retry,
-pagination, password change, CSRF rejection and the image proxy guard.
+pagination, password change, CSRF rejection and the image proxy guard. The
+services suite runs a stand-in Radarr that rejects a wrong API key and records
+the POST it receives, which covers connection testing, folder and profile
+loading, named profiles, dispatch with a non-default profile's root folder, the
+tabbed settings page and sign-in landing on Discover.
 
 ## Limitations
 

@@ -684,3 +684,136 @@ input[type='checkbox'] {
 .user-row .btn {
   justify-self: start;
 }
+
+/* --- settings tabs, profile dialog, title page -------------------------- */
+
+.settings-tabs {
+  margin-top: 10px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.dialog::backdrop {
+  background: rgba(6, 8, 12, 0.72);
+}
+
+.dialog h2,
+.dialog p {
+  margin-top: 0;
+}
+
+.inline-link {
+  color: #b9a8ff;
+  text-decoration: underline;
+}
+
+.tagline {
+  margin: 0;
+  font-style: italic;
+  color: #b9a8ff;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px 20px;
+  margin: 0;
+}
+
+.fact dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.fact dd {
+  margin: 2px 0 0;
+  font-size: 0.9rem;
+}
+
+.cast-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 16px;
+}
+
+.cast {
+  display: grid;
+  gap: 3px;
+  font-size: 0.84rem;
+  line-height: 1.3;
+}
+
+.cast-photo {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.cast-photo-empty {
+  display: grid;
+  place-items: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.provider-group {
+  display: grid;
+  gap: 6px;
+}
+
+.providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0f1219;
+  font-size: 0.82rem;
+}
+
+.provider img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: #c3cbdd;
+}
+
+@media (max-width: 640px) {
+  .facts {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+}

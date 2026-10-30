@@ -10,6 +10,7 @@ import {
   Role,
 } from './constants.js'
 import {
+  addServiceProfile,
   approveRequest,
   changePassword,
   createFirstAdmin,
@@ -21,9 +22,11 @@ import {
   listRequestsFor,
   markAvailable,
   quotaSummary,
+  removeServiceProfile,
   requestMedia,
   retryRequest,
   saveServiceSelection,
+  setDefaultServiceProfile,
   updateSettings,
   updateUserByAdmin,
 } from './core.js'
@@ -34,10 +37,11 @@ import { clientKey, createRateLimiter } from './ratelimit.js'
 import {
   forgetServiceOptions,
   loadServiceOptions,
+  serviceProfiles,
   serviceSummary,
   testServiceConnection,
 } from './services.js'
-import { searchTmdb, tmdbConfigured, trendingTmdb } from './tmdb.js'
+import { searchTmdb, titleDetails, tmdbConfigured, trendingTmdb } from './tmdb.js'
 import { syncLibrary, syncState } from './sync.js'
 import {
   alert,
@@ -78,12 +82,13 @@ function parseType(value) {
   return value === MediaType.MOVIE || value === MediaType.TV ? value : 'all'
 }
 
-function pageUser(req, res, returnTo) {
+function pageUser(req, res) {
   const user = currentUser(req)
   if (!user) {
     // An installation with no accounts at all sends visitors to the setup page
-    // so the first administrator can be created.
-    redirect(res, store.countUsers() === 0 ? '/setup' : `/login?returnTo=${encodeURIComponent(returnTo)}`)
+    // so the first administrator can be created. Signing in always lands on
+    // Discover, so no return path is carried through the login form.
+    redirect(res, store.countUsers() === 0 ? '/setup' : '/login')
     return null
   }
   return user
@@ -112,7 +117,7 @@ function userPermissions(user) {
 // Auth pages
 // ---------------------------------------------------------------------------
 
-function loginPage({ returnTo, error, notice }) {
+function loginPage({ error, notice }) {
   return layout({
     appName: appName(),
     title: 'Sign in',
@@ -123,7 +128,6 @@ function loginPage({ returnTo, error, notice }) {
       <form method="post" action="/login" class="stack">
         <label>Username <input type="text" name="username" required autofocus autocomplete="username" placeholder="username or email" /></label>
         <label>Password <input type="password" name="password" required autocomplete="current-password" /></label>
-        <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
         <button class="btn" type="submit">Sign in</button>
       </form>
     </section>`,
@@ -189,71 +193,186 @@ function discoverBody({ user, type, query, source, items, error }) {
     ${grid}`
 }
 
-function detailBody({ user, media, notice, error }) {
-  const isAvailable = media.status === MediaStatus.AVAILABLE
-  const alreadyRequested = media.myActiveRequests > 0
-  const quota = quotaSummary(user)[media.mediaType === MediaType.MOVIE ? 'movie' : 'tv']
+function formatDate(value) {
+  return value ? String(value).slice(0, 10) : null
+}
 
-  const seasons = media.mediaType === MediaType.TV
-    ? `<div class="panel">
-        <h2 style="margin: 0">Seasons</h2>
-        <div class="season-list">
-          ${media.seasons
+function initials(name) {
+  return String(name ?? '?')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => word[0] ?? '')
+    .join('')
+    .toUpperCase()
+}
+
+function artwork(path, size) {
+  return `/img/${size}/${escapeHtml(String(path).replace(/^\//, ''))}`
+}
+
+function providerGroups(watch) {
+  return [
+    ['Streaming', watch.flatrate],
+    ['Free', watch.free],
+    ['Rent', watch.rent],
+    ['Buy', watch.buy],
+  ].filter(([, providers]) => providers.length > 0)
+}
+
+function watchPanel(details) {
+  const watch = details?.watch
+  if (!watch) return ''
+
+  const groups = providerGroups(watch)
+
+  return `<section class="panel">
+    <h2 style="margin: 0">Where to watch</h2>
+    ${
+      groups.length
+        ? groups
             .map(
-              (season) => `<div class="season">
-                <span>${escapeHtml(season.name)}</span>
-                <span class="muted">${season.episodeCount} episodes</span>
-                ${statusBadge(season.status)}
-              </div>`
+              ([label, providers]) => `<div class="provider-group">
+              <p class="muted small">${escapeHtml(label)}</p>
+              <div class="providers">
+                ${providers
+                  .map(
+                    (provider) => `<span class="provider" title="${escapeHtml(provider.name)}">
+                      ${provider.logoPath ? `<img src="${artwork(provider.logoPath, 'w92')}" alt="" loading="lazy" />` : ''}
+                      <span>${escapeHtml(provider.name)}</span>
+                    </span>`
+                  )
+                  .join('')}
+              </div>
+            </div>`
             )
-            .join('')}
-        </div>
-      </div>`
-    : ''
+            .join('')
+        : `<p class="muted small">No streaming, rental or purchase options listed for ${escapeHtml(watch.region)}.</p>`
+    }
+    <p class="muted small">Availability for ${escapeHtml(watch.region)} from JustWatch${
+      watch.link
+        ? ` · <a class="inline-link" href="${escapeHtml(watch.link)}" target="_blank" rel="noreferrer noopener">all options</a>`
+        : ''
+    }</p>
+  </section>`
+}
 
-  const picker = media.mediaType === MediaType.TV
-    ? `<fieldset class="panel">
-        <legend>Seasons to request</legend>
-        <div class="season-list">
-          ${media.seasons
-            .map(
-              (season) => `<label class="season">
-                <input type="checkbox" name="season" value="${season.seasonNumber}"
-                  ${season.status === MediaStatus.AVAILABLE ? '' : 'checked'}
-                  ${season.status === MediaStatus.AVAILABLE ? 'disabled' : ''} />
-                <span>${escapeHtml(season.name)}</span>
-                <span class="muted">${season.episodeCount} episodes</span>
-              </label>`
-            )
-            .join('')}
-        </div>
-        <p class="muted small">Seasons already in the library are locked.</p>
-      </fieldset>`
-    : ''
+function castPanel(details) {
+  if (!details?.cast?.length) return ''
 
-  // The default profile plus the extra ones the admin allowed, so a requester
-  // can pick a different one per title.
-  const service = serviceSummary(media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr')
-  const requestProfiles = service.qualityProfileId
-    ? [
-        { id: Number(service.qualityProfileId), name: service.qualityProfileName },
-        ...service.extraProfiles,
-      ]
+  return `<section class="panel">
+    <h2 style="margin: 0">Cast</h2>
+    <div class="cast-grid">
+      ${details.cast
+        .map(
+          (member) => `<article class="cast">
+            ${
+              member.profilePath
+                ? `<img class="cast-photo" src="${artwork(member.profilePath, 'w185')}" alt="" loading="lazy" />`
+                : `<span class="cast-photo cast-photo-empty">${escapeHtml(initials(member.name))}</span>`
+            }
+            <strong>${escapeHtml(member.name)}</strong>
+            ${member.character ? `<span class="muted small">${escapeHtml(member.character)}</span>` : ''}
+          </article>`
+        )
+        .join('')}
+    </div>
+  </section>`
+}
+
+function detailBody({ user, media, details, notice, error }) {
+  const entry = media ?? details
+  const isTv = entry.mediaType === MediaType.TV
+  const kind = isTv ? 'sonarr' : 'radarr'
+  const profiles = serviceProfiles(kind)
+  const storedSeasons = media ? store.listSeasons(media.id) : []
+  const detailSeasons = details?.seasons ?? []
+
+  // Episode counts come from TMDB; the availability badge comes from the local
+  // record, which the library sync keeps current.
+  const listedSeasons = detailSeasons.length
+    ? detailSeasons
+    : storedSeasons.map((season) => ({
+        seasonNumber: season.seasonNumber,
+        name: season.name,
+        episodeCount: season.episodeCount,
+      }))
+
+  const seasonRows = isTv
+    ? listedSeasons.map((season) => {
+        const local = storedSeasons.find((candidate) => candidate.seasonNumber === season.seasonNumber)
+        return `<div class="season">
+          <span>${escapeHtml(season.name ?? `Season ${season.seasonNumber}`)}</span>
+          <span class="muted">${Number(season.episodeCount ?? local?.episodeCount ?? 0)} episodes</span>
+          ${local ? statusBadge(local.status) : ''}
+        </div>`
+      })
     : []
 
+  const totalEpisodes =
+    details?.totalEpisodes ?? storedSeasons.reduce((sum, season) => sum + (season.episodeCount ?? 0), 0)
+  const seasonCount = details?.totalSeasons ?? (storedSeasons.length || entry.seasonsCount || null)
+
+  const facts = [
+    ['Release date', formatDate(entry.releaseDate)],
+    isTv ? ['Seasons', seasonCount ? String(seasonCount) : null] : null,
+    isTv ? ['Episodes', totalEpisodes ? String(totalEpisodes) : null] : null,
+    isTv ? ['Last aired', formatDate(details?.lastAirDate)] : null,
+    entry.runtime ? [isTv ? 'Episode runtime' : 'Runtime', `${entry.runtime} min`] : null,
+    details?.rating ? ['Rating', `${details.rating}/10 from ${details.votes.toLocaleString('en-US')} votes`] : null,
+    details?.releaseStatus ? ['Release status', details.releaseStatus] : null,
+    entry.genres?.length ? ['Genres', entry.genres.join(', ')] : null,
+    details?.directors?.length ? ['Director', details.directors.join(', ')] : null,
+    details?.creators?.length ? ['Created by', details.creators.join(', ')] : null,
+    details?.networks?.length ? ['Network', details.networks.join(', ')] : null,
+    media ? ['Library', `${MEDIA_STATUS_LABEL[media.status] ?? 'Unknown'} · ${media.activeRequests} active request(s)`] : null,
+  ].filter((fact) => fact && fact[1])
+
+  const factsHtml = facts.length
+    ? `<dl class="facts">${facts
+        .map(([label, value]) => `<div class="fact"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`)
+        .join('')}</dl>`
+    : ''
+
   const profilePicker =
-    requestProfiles.length > 1
-      ? `<label>Quality profile
-        <select name="qualityProfile">
-          ${requestProfiles
-            .map(
-              (profile) =>
-                `<option value="${profile.id}">${escapeHtml(profile.name || `Profile ${profile.id}`)}</option>`
-            )
-            .join('')}
-        </select>
-      </label>`
+    profiles.length > 1
+      ? `<label>Profile
+          <select name="profile">
+            ${profiles
+              .map(
+                (profile, index) =>
+                  `<option value="${index}" ${profile.isDefault ? 'selected' : ''}>${escapeHtml(profile.name)}${
+                    profile.isDefault ? ' (default)' : ''
+                  }</option>`
+              )
+              .join('')}
+          </select>
+        </label>`
       : ''
+
+  const picker =
+    isTv && media
+      ? `<fieldset class="panel">
+          <legend>Seasons to request</legend>
+          <div class="season-list">
+            ${storedSeasons
+              .map(
+                (season) => `<label class="season">
+                  <input type="checkbox" name="season" value="${season.seasonNumber}"
+                    ${season.status === MediaStatus.AVAILABLE ? '' : 'checked'}
+                    ${season.status === MediaStatus.AVAILABLE ? 'disabled' : ''} />
+                  <span>${escapeHtml(season.name)}</span>
+                  <span class="muted">${season.episodeCount} episodes</span>
+                </label>`
+              )
+              .join('')}
+          </div>
+          <p class="muted small">Seasons already in the library are locked.</p>
+        </fieldset>`
+      : ''
+
+  const isAvailable = media?.status === MediaStatus.AVAILABLE
+  const alreadyRequested = (media?.myActiveRequests ?? 0) > 0
+  const quota = media ? quotaSummary(user)[isTv ? 'tv' : 'movie'] : null
 
   let action
 
@@ -262,21 +381,27 @@ function detailBody({ user, media, notice, error }) {
   } else if (alreadyRequested) {
     action = '<p class="badge badge-pending">You already requested this</p>'
   } else {
-    action = `<form method="post" action="/media/${media.id}/request" class="stack">
-      <input type="hidden" name="returnTo" value="/media/${media.id}" />
-      <input type="hidden" name="seasonsSubmitted" value="1" />
+    const formAction = media ? `/media/${media.id}/request` : '/media/import'
+    action = `<form method="post" action="${formAction}" class="stack">
+      ${
+        media
+          ? `<input type="hidden" name="returnTo" value="/media/${media.id}" />`
+          : `<input type="hidden" name="tmdbId" value="${escapeHtml(entry.tmdbId)}" />
+             <input type="hidden" name="mediaType" value="${escapeHtml(entry.mediaType)}" />
+             <input type="hidden" name="returnTo" value="/" />`
+      }
       ${picker}
       ${profilePicker}
-      <button class="btn" type="submit">Request ${media.mediaType === MediaType.TV ? 'seasons' : 'movie'}</button>
-      ${quota.limit > 0 ? `<p class="muted small">${quota.used}/${quota.limit} requests used this month</p>` : ''}
+      <button class="btn" type="submit">Request ${isTv ? 'seasons' : 'movie'}</button>
+      ${quota && quota.limit > 0 ? `<p class="muted small">${quota.used}/${quota.limit} requests used this month</p>` : ''}
     </form>`
   }
 
   const meta = [
-    media.mediaType === MediaType.TV ? 'Series' : 'Movie',
-    media.releaseDate?.slice(0, 4),
-    media.runtime ? `${media.runtime} min` : null,
-    ...media.genres,
+    isTv ? 'Series' : 'Movie',
+    formatDate(entry.releaseDate)?.slice(0, 4),
+    entry.runtime ? `${entry.runtime} min` : null,
+    ...(entry.genres ?? []),
   ]
     .filter(Boolean)
     .join(' · ')
@@ -284,16 +409,24 @@ function detailBody({ user, media, notice, error }) {
   return `<a class="back" href="/">← Back to discover</a>
     ${alert({ notice, error })}
     <section class="detail">
-      ${poster(media, 'poster-lg')}
+      ${poster(entry, 'poster-lg')}
       <div class="detail-body">
-        <h1>${escapeHtml(media.title)}</h1>
+        <h1>${escapeHtml(entry.title)}</h1>
+        ${details?.tagline ? `<p class="tagline">${escapeHtml(details.tagline)}</p>` : ''}
         <p class="media-meta">${escapeHtml(meta)}</p>
-        <p class="overview">${escapeHtml(media.overview)}</p>
-        <p class="muted small">Library status: ${escapeHtml(MEDIA_STATUS_LABEL[media.status] ?? 'Unknown')} · ${media.activeRequests} active request(s)${media.syncedAt ? ` · synced ${escapeHtml(media.syncedAt.slice(0, 16).replace('T', ' '))}` : ''}</p>
-        ${seasons}
+        <p class="overview">${escapeHtml(entry.overview || 'No description available yet.')}</p>
+        ${factsHtml}
+        ${
+          seasonRows.length
+            ? `<div class="panel"><h2 style="margin: 0">Seasons</h2><div class="season-list">${seasonRows.join('')}</div></div>`
+            : ''
+        }
         ${action}
       </div>
-    </section>`
+    </section>
+    ${castPanel(details)}
+    ${watchPanel(details)}
+    ${details ? '<p class="muted small">Metadata from TMDB.</p>' : ''}`
 }
 
 // ---------------------------------------------------------------------------
@@ -360,13 +493,56 @@ function accountBody({ user, quota, notice, error }) {
 // Settings
 // ---------------------------------------------------------------------------
 
+const SETTINGS_TABS = Object.freeze([
+  ['integrations', 'Integrations'],
+  ['users', 'Users'],
+  ['notifications', 'Notifications'],
+  ['logs', 'Logs'],
+  ['tasks', 'Tasks'],
+])
+
+const WATCH_REGIONS = [
+  ['US', 'United States'],
+  ['CA', 'Canada'],
+  ['GB', 'United Kingdom'],
+  ['IE', 'Ireland'],
+  ['AU', 'Australia'],
+  ['NZ', 'New Zealand'],
+  ['DE', 'Germany'],
+  ['FR', 'France'],
+  ['NL', 'Netherlands'],
+  ['SE', 'Sweden'],
+  ['DK', 'Denmark'],
+  ['NO', 'Norway'],
+  ['ES', 'Spain'],
+  ['IT', 'Italy'],
+  ['BR', 'Brazil'],
+  ['IN', 'India'],
+  ['JP', 'Japan'],
+]
+
+function settingsTabs(tab) {
+  return `<nav class="tabs settings-tabs">
+    ${SETTINGS_TABS.map(
+      ([key, label]) => `<a class="tab ${tab === key ? 'is-active' : ''}" href="/settings?tab=${key}">${label}</a>`
+    ).join('')}
+  </nav>`
+}
+
+function regionOptions(current) {
+  const value = String(current || 'US').toUpperCase()
+  const known = WATCH_REGIONS.some(([code]) => code === value)
+  return `${known ? '' : `<option value="${escapeHtml(value)}" selected>${escapeHtml(value)}</option>`}${WATCH_REGIONS.map(
+    ([code, name]) => `<option value="${code}" ${code === value ? 'selected' : ''}>${escapeHtml(name)}</option>`
+  ).join('')}`
+}
+
 function serviceFields(kind, label, settings, options) {
   const service = serviceSummary(kind)
+  const list = options?.[kind] ?? null
   const profileValue = service.qualityProfileId
     ? `${service.qualityProfileId}${service.qualityProfileName ? `|${service.qualityProfileName}` : ''}`
     : ''
-
-  const list = options?.[kind] ?? null
 
   const rootField = list?.rootFolders?.length
     ? `<label>Root folder
@@ -398,30 +574,18 @@ function serviceFields(kind, label, settings, options) {
         <input type="text" name="${kind}QualityProfile" value="${escapeHtml(profileValue)}" placeholder="1" />
       </label>`
 
-  const extraChoices = list?.qualityProfiles?.length
-    ? list.qualityProfiles
-        .filter((profile) => String(profile.id) !== String(service.qualityProfileId))
-        .map(
-          (profile) => `<label class="checkbox">
-            <input type="checkbox" name="${kind}ExtraProfile" value="${profile.id}|${escapeHtml(profile.name)}" ${
-              service.extraProfiles.some((extra) => String(extra.id) === String(profile.id)) ? 'checked' : ''
-            } />
-            <span>${escapeHtml(profile.name)}</span>
-          </label>`
-        )
-        .join('')
-    : ''
-
-  const extraField = extraChoices
-    ? `<div class="panel-inline">
-        <input type="hidden" name="${kind}ProfilesSubmitted" value="1" />
-        <p class="muted small">Additional profiles requesters may choose</p>
-        <div class="permissions">${extraChoices}</div>
-      </div>`
-    : ''
+  // Once named profiles exist they decide the folder and quality profile for
+  // every request, so the one-click defaults step aside instead of quietly
+  // overriding them.
+  const defaults = service.profiles.length
+    ? `<p class="muted small">Using ${service.profiles.length} saved profile(s); the default is
+        <strong>${escapeHtml(service.profiles.find((profile) => profile.isDefault)?.name ?? service.profiles[0].name)}</strong>.
+        Add or change them in the ${label} profiles panel below.</p>`
+    : `${rootField}${profileField}`
 
   return `<fieldset class="panel">
     <legend>${label} <span class="badge badge-${service.enabled ? 'approved' : 'pending'}">${service.enabled ? 'enabled' : 'disabled'}</span></legend>
+    <input type="hidden" name="${kind}EnabledSubmitted" value="1" />
     <label class="checkbox">
       <input type="checkbox" name="${kind}Enabled" ${service.enabled ? 'checked' : ''} />
       <span>Enable ${label} integration</span>
@@ -432,14 +596,103 @@ function serviceFields(kind, label, settings, options) {
     <label>API key
       <input type="password" name="${kind}ApiKey" value="${escapeHtml(settings[`services.${kind}.apiKey`])}" autocomplete="off" />
     </label>
-    ${rootField}
-    ${profileField}
-    ${extraField}
+    ${defaults}
     <div class="request-actions">
       <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/options/${kind}">Load folders and profiles</button>
       <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/test/${kind}">Save and test connection</button>
     </div>
   </fieldset>`
+}
+
+function profileDialog(kind, label, options) {
+  const list = options?.[kind] ?? null
+
+  const qualityField = list?.qualityProfiles?.length
+    ? `<label>Quality profile
+        <select name="profileSelect" required>
+          ${list.qualityProfiles
+            .map((profile) => `<option value="${profile.id}|${escapeHtml(profile.name)}">${escapeHtml(profile.name)}</option>`)
+            .join('')}
+        </select>
+      </label>`
+    : `<label>Quality profile
+        <input type="text" name="profileSelect" required placeholder="4|HD-1080p" />
+        <span class="muted small">Format: id|name — load folders and profiles first for a list.</span>
+      </label>`
+
+  const rootField = list?.rootFolders?.length
+    ? `<label>Root folder
+        <select name="rootFolder" required>
+          ${list.rootFolders
+            .map((folder) => `<option value="${escapeHtml(folder.path)}">${escapeHtml(folder.path)}</option>`)
+            .join('')}
+        </select>
+      </label>`
+    : `<label>Root folder
+        <input type="text" name="rootFolder" required placeholder="/media/movies" />
+      </label>`
+
+  return `<dialog class="dialog" id="profile-${kind}">
+    <form method="post" action="/settings/profiles/${kind}/add" class="stack">
+      <h2 style="margin: 0">Add a ${label} profile</h2>
+      <p class="muted small">The name is what requesters see. The quality profile and root folder are what ${label} uses for that choice.</p>
+      <label>Profile name <input type="text" name="name" required maxlength="60" placeholder="4K Movies" /></label>
+      ${qualityField}
+      ${rootField}
+      <label class="checkbox"><input type="checkbox" name="makeDefault" /> <span>Make this the default profile</span></label>
+      <div class="request-actions">
+        <button class="btn" type="submit">Add profile</button>
+        <button class="btn btn-ghost" type="button" data-dialog-close>Cancel</button>
+      </div>
+    </form>
+  </dialog>`
+}
+
+function profilePanel(kind, label, options) {
+  const profiles = serviceProfiles(kind)
+
+  const rows = profiles
+    .map(
+      (profile) => `<tr>
+        <td><strong>${escapeHtml(profile.name)}</strong>${
+          profile.isDefault ? ' <span class="badge badge-approved">default</span>' : ''
+        }</td>
+        <td>${escapeHtml(profile.profileName)}</td>
+        <td><code>${escapeHtml(profile.rootFolder || '—')}</code></td>
+        <td><div class="request-actions">
+          ${
+            profile.isDefault
+              ? ''
+              : `<form method="post" action="/settings/profiles/${kind}/default">
+                  <input type="hidden" name="name" value="${escapeHtml(profile.name)}" />
+                  <button class="btn btn-sm btn-ghost" type="submit">Make default</button>
+                </form>`
+          }
+          <form method="post" action="/settings/profiles/${kind}/delete">
+            <input type="hidden" name="name" value="${escapeHtml(profile.name)}" />
+            <button class="btn btn-sm btn-danger" type="submit" ${profiles.length <= 1 ? 'disabled' : ''}>Delete</button>
+          </form>
+        </div></td>
+      </tr>`
+    )
+    .join('')
+
+  return `<section class="panel">
+    <div class="panel-head">
+      <h2 style="margin: 0">${label} profiles</h2>
+      <button class="btn btn-sm" type="button" data-dialog-open="profile-${kind}">Add profile</button>
+    </div>
+    <p class="muted small">Each profile is a name, a quality profile and a root folder. Requesters choose one when more than one exists.</p>
+    ${
+      profiles.length
+        ? `<table class="table">
+            <thead><tr><th>Name</th><th>Quality profile</th><th>Root folder</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`
+        : '<p class="empty">No profiles yet. Add one so requests know which quality and folder to use.</p>'
+    }
+    ${profileDialog(kind, label, options)}
+  </section>`
 }
 
 function userRow(member, actor) {
@@ -473,51 +726,37 @@ function userRow(member, actor) {
   </form>`
 }
 
-function settingsBody({ user, settings, users, audit, options, notice, error }) {
+function settingsBody({ user, settings, users, audit, options, tab, notice, error }) {
   const sync = syncState()
+  const current = SETTINGS_TABS.some(([key]) => key === tab) ? tab : 'integrations'
 
-  return `<h1>Settings</h1>
-    ${alert({ notice, error })}
+  const generalPanel = `<fieldset class="panel">
+      <legend>General</legend>
+      <label>Application name <input type="text" name="appName" value="${escapeHtml(settings['app.name'])}" maxlength="60" /></label>
+      <label class="checkbox">
+        <input type="checkbox" name="autoApprove" ${settings['requests.autoApprove'] === 'true' ? 'checked' : ''} />
+        <span>Auto-approve new requests</span>
+      </label>
+      <label>TMDB API key
+        <input type="password" name="tmdbApiKey" value="${escapeHtml(settings['tmdb.apiKey'])}" autocomplete="off" placeholder="v3 key or v4 read token" />
+      </label>
+      <label>Where-to-watch region
+        <select name="tmdbRegion">${regionOptions(settings['tmdb.region'])}</select>
+      </label>
+    </fieldset>`
 
-    <form method="post" action="/settings" class="stack">
-      <fieldset class="panel">
-        <legend>General</legend>
-        <label>Application name <input type="text" name="appName" value="${escapeHtml(settings['app.name'])}" maxlength="60" /></label>
-        <label class="checkbox">
-          <input type="checkbox" name="autoApprove" ${settings['requests.autoApprove'] === 'true' ? 'checked' : ''} />
-          <span>Auto-approve new requests</span>
-        </label>
-        <label>TMDB API key
-          <input type="password" name="tmdbApiKey" value="${escapeHtml(settings['tmdb.apiKey'])}" autocomplete="off" placeholder="v3 key or v4 read token" />
-        </label>
-      </fieldset>
-
+  const integrations = `<form method="post" action="/settings" class="stack">
+      <input type="hidden" name="settingsSection" value="integrations" />
+      <input type="hidden" name="settingsTab" value="integrations" />
+      ${generalPanel}
       ${serviceFields('radarr', 'Radarr', settings, options)}
       ${serviceFields('sonarr', 'Sonarr', settings, options)}
-
-      <fieldset class="panel">
-        <legend>Notifications</legend>
-        <label>Webhook URL
-          <input type="url" name="webhookUrl" value="${escapeHtml(settings['notifications.webhookUrl'])}" placeholder="https://discord.com/api/webhooks/..." />
-        </label>
-        <label class="checkbox"><input type="checkbox" name="onRequest" ${settings['notifications.onRequest'] === 'true' ? 'checked' : ''} /> <span>New requests</span></label>
-        <label class="checkbox"><input type="checkbox" name="onApproval" ${settings['notifications.onApproval'] === 'true' ? 'checked' : ''} /> <span>Approvals and declines</span></label>
-        <label class="checkbox"><input type="checkbox" name="onAvailable" ${settings['notifications.onAvailable'] === 'true' ? 'checked' : ''} /> <span>Titles becoming available</span></label>
-      </fieldset>
-
-      <fieldset class="panel">
-        <legend>Library sync</legend>
-        <label>Interval (minutes, 0 disables)
-          <input type="number" name="syncIntervalMinutes" min="0" value="${escapeHtml(settings['sync.intervalMinutes'])}" />
-        </label>
-        <p class="muted small">Last run: ${sync.lastRun ? escapeHtml(sync.lastRun.replace('T', ' ').slice(0, 19)) : 'never'}${sync.running ? ' · running now' : ''}</p>
-        <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/sync">Sync now</button>
-      </fieldset>
-
-      <button class="btn" type="submit">Save settings</button>
+      <button class="btn" type="submit">Save integration settings</button>
     </form>
+    ${profilePanel('radarr', 'Radarr', options)}
+    ${profilePanel('sonarr', 'Sonarr', options)}`
 
-    <h2>Users</h2>
+  const usersTab = `<h2>Users</h2>
     <div class="user-list">${users.map((member) => userRow(member, user)).join('')}</div>
 
     <form method="post" action="/settings/users" class="stack panel">
@@ -534,20 +773,79 @@ function settingsBody({ user, settings, users, audit, options, notice, error }) 
         </label>
       </div>
       <button class="btn btn-sm" type="submit">Create user</button>
+    </form>`
+
+  const notifications = `<form method="post" action="/settings" class="stack">
+      <input type="hidden" name="settingsSection" value="notifications" />
+      <input type="hidden" name="settingsTab" value="notifications" />
+      <fieldset class="panel">
+        <legend>Webhook</legend>
+        <label>Webhook URL
+          <input type="url" name="webhookUrl" value="${escapeHtml(settings['notifications.webhookUrl'])}" placeholder="https://discord.com/api/webhooks/..." />
+        </label>
+        <label class="checkbox"><input type="checkbox" name="onRequest" ${settings['notifications.onRequest'] === 'true' ? 'checked' : ''} /> <span>New requests</span></label>
+        <label class="checkbox"><input type="checkbox" name="onApproval" ${settings['notifications.onApproval'] === 'true' ? 'checked' : ''} /> <span>Approvals and declines</span></label>
+        <label class="checkbox"><input type="checkbox" name="onAvailable" ${settings['notifications.onAvailable'] === 'true' ? 'checked' : ''} /> <span>Titles becoming available</span></label>
+        <p class="muted small">A Discord or Slack incoming webhook works; the payload is a plain JSON message.</p>
+      </fieldset>
+      <button class="btn" type="submit">Save notification settings</button>
+    </form>`
+
+  const logs = `<section class="panel">
+      <h2 style="margin: 0">Recent activity</h2>
+      <p class="muted small">The last ${audit.length} actions, newest first. Container output is available in <code>docker logs discovarr</code>.</p>
+      <table class="table">
+        <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody>
+          ${
+            audit.length
+              ? audit
+                  .map(
+                    (entry) =>
+                      `<tr><td>${escapeHtml(entry.createdAt.slice(0, 16).replace('T', ' '))}</td><td>${escapeHtml(entry.username)}</td><td>${escapeHtml(entry.action)}</td><td>${escapeHtml(entry.detail)}</td></tr>`
+                  )
+                  .join('')
+              : '<tr><td colspan="4" class="muted">Nothing logged yet.</td></tr>'
+          }
+        </tbody>
+      </table>
+    </section>`
+
+  const tasks = `<form method="post" action="/settings" class="stack">
+      <input type="hidden" name="settingsSection" value="tasks" />
+      <input type="hidden" name="settingsTab" value="tasks" />
+      <fieldset class="panel">
+        <legend>Library sync</legend>
+        <label>Interval (minutes, 0 disables)
+          <input type="number" name="syncIntervalMinutes" min="0" value="${escapeHtml(settings['sync.intervalMinutes'])}" />
+        </label>
+        <p class="muted small">Last run: ${sync.lastRun ? escapeHtml(sync.lastRun.replace('T', ' ').slice(0, 19)) : 'never'}${sync.running ? ' · running now' : ''}</p>
+        ${sync.lastSummary ? `<p class="muted small">Last result: ${escapeHtml(JSON.stringify(sync.lastSummary.services))}</p>` : ''}
+        <button class="btn btn-sm" type="submit">Save schedule</button>
+      </fieldset>
     </form>
 
-    <h2>Recent activity</h2>
-    <table class="table">
-      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead>
-      <tbody>
-        ${audit
-          .map(
-            (entry) =>
-              `<tr><td>${escapeHtml(entry.createdAt.slice(0, 16).replace('T', ' '))}</td><td>${escapeHtml(entry.username)}</td><td>${escapeHtml(entry.action)}</td><td>${escapeHtml(entry.detail)}</td></tr>`
-          )
-          .join('')}
-      </tbody>
-    </table>`
+    <form method="post" action="/settings/sync" class="panel">
+      <h2 style="margin: 0">Run a sync now</h2>
+      <p class="muted small">Pulls the Radarr and Sonarr libraries and marks finished requests as available.</p>
+      <button class="btn btn-sm btn-ghost" type="submit">Sync now</button>
+    </form>`
+
+  const content =
+    current === 'users'
+      ? usersTab
+      : current === 'notifications'
+        ? notifications
+        : current === 'logs'
+          ? logs
+          : current === 'tasks'
+            ? tasks
+            : integrations
+
+  return `<h1>Settings</h1>
+    ${alert({ notice, error })}
+    ${settingsTabs(current)}
+    ${content}`
 }
 
 // ---------------------------------------------------------------------------
@@ -555,7 +853,7 @@ function settingsBody({ user, settings, users, audit, options, notice, error }) 
 // ---------------------------------------------------------------------------
 
 function serviceFromBody(body, kind) {
-  const service = { enabled: body[`${kind}Enabled`] !== undefined }
+  const service = {}
 
   // Only fields that were actually submitted are written, so a partial post
   // cannot blank a URL or key that is already saved.
@@ -565,6 +863,14 @@ function serviceFromBody(body, kind) {
     ['rootFolder', 'RootFolder'],
   ]) {
     if (body[`${kind}${suffix}`] !== undefined) service[field] = body[`${kind}${suffix}`]
+  }
+
+  // A form that carries the marker can turn a service off; without it an
+  // unchecked box is indistinguishable from a field that was never shown.
+  if (body[`${kind}EnabledSubmitted`] !== undefined) {
+    service.enabled = body[`${kind}Enabled`] !== undefined
+  } else if (body[`${kind}Enabled`] !== undefined) {
+    service.enabled = true
   }
 
   const profile = body[`${kind}QualityProfile`]
@@ -621,20 +927,44 @@ function applyFirstServiceDefaults(kind, loaded, actor) {
 }
 
 function settingsFromBody(body) {
-  return {
-    appName: body.appName,
-    autoApprove: body.autoApprove !== undefined,
-    tmdbApiKey: body.tmdbApiKey,
-    syncIntervalMinutes: body.syncIntervalMinutes,
-    notifications: {
+  const section = body.settingsSection ?? ''
+  const touchesServices = ['radarr', 'sonarr'].some((kind) =>
+    ['Url', 'ApiKey', 'Enabled', 'EnabledSubmitted', 'RootFolder', 'QualityProfile', 'ProfilesSubmitted'].some(
+      (suffix) => body[`${kind}${suffix}`] !== undefined
+    )
+  )
+
+  const input = {}
+
+  if (section === 'integrations' || touchesServices) {
+    input.radarr = serviceFromBody(body, 'radarr')
+    input.sonarr = serviceFromBody(body, 'sonarr')
+  }
+
+  if (section === '' || section === 'integrations') {
+    if (body.appName !== undefined) input.appName = body.appName
+    if (body.tmdbApiKey !== undefined) input.tmdbApiKey = body.tmdbApiKey
+    if (body.tmdbRegion !== undefined) input.tmdbRegion = body.tmdbRegion
+  }
+
+  if (section === 'integrations') {
+    input.autoApprove = body.autoApprove !== undefined
+  }
+
+  if (section === 'notifications') {
+    input.notifications = {
       webhookUrl: body.webhookUrl,
       onRequest: body.onRequest !== undefined,
       onApproval: body.onApproval !== undefined,
       onAvailable: body.onAvailable !== undefined,
-    },
-    radarr: serviceFromBody(body, 'radarr'),
-    sonarr: serviceFromBody(body, 'sonarr'),
+    }
   }
+
+  if (section === 'tasks' && body.syncIntervalMinutes !== undefined) {
+    input.syncIntervalMinutes = body.syncIntervalMinutes
+  }
+
+  return input
 }
 
 function permissionsFromBody(body) {
@@ -661,7 +991,7 @@ export function registerPageRoutes(router) {
     try {
       const user = createFirstAdmin({ email: body.email, username: body.username, password: body.password })
       const token = createSession(user.id)
-      redirect(res, withMessage('/settings', 'notice', `Welcome, ${user.username}`), {
+      redirect(res, withMessage('/', 'notice', `Welcome, ${user.username}`), {
         'set-cookie': sessionCookie(token, req),
       })
     } catch (error) {
@@ -686,7 +1016,6 @@ export function registerPageRoutes(router) {
       res,
       200,
       loginPage({
-        returnTo: safeReturn(url.searchParams.get('returnTo'), '/'),
         error: url.searchParams.get('err'),
         notice: url.searchParams.get('notice'),
       })
@@ -695,7 +1024,6 @@ export function registerPageRoutes(router) {
 
   router.post('/login', async ({ req, res }) => {
     const body = await readBody(req)
-    const returnTo = safeReturn(body.returnTo, '/')
     const key = clientKey(req)
     const user = store.findUserByLogin(body.username ?? body.email ?? '')
 
@@ -704,7 +1032,7 @@ export function registerPageRoutes(router) {
 
       return redirect(
         res,
-        `/login?returnTo=${encodeURIComponent(returnTo)}&err=${encodeURIComponent(
+        `/login?err=${encodeURIComponent(
           limit.allowed ? 'Incorrect username or password' : `Too many attempts. Try again in ${limit.retryAfterSeconds}s.`
         )}`
       )
@@ -712,7 +1040,8 @@ export function registerPageRoutes(router) {
 
     loginLimiter.reset(key)
     const token = createSession(user.id)
-    redirect(res, returnTo, { 'set-cookie': sessionCookie(token, req) })
+    // Every successful sign-in opens Discover.
+    redirect(res, '/', { 'set-cookie': sessionCookie(token, req) })
   })
 
   router.post('/logout', ({ req, res }) => {
@@ -748,17 +1077,34 @@ export function registerPageRoutes(router) {
     })
   })
 
-  router.get('/media/:id', ({ req, res, url, params }) => {
-    const user = pageUser(req, res, `/media/${params.id}`)
+  /** TMDB detail for the title page; null when TMDB is off or unreachable. */
+  async function loadTitleDetails(mediaType, tmdbId) {
+    if (!tmdbConfigured()) return null
+    try {
+      return await titleDetails(mediaType, Number(tmdbId))
+    } catch {
+      return null
+    }
+  }
+
+  router.get('/media/:id', async ({ req, res, url, params }) => {
+    const user = pageUser(req, res)
     if (!user) return
 
     try {
       const media = getMediaDetail(Number(params.id), user.id)
+      const details = await loadTitleDetails(media.mediaType, media.tmdbId)
       render(res, 200, {
         title: media.title,
         user,
         active: 'discover',
-        body: detailBody({ user, media, notice: url.searchParams.get('notice'), error: url.searchParams.get('err') }),
+        body: detailBody({
+          user,
+          media,
+          details,
+          notice: url.searchParams.get('notice'),
+          error: url.searchParams.get('err'),
+        }),
       })
     } catch (error) {
       if (!(error instanceof HttpError)) throw error
@@ -766,6 +1112,45 @@ export function registerPageRoutes(router) {
         title: 'Not found',
         user,
         body: `<h1>Not found</h1><p class="muted">${escapeHtml(error.message)}</p><a class="back" href="/">← Back to discover</a>`,
+      })
+    }
+  })
+
+  // A title found on TMDB has no local row until someone requests it; this page
+  // shows the full metadata either way.
+  router.get('/title/:mediaType/:tmdbId', async ({ req, res, url, params }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const mediaType =
+      params.mediaType === MediaType.TV || params.mediaType === MediaType.MOVIE ? params.mediaType : null
+    const tmdbId = Number(params.tmdbId)
+
+    if (!mediaType || !Number.isInteger(tmdbId) || tmdbId <= 0) throw new HttpError(404, 'Title not found')
+
+    const local = store.getMediaByTmdb(tmdbId, mediaType)
+    if (local) return redirect(res, `/media/${local.id}`)
+
+    try {
+      const details = await titleDetails(mediaType, tmdbId)
+      render(res, 200, {
+        title: details?.title ?? 'Title',
+        user,
+        active: 'discover',
+        body: detailBody({
+          user,
+          media: null,
+          details,
+          notice: url.searchParams.get('notice'),
+          error: url.searchParams.get('err'),
+        }),
+      })
+    } catch (error) {
+      render(res, 502, {
+        title: 'Title unavailable',
+        user,
+        active: 'discover',
+        body: `<h1>Title unavailable</h1><p class="muted">${escapeHtml(error.message)}</p><a class="back" href="/">← Back to discover</a>`,
       })
     }
   })
@@ -786,6 +1171,7 @@ export function registerPageRoutes(router) {
         userId: user.id,
         seasonNumbers,
         qualityProfileId: body.qualityProfile ? Number(body.qualityProfile) : null,
+        profileIndex: body.profile !== undefined && body.profile !== '' ? Number(body.profile) : null,
       })
       redirect(res, withMessage(returnTo, 'notice', 'Request submitted'))
     } catch (error) {
@@ -804,6 +1190,7 @@ export function registerPageRoutes(router) {
         tmdbId: Number(body.tmdbId),
         userId: user.id,
         seasonNumbers: null,
+        profileIndex: body.profile !== undefined && body.profile !== '' ? Number(body.profile) : null,
       })
       redirect(res, withMessage('/requests', 'notice', 'Request submitted'))
     } catch (error) {
@@ -939,8 +1326,9 @@ export function registerPageRoutes(router) {
         user,
         settings: store.getSettings(),
         users: store.listUsers(),
-        audit: store.listAudit(15),
+        audit: store.listAudit(30),
         options: await loadOptionsForPage(),
+        tab: url.searchParams.get('tab') ?? 'integrations',
         notice: url.searchParams.get('notice'),
         error: url.searchParams.get('err'),
       }),
@@ -953,7 +1341,10 @@ export function registerPageRoutes(router) {
 
     try {
       updateSettings(settingsFromBody(body), actor)
-      redirect(res, withMessage('/settings', 'notice', 'Settings saved'))
+      const tab = ['integrations', 'users', 'notifications', 'logs', 'tasks'].includes(body.settingsTab)
+        ? body.settingsTab
+        : 'integrations'
+      redirect(res, withMessage(`/settings?tab=${tab}`, 'notice', 'Settings saved'))
     } catch (error) {
       failure(res, '/settings', error)
     }
@@ -993,8 +1384,9 @@ export function registerPageRoutes(router) {
         user: actor,
         settings: store.getSettings(),
         users: store.listUsers(),
-        audit: store.listAudit(15),
+        audit: store.listAudit(30),
         options,
+        tab: 'integrations',
         notice: result.ok ? `${result.detail}${loadedDetail}` : null,
         error: result.ok ? null : result.error,
       }),
@@ -1029,8 +1421,9 @@ export function registerPageRoutes(router) {
           user: actor,
           settings: store.getSettings(),
           users: store.listUsers(),
-          audit: store.listAudit(15),
+          audit: store.listAudit(30),
           options,
+          tab: 'integrations',
           notice: `Loaded ${loaded.rootFolders.length} root folder(s) and ${loaded.qualityProfiles.length} profile(s)`,
           error: null,
         }),
@@ -1044,12 +1437,76 @@ export function registerPageRoutes(router) {
           user: actor,
           settings: store.getSettings(),
           users: store.listUsers(),
-          audit: store.listAudit(15),
+          audit: store.listAudit(30),
           options: null,
+          tab: 'integrations',
           notice: null,
           error: error.message,
         }),
       })
+    }
+  })
+
+  router.post('/settings/profiles/:kind/add', async ({ req, res, params }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+
+    if (!['sonarr', 'radarr'].includes(params.kind)) {
+      return redirect(res, withMessage('/settings?tab=integrations', 'err', 'Unknown service'))
+    }
+
+    const body = await readBody(req)
+
+    try {
+      addServiceProfile(
+        params.kind,
+        {
+          name: body.name,
+          qualityProfile: body.profileSelect,
+          rootFolder: body.rootFolder,
+          isDefault: body.makeDefault !== undefined,
+        },
+        actor
+      )
+      redirect(
+        res,
+        withMessage('/settings?tab=integrations', 'notice', `Profile "${String(body.name ?? '').trim()}" added`)
+      )
+    } catch (error) {
+      failure(res, '/settings?tab=integrations', error)
+    }
+  })
+
+  router.post('/settings/profiles/:kind/default', async ({ req, res, params }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+
+    if (!['sonarr', 'radarr'].includes(params.kind)) {
+      return redirect(res, withMessage('/settings?tab=integrations', 'err', 'Unknown service'))
+    }
+
+    const body = await readBody(req)
+
+    try {
+      setDefaultServiceProfile(params.kind, body.name, actor)
+      redirect(res, withMessage('/settings?tab=integrations', 'notice', 'Default profile updated'))
+    } catch (error) {
+      failure(res, '/settings?tab=integrations', error)
+    }
+  })
+
+  router.post('/settings/profiles/:kind/delete', async ({ req, res, params }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+
+    if (!['sonarr', 'radarr'].includes(params.kind)) {
+      return redirect(res, withMessage('/settings?tab=integrations', 'err', 'Unknown service'))
+    }
+
+    const body = await readBody(req)
+
+    try {
+      removeServiceProfile(params.kind, body.name, actor)
+      redirect(res, withMessage('/settings?tab=integrations', 'notice', `Profile "${body.name}" removed`))
+    } catch (error) {
+      failure(res, '/settings?tab=integrations', error)
     }
   })
 
@@ -1061,7 +1518,7 @@ export function registerPageRoutes(router) {
       const message = result.ok
         ? `Sync finished: ${result.summary.updated} updated, ${result.summary.completed} completed`
         : `Sync had errors: ${result.summary.errors.join(' | ')}`
-      redirect(res, withMessage('/settings', result.ok ? 'notice' : 'err', message))
+      redirect(res, withMessage('/settings?tab=tasks', result.ok ? 'notice' : 'err', message))
     } catch (error) {
       failure(res, '/settings', error)
     }
@@ -1082,7 +1539,7 @@ export function registerPageRoutes(router) {
         },
         actor
       )
-      redirect(res, withMessage('/settings', 'notice', `Created user ${created.username}`))
+      redirect(res, withMessage('/settings?tab=users', 'notice', `Created user ${created.username}`))
     } catch (error) {
       failure(res, '/settings', error)
     }
@@ -1092,7 +1549,7 @@ export function registerPageRoutes(router) {
     const actor = requirePermission(req, Permission.MANAGE_USERS, 'You cannot manage users')
 
     if (Number(params.id) === actor.id) {
-      return redirect(res, withMessage('/settings', 'err', 'Use the Account page to change your own details'))
+      return redirect(res, withMessage('/settings?tab=users', 'err', 'Use the Account page to change your own details'))
     }
 
     const body = await readBody(req)
@@ -1108,7 +1565,7 @@ export function registerPageRoutes(router) {
         },
         actor
       )
-      redirect(res, withMessage('/settings', 'notice', `Updated ${updated.username}`))
+      redirect(res, withMessage('/settings?tab=users', 'notice', `Updated ${updated.username}`))
     } catch (error) {
       failure(res, '/settings', error)
     }

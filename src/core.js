@@ -13,7 +13,7 @@ import * as store from './db.js'
 import { HttpError } from './http.js'
 import { notifyLater } from './notifications.js'
 import { verifyPassword } from './passwords.js'
-import { dispatchToService, requestProfileFor } from './services.js'
+import { dispatchToService, profileAt, resolveProfile, saveServiceProfiles, serviceProfiles } from './services.js'
 import { tmdbDetails } from './tmdb.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -102,6 +102,7 @@ export async function requestMedia({
   userId,
   seasonNumbers = null,
   qualityProfileId = null,
+  profileIndex = null,
 }) {
   const user = store.findUserById(userId)
   if (!user) throw new HttpError(401, 'Sign in to continue')
@@ -154,18 +155,19 @@ export async function requestMedia({
     (user.role !== Role.ADMIN &&
       (Number(user.permissions ?? 0) & Permission.AUTO_APPROVE) === Permission.AUTO_APPROVE)
 
-  // The profile the requester picked, if it is one of the allowed ones.
-  const profile = requestProfileFor(
-    media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr',
-    qualityProfileId
-  )
+  // The profile the requester picked, if it is one of the configured ones.
+  const kind = media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr'
+  const profile =
+    profileIndex !== null && profileIndex !== undefined
+      ? profileAt(kind, Number(profileIndex))
+      : resolveProfile(kind, { id: qualityProfileId })
 
   const request = store.createRequest({
     mediaId: media.id,
     userId: user.id,
     status: MediaRequestStatus.PENDING,
     seasons,
-    qualityProfileId: profile?.id ?? null,
+    qualityProfileId: profile?.profileId ?? null,
     qualityProfileName: profile?.name ?? null,
   })
 
@@ -204,7 +206,7 @@ async function approveAndDispatch(request, media, actor) {
   }
 
   try {
-    const result = await dispatchToService(media, request, request.qualityProfileId)
+    const result = await dispatchToService(media, request)
 
     if (result.dispatched) store.setMediaExternalId(media.id, result.externalId)
 
@@ -475,24 +477,106 @@ export function saveServiceSelection(kind, selection, actor) {
   store.recordAudit(actor?.id ?? null, 'settings.updated', `${kind} root folder and profile`)
 }
 
+/** Adds a named profile: a label, a quality profile and a root folder. */
+export function addServiceProfile(kind, input, actor) {
+  const label = kind === 'sonarr' ? 'Sonarr' : 'Radarr'
+  const name = String(input.name ?? '').trim()
+  if (!name) throw new HttpError(400, 'Give the profile a name')
+  if (name.length > 60) throw new HttpError(400, 'Profile names are limited to 60 characters')
+
+  const [rawId, rawName = ''] = String(input.qualityProfile ?? '').split('|')
+  const profileId = Number(rawId)
+  if (!Number.isInteger(profileId) || profileId <= 0) {
+    throw new HttpError(400, 'Choose a quality profile')
+  }
+
+  const rootFolder = String(input.rootFolder ?? '').trim()
+  if (!rootFolder) throw new HttpError(400, 'Choose a root folder')
+
+  const existing = serviceProfiles(kind)
+  if (existing.some((profile) => profile.name.toLowerCase() === name.toLowerCase())) {
+    throw new HttpError(409, `A profile named "${name}" already exists`)
+  }
+
+  const isDefault = input.isDefault === true || existing.length === 0
+  const list = existing.map((profile) => ({ ...profile, isDefault: isDefault ? false : profile.isDefault }))
+  list.push({
+    name,
+    profileId,
+    profileName: String(rawName).trim() || `Profile ${profileId}`,
+    rootFolder,
+    isDefault,
+  })
+
+  saveServiceProfiles(kind, list)
+  store.recordAudit(actor?.id ?? null, 'settings.profile_added', `${label}: ${name} -> ${rootFolder}`)
+  return list
+}
+
+export function removeServiceProfile(kind, name, actor) {
+  const label = kind === 'sonarr' ? 'Sonarr' : 'Radarr'
+  const existing = serviceProfiles(kind)
+  const remaining = existing.filter((profile) => profile.name !== String(name))
+
+  if (remaining.length === existing.length) throw new HttpError(404, 'Profile not found')
+  if (remaining.length === 0) throw new HttpError(400, `Keep at least one ${label} profile`)
+
+  saveServiceProfiles(kind, remaining)
+  store.recordAudit(actor?.id ?? null, 'settings.profile_removed', `${label}: ${name}`)
+  return remaining
+}
+
+export function setDefaultServiceProfile(kind, name, actor) {
+  const label = kind === 'sonarr' ? 'Sonarr' : 'Radarr'
+  const existing = serviceProfiles(kind)
+  if (!existing.some((profile) => profile.name === String(name))) {
+    throw new HttpError(404, 'Profile not found')
+  }
+
+  const list = existing.map((profile) => ({ ...profile, isDefault: profile.name === String(name) }))
+  saveServiceProfiles(kind, list)
+  store.recordAudit(actor?.id ?? null, 'settings.profile_default', `${label}: ${name}`)
+  return list
+}
 export function updateSettings(input, actor) {
-  const entries = {
-    'app.name': String(input.appName ?? '').trim() || 'Discovarr',
-    'requests.autoApprove': input.autoApprove ? 'true' : 'false',
-    'tmdb.apiKey': String(input.tmdbApiKey ?? '').trim(),
-    'sync.intervalMinutes': String(Math.max(0, Number(input.syncIntervalMinutes ?? 30) || 0)),
-    'notifications.webhookUrl': String(input.notifications?.webhookUrl ?? '').trim(),
-    'notifications.onRequest': input.notifications?.onRequest ? 'true' : 'false',
-    'notifications.onApproval': input.notifications?.onApproval ? 'true' : 'false',
-    'notifications.onAvailable': input.notifications?.onAvailable ? 'true' : 'false',
+  const entries = {}
+
+  // Only fields that were submitted are written, so each settings tab can post
+  // its own form without clearing the others.
+  if (input.appName !== undefined) {
+    entries['app.name'] = String(input.appName ?? '').trim() || 'Discovarr'
+  }
+  if (input.autoApprove !== undefined) {
+    entries['requests.autoApprove'] = input.autoApprove ? 'true' : 'false'
+  }
+  if (input.tmdbApiKey !== undefined) {
+    entries['tmdb.apiKey'] = String(input.tmdbApiKey ?? '').trim()
+  }
+  if (input.tmdbRegion !== undefined) {
+    entries['tmdb.region'] = String(input.tmdbRegion ?? '').trim().toUpperCase() || 'US'
+  }
+  if (input.syncIntervalMinutes !== undefined) {
+    entries['sync.intervalMinutes'] = String(Math.max(0, Number(input.syncIntervalMinutes ?? 30) || 0))
+  }
+
+  if (input.notifications) {
+    const notifications = input.notifications
+    if (notifications.webhookUrl !== undefined) {
+      entries['notifications.webhookUrl'] = String(notifications.webhookUrl ?? '').trim()
+    }
+    for (const [field, key] of [
+      ['onRequest', 'notifications.onRequest'],
+      ['onApproval', 'notifications.onApproval'],
+      ['onAvailable', 'notifications.onAvailable'],
+    ]) {
+      if (notifications[field] !== undefined) entries[key] = notifications[field] ? 'true' : 'false'
+    }
   }
 
   for (const kind of ['sonarr', 'radarr']) {
     const service = input[kind]
     if (!service) continue
 
-    // A field missing from the submitted form must not erase what is already
-    // saved: only values that were actually sent are written back.
     const assign = (field, key) => {
       if (service[field] === undefined) return
       entries[`services.${kind}.${key}`] = String(service[field] ?? '').trim()
@@ -514,6 +598,8 @@ export function updateSettings(input, actor) {
       entries[`services.${kind}.qualityProfiles`] = [...new Set(profiles)].join('\n')
     }
   }
+
+  if (Object.keys(entries).length === 0) return store.getSettings()
 
   store.saveSettings(entries)
   store.recordAudit(actor?.id ?? null, 'settings.updated', Object.keys(entries).length + ' keys')

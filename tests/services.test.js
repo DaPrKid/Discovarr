@@ -74,6 +74,20 @@ before(async () => {
       return res.end('{"message":"unauthorized"}')
     }
 
+    // A dispatch: remember what the app asked Radarr to add.
+    if (req.method === 'POST' && req.url === '/api/v3/movie') {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk
+      })
+      req.on('end', () => {
+        arr.lastMovie = JSON.parse(raw || '{}')
+        res.writeHead(201, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ id: 77 }))
+      })
+      return
+    }
+
     const body = ARR_ROUTES[req.url]
     res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' })
     res.end(JSON.stringify(body ?? {}))
@@ -146,9 +160,12 @@ test('the same click pulls root folders and quality profiles', async () => {
   })).text()
 
   assert.match(html, /1 root folder\(s\) and 2 profile\(s\) loaded/)
-  assert.match(html, /<select name="radarrRootFolder">/)
-  assert.match(html, /Ultra-HD/)
-  assert.match(html, /name="radarrExtraProfile"/)
+  assert.match(html, /data-dialog-open="profile-radarr"/)
+  assert.match(html, /Add profile/)
+  // The add-profile dialog is filled with what the service reported.
+  assert.match(html, /<select name="profileSelect" required>/)
+  assert.match(html, /<option value="5\|Ultra-HD">/)
+  assert.match(html, /<option value="\/movies">\/movies<\/option>/)
 
   const { service } = await settings()
   assert.equal(service.rootFolder, '/movies')
@@ -158,8 +175,13 @@ test('the same click pulls root folders and quality profiles', async () => {
 
 test('the settings page fills its dropdowns without another click', async () => {
   const html = await (await fetch(`${baseUrl}/settings`, { headers: { cookie: adminCookie } })).text()
-  assert.match(html, /<select name="radarrRootFolder">/)
-  assert.match(html, /Ultra-HD/)
+
+  // The stored default is shown as a profile, and the add-profile dialog offers
+  // the live quality profiles and root folders from Radarr.
+  assert.match(html, /<strong>HD-1080p<\/strong> <span class="badge badge-approved">default<\/span>/)
+  assert.match(html, /<option value="4\|HD-1080p">/)
+  assert.match(html, /<option value="5\|Ultra-HD">/)
+  assert.match(html, /<option value="\/movies">\/movies<\/option>/)
 })
 
 test('a post that omits a field keeps what is saved', async () => {
@@ -191,6 +213,126 @@ test('extra profiles are stored and offered when requesting', async () => {
   if (!movie) return
 
   const detail = await (await fetch(`${baseUrl}/media/${movie.id}`, { headers: { cookie: adminCookie } })).text()
-  assert.match(detail, /name="qualityProfile"/)
+  assert.match(detail, /name="profile"/)
   assert.match(detail, /Ultra-HD/)
+})
+
+test('a named profile carries its own root folder and quality profile', async () => {
+  const response = await postForm('/settings/profiles/radarr/add', {
+    name: 'Kids HD',
+    profileSelect: '5|Ultra-HD',
+    rootFolder: '/movies-kids',
+    makeDefault: 'on',
+  })
+  assert.equal(response.status, 303)
+
+  const { service } = await settings()
+  const index = service.profiles.findIndex((profile) => profile.name === 'Kids HD')
+  assert.ok(index >= 0, 'the new profile should be listed')
+  assert.equal(service.profiles[index].rootFolder, '/movies-kids')
+  assert.equal(service.profiles[index].isDefault, true)
+  // The default is mirrored into the older single-profile settings.
+  assert.equal(service.rootFolder, '/movies-kids')
+  assert.equal(service.qualityProfileId, '5')
+
+  const page = await (await fetch(`${baseUrl}/settings?tab=integrations`, { headers: { cookie: adminCookie } })).text()
+  assert.match(page, /Kids HD/)
+  assert.match(page, /\/movies-kids/)
+
+  const catalog = await (await fetch(`${baseUrl}/api/v1/media`, { headers: { cookie: adminCookie } })).json()
+  const movie = (catalog.results ?? []).find((item) => item.mediaType === 'movie' && item.status !== 5)
+  assert.ok(movie, 'expected a requestable movie in the seeded catalog')
+
+  const created = await (
+    await fetch(`${baseUrl}/api/v1/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify({ mediaId: movie.id, profileIndex: index }),
+    })
+  ).json()
+  assert.equal(created.request.qualityProfileName, 'Kids HD')
+
+  const approved = await (
+    await fetch(`${baseUrl}/api/v1/request/${created.request.id}/approve`, {
+      method: 'POST',
+      headers: { cookie: adminCookie },
+    })
+  ).json()
+
+  assert.equal(approved.request.status, 2, approved.request.note ?? 'approval failed')
+  assert.equal(arr.lastMovie.rootFolderPath, '/movies-kids')
+  assert.equal(arr.lastMovie.qualityProfileId, 5)
+})
+
+test('the title page shows release date, facts and the seasons panel', async () => {
+  const catalog = await (await fetch(`${baseUrl}/api/v1/media`, { headers: { cookie: adminCookie } })).json()
+  const movie = (catalog.results ?? []).find((item) => item.mediaType === 'movie')
+  const series = (catalog.results ?? []).find((item) => item.mediaType === 'tv')
+
+  assert.ok(movie && series, 'the seeded catalog should hold a movie and a series')
+
+  const moviePage = await (await fetch(`${baseUrl}/media/${movie.id}`, { headers: { cookie: adminCookie } })).text()
+  assert.match(moviePage, /Release date/)
+  assert.match(moviePage, /Runtime/)
+  assert.match(moviePage, new RegExp(movie.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+
+  const seriesPage = await (await fetch(`${baseUrl}/media/${series.id}`, { headers: { cookie: adminCookie } })).text()
+  assert.match(seriesPage, /Episodes/)
+  assert.match(seriesPage, /Seasons to request/)
+})
+
+test('settings is split into tabs', async () => {
+  const get = (tab) => fetch(`${baseUrl}/settings?tab=${tab}`, { headers: { cookie: adminCookie } }).then((r) => r.text())
+
+  const integrations = await get('integrations')
+  assert.match(integrations, /TMDB API key/)
+  assert.match(integrations, /Radarr profiles/)
+
+  const users = await get('users')
+  assert.match(users, /Add a user/)
+  assert.doesNotMatch(users, /TMDB API key/)
+
+  const notifications = await get('notifications')
+  assert.match(notifications, /Webhook URL/)
+
+  const logs = await get('logs')
+  assert.match(logs, /Recent activity/)
+
+  const tasks = await get('tasks')
+  assert.match(tasks, /Run a sync now/)
+})
+
+test('signing in lands on Discover', async () => {
+  const response = await fetch(`${baseUrl}/login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: 'admin', password: 'secret123', returnTo: '/settings' }),
+  })
+
+  assert.equal(response.status, 303)
+  assert.equal(response.headers.get('location'), '/')
+})
+
+test('notification settings survive saving another tab', async () => {
+  await postForm('/settings', {
+    settingsSection: 'notifications',
+    settingsTab: 'notifications',
+    webhookUrl: 'https://example.com/hook',
+    onRequest: 'on',
+  })
+
+  const afterNotifications = await settings()
+  assert.equal(afterNotifications.raw['notifications.webhookUrl'], 'https://example.com/hook')
+  assert.equal(afterNotifications.raw['notifications.onApproval'], 'false')
+
+  await postForm('/settings', {
+    settingsSection: 'integrations',
+    settingsTab: 'integrations',
+    appName: 'Discovarr',
+  })
+
+  const afterIntegrations = await settings()
+  assert.equal(afterIntegrations.raw['notifications.webhookUrl'], 'https://example.com/hook')
+  assert.equal(afterIntegrations.raw['services.radarr.url'], arr.url)
 })

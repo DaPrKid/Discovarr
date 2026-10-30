@@ -105,3 +105,65 @@ export async function tmdbDetails(mediaType, tmdbId) {
   const raw = await tmdbGet(`/${mediaType}/${tmdbId}`)
   return normalizeTmdbItem(raw, mediaType)
 }
+
+/** Region used for the "where to watch" block, set on the settings page. */
+export function watchRegion() {
+  return String(getSetting('tmdb.region') ?? 'US').trim().toUpperCase() || 'US'
+}
+
+function providerGroup(list) {
+  return (list ?? []).slice(0, 8).map((provider) => ({
+    id: provider.provider_id,
+    name: provider.provider_name,
+    logoPath: provider.logo_path ?? null,
+  }))
+}
+
+/** Credits, ratings and streaming availability for the title page. */
+export function normalizeTmdbDetails(raw, mediaType) {
+  const base = normalizeTmdbItem(raw, mediaType)
+  if (!base) return null
+
+  const region = watchRegion()
+  const availability = raw['watch/providers']?.results?.[region] ?? null
+  const creators = (raw.created_by ?? []).map((person) => person.name).filter(Boolean)
+  const directors = (raw.credits?.crew ?? [])
+    .filter((member) => member.job === 'Director')
+    .map((member) => member.name)
+    .filter(Boolean)
+
+  return {
+    ...base,
+    tagline: raw.tagline ?? '',
+    rating: raw.vote_average ? Math.round(raw.vote_average * 10) / 10 : null,
+    votes: raw.vote_count ?? 0,
+    releaseStatus: raw.status ?? null,
+    originalTitle: raw.original_title ?? raw.original_name ?? null,
+    totalSeasons: mediaType === MediaType.TV ? raw.number_of_seasons ?? null : null,
+    totalEpisodes: mediaType === MediaType.TV ? raw.number_of_episodes ?? null : null,
+    lastAirDate: raw.last_air_date ?? null,
+    networks: (raw.networks ?? []).map((network) => network.name).filter(Boolean),
+    creators: mediaType === MediaType.TV ? creators : [],
+    directors: mediaType === MediaType.MOVIE ? directors : [],
+    cast: (raw.credits?.cast ?? []).slice(0, 12).map((member) => ({
+      id: member.id,
+      name: member.name,
+      character: member.character ?? '',
+      profilePath: member.profile_path ?? null,
+    })),
+    watch: {
+      region,
+      link: availability?.link ?? null,
+      flatrate: providerGroup(availability?.flatrate),
+      free: providerGroup(availability?.free),
+      rent: providerGroup(availability?.rent),
+      buy: providerGroup(availability?.buy),
+    },
+  }
+}
+
+/** Full detail payload for one title, including cast and availability. */
+export async function titleDetails(mediaType, tmdbId) {
+  const raw = await tmdbGet(`/${mediaType}/${tmdbId}`, { append_to_response: 'credits,watch/providers' })
+  return normalizeTmdbDetails(raw, mediaType)
+}
