@@ -344,6 +344,49 @@ export async function dispatchToService(media, request) {
   }
 }
 
+const lookupCache = new Map()
+const LOOKUP_TTL_MS = 60_000
+
+/**
+ * Asks Radarr/Sonarr whether they already hold this TMDB id. A title added
+ * straight in the *arr never reaches our media table, so the request form asks
+ * the service too and blocks a duplicate. Anything other than a clear answer is
+ * reported as "not checked", which leaves the form usable.
+ */
+export async function serviceLookup(kind, tmdbId) {
+  const { enabled, configured } = serviceSummary(kind)
+  if (!enabled || !configured || !LABELS[kind]) return { checked: false, found: false, seasons: [] }
+
+  const key = `${kind}:${Number(tmdbId)}`
+  const hit = lookupCache.get(key)
+  if (hit && Date.now() - hit.at < LOOKUP_TTL_MS) return hit.value
+
+  let value = { checked: false, found: false, seasons: [] }
+
+  try {
+    const path = kind === 'radarr' ? '/movie/lookup' : '/series/lookup'
+    const results = await arrRequest(kind, `${path}?term=${encodeURIComponent(`tmdb:${Number(tmdbId)}`)}`)
+    const match = (Array.isArray(results) ? results : []).find(
+      (entry) => Number(entry.tmdbId) === Number(tmdbId)
+    )
+
+    value = {
+      checked: true,
+      // A lookup answer for an id the service has never seen has id 0.
+      found: Boolean(match && Number(match.id) > 0),
+      seasons: (match?.seasons ?? []).map((season) => ({
+        seasonNumber: season.seasonNumber,
+        monitored: season.monitored !== false,
+      })),
+    }
+  } catch {
+    value = { checked: false, found: false, seasons: [] }
+  }
+
+  lookupCache.set(key, { at: Date.now(), value })
+  return value
+}
+
 /** Pulls the current library so statuses can be reconciled. */
 export async function fetchLibrary(kind) {
   const { enabled, configured } = serviceSummary(kind)

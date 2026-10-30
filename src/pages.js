@@ -1,6 +1,7 @@
 import { clearedSessionCookie, createSession, currentUser, endSession, hasPermission, requirePermission, requireUser, sessionCookie, sessionToken } from './auth.js'
 import { config } from './config.js'
 import {
+  ACTIVE_REQUEST_STATUSES,
   ALL_PERMISSIONS,
   MEDIA_STATUS_LABEL,
   MediaStatus,
@@ -38,11 +39,13 @@ import { clientKey, createRateLimiter } from './ratelimit.js'
 import {
   forgetServiceOptions,
   loadServiceOptions,
+  serviceLookup,
   serviceProfiles,
   serviceSummary,
   testServiceConnection,
 } from './services.js'
 import {
+  collectionDetails,
   CONTENT_TYPE_IDS,
   contentTypeOptions,
   discoverPage,
@@ -54,6 +57,7 @@ import {
   recommendedTitles,
   searchPage,
   searchTmdb,
+  seasonDetails,
   studioOptions,
   studioWithLogo,
   titleDetails,
@@ -764,17 +768,25 @@ function castPanel(details) {
     <h2 style="margin: 0">Cast</h2>
     <div class="cast-grid">
       ${details.cast
-        .map(
-          (member) => `<a class="cast" href="/person/${escapeHtml(member.id)}">
+        .map((member) => {
+          // TMDB has no headshot for plenty of character actors, so those tiles
+          // borrow a still from one of that person's own titles instead of
+          // showing initials.
+          const image = member.profilePath ?? member.artworkPath ?? null
+          const borrowed = !member.profilePath && Boolean(member.artworkPath)
+          return `<a class="cast" href="/person/${escapeHtml(member.id)}">
             ${
-              member.profilePath
-                ? `<img class="cast-photo" src="${artwork(member.profilePath, 'w185')}" alt="" loading="lazy" />`
+              image
+                ? `<img class="cast-photo${borrowed ? ' cast-photo-borrowed' : ''}" src="${artwork(
+                    image,
+                    'w185'
+                  )}" alt="" loading="lazy" />`
                 : `<span class="cast-photo cast-photo-empty">${escapeHtml(initials(member.name))}</span>`
             }
             <strong>${escapeHtml(member.name)}</strong>
             ${member.character ? `<span class="muted small">${escapeHtml(member.character)}</span>` : ''}
           </a>`
-        )
+        })
         .join('')}
     </div>
   </section>`
@@ -831,16 +843,95 @@ function personBody({ person, page = 1, plex = {} }) {
     ${pagination({ page: current, totalPages, basePath: `/person/${person.id}` })}`
 }
 
-function detailBody({ user, media, details, notice, error, plex = null }) {
+function seasonEpisodeCount(season) {
+  return Number(season.episodes ?? season.episodeCount ?? 0)
+}
+
+/**
+ * One season row. The summary opens an episode list that is fetched the first
+ * time the season is opened, and the checkbox (present only while the title can
+ * still be requested) picks the season for the request.
+ */
+function seasonRow({ season, stored, tmdbId, pickable }) {
+  const number = season.seasonNumber
+  const available = stored?.status === MediaStatus.AVAILABLE
+  const count = seasonEpisodeCount(season)
+  const target = `/partial/tv/${escapeHtml(String(tmdbId))}/season/${escapeHtml(String(number))}`
+
+  return `<div class="season-row">
+    <details class="season-block" data-episodes="${target}">
+      <summary>
+        <span>${escapeHtml(season.name ?? `Season ${number}`)}</span>
+        <span class="muted small">${count ? `${count} episodes` : 'Episode list'}</span>
+      </summary>
+      <div class="episode-list"><p class="muted small">Open the season to load its episodes.</p></div>
+    </details>
+    ${
+      pickable
+        ? `<label class="season-pick">
+            <input type="checkbox" name="season" value="${escapeHtml(String(number))}" ${
+              available ? 'disabled' : 'checked'
+            } />
+            <span>${available ? 'In library' : 'Include'}</span>
+          </label>`
+        : `<span class="season-pick">${stored ? statusBadge(stored.status) : ''}</span>`
+    }
+  </div>`
+}
+
+/** The other films of a collection, requestable from beside the title page. */
+function collectionPanel(collection) {
+  if (!collection?.parts?.length) return ''
+  const count = collection.parts.length
+
+  return `<aside class="collection-side panel">
+    <h2 style="margin: 0">${escapeHtml(collection.name)}</h2>
+    <p class="muted small">${count} other film${count === 1 ? '' : 's'} · tick the ones you want</p>
+    <form method="post" action="/collection/${escapeHtml(String(collection.id))}/request" class="collection-form">
+      <input type="hidden" name="returnTo" value="${escapeHtml(collection.returnTo ?? '/')}" />
+      <label class="switch-row"><input type="checkbox" data-collection-all checked /> <span>Select all</span></label>
+      <ul class="collection-parts">
+        ${collection.parts
+          .map((part) => {
+            const href = `/title/movie/${escapeHtml(String(part.tmdbId))}`
+            const year = formatDate(part.releaseDate)
+            const state =
+              part.state === 'library' ? ' · In library' : part.state === 'requested' ? ' · Requested' : ''
+            return `<li class="collection-part">
+              <input type="checkbox" name="tmdbId" value="${escapeHtml(String(part.tmdbId))}" ${
+                part.state ? 'disabled' : 'checked'
+              } data-collection-part />
+              <a class="collection-poster" href="${href}">
+                ${
+                  part.posterPath
+                    ? `<img src="${artwork(part.posterPath, 'w92')}" alt="" loading="lazy" />`
+                    : '<span class="collection-poster-empty" aria-hidden="true"></span>'
+                }
+              </a>
+              <span class="collection-text">
+                <a href="${href}">${escapeHtml(part.title)}</a>
+                <span class="muted small">${escapeHtml(year ? year.slice(0, 4) : '')}${escapeHtml(state)}</span>
+              </span>
+            </li>`
+          })
+          .join('')}
+      </ul>
+      <button class="btn" type="submit">Request selected</button>
+    </form>
+  </aside>`
+}
+
+function detailBody({ user, media, details, notice, error, plex = null, remote = null, collection = null }) {
   const entry = media ?? details
   const isTv = entry.mediaType === MediaType.TV
   const kind = isTv ? 'sonarr' : 'radarr'
   const profiles = serviceProfiles(kind)
   const storedSeasons = media ? store.listSeasons(media.id) : []
-  const detailSeasons = details?.seasons ?? []
-
-  // Episode counts come from TMDB; the availability badge comes from the local
-  // record, which the library sync keeps current.
+  const detailSeasons = (details?.seasons ?? []).map((season) => ({
+    seasonNumber: season.seasonNumber,
+    name: season.name ?? `Season ${season.seasonNumber}`,
+    episodeCount: seasonEpisodeCount(season),
+  }))
   const listedSeasons = detailSeasons.length
     ? detailSeasons
     : storedSeasons.map((season) => ({
@@ -849,20 +940,10 @@ function detailBody({ user, media, details, notice, error, plex = null }) {
         episodeCount: season.episodeCount,
       }))
 
-  const seasonRows = isTv
-    ? listedSeasons.map((season) => {
-        const local = storedSeasons.find((candidate) => candidate.seasonNumber === season.seasonNumber)
-        return `<div class="season">
-          <span>${escapeHtml(season.name ?? `Season ${season.seasonNumber}`)}</span>
-          <span class="muted">${Number(season.episodeCount ?? local?.episodeCount ?? 0)} episodes</span>
-          ${local ? statusBadge(local.status) : ''}
-        </div>`
-      })
-    : []
-
   const totalEpisodes =
     details?.totalEpisodes ?? storedSeasons.reduce((sum, season) => sum + (season.episodeCount ?? 0), 0)
-  const seasonCount = details?.totalSeasons ?? (storedSeasons.length || entry.seasonsCount || null)
+  const seasonCount =
+    details?.totalSeasons ?? (storedSeasons.length || entry.seasonsCount || listedSeasons.length || null)
 
   const facts = [
     ['Release date', formatDate(entry.releaseDate)],
@@ -876,7 +957,9 @@ function detailBody({ user, media, details, notice, error, plex = null }) {
     details?.directors?.length ? ['Director', details.directors.join(', ')] : null,
     details?.creators?.length ? ['Created by', details.creators.join(', ')] : null,
     details?.networks?.length ? ['Network', details.networks.join(', ')] : null,
-    media ? ['Library', `${MEDIA_STATUS_LABEL[media.status] ?? 'Unknown'} · ${media.activeRequests} active request(s)`] : null,
+    media
+      ? ['Library', `${MEDIA_STATUS_LABEL[media.status] ?? 'Unknown'} · ${media.activeRequests} active request(s)`]
+      : null,
   ].filter((fact) => fact && fact[1])
 
   const factsHtml = facts.length
@@ -884,6 +967,15 @@ function detailBody({ user, media, details, notice, error, plex = null }) {
         .map(([label, value]) => `<div class="fact"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`)
         .join('')}</dl>`
     : ''
+
+  const isAvailable = media?.status === MediaStatus.AVAILABLE
+  // Discovarr knows about its own active requests; Radarr/Sonarr know about
+  // titles added straight in the download manager. Either one blocks a second
+  // request instead of silently filing a duplicate.
+  const requestedHere = (media?.activeRequests ?? 0) > 0
+  const inService = remote?.found === true
+  const blocked = !isAvailable && (requestedHere || inService)
+  const pickable = isTv && !isAvailable && !blocked
 
   const profilePicker =
     profiles.length > 1
@@ -901,26 +993,33 @@ function detailBody({ user, media, details, notice, error, plex = null }) {
         </label>`
       : ''
 
-  const picker =
-    isTv && media
-      ? `<fieldset class="panel">
-          <legend>Seasons to request</legend>
-          <div class="season-list">
-            ${storedSeasons
-              .map(
-                (season) => `<label class="season">
-                  <input type="checkbox" name="season" value="${season.seasonNumber}"
-                    ${season.status === MediaStatus.AVAILABLE ? '' : 'checked'}
-                    ${season.status === MediaStatus.AVAILABLE ? 'disabled' : ''} />
-                  <span>${escapeHtml(season.name)}</span>
-                  <span class="muted">${season.episodeCount} episodes</span>
-                </label>`
-              )
-              .join('')}
-          </div>
-          <p class="muted small">Seasons already in the library are locked.</p>
-        </fieldset>`
-      : ''
+  const seasonRows = isTv
+    ? listedSeasons
+        .map((season) =>
+          seasonRow({
+            season,
+            stored: storedSeasons.find((candidate) => candidate.seasonNumber === season.seasonNumber),
+            tmdbId: entry.tmdbId,
+            pickable,
+          })
+        )
+        .join('')
+    : ''
+
+  const seasonsBlock = seasonRows
+    ? `<section class="panel season-panel">
+        <h2 style="margin: 0">Seasons</h2>
+        ${
+          pickable
+            ? `<label class="switch-row">
+                <input type="checkbox" name="allSeasons" value="on" checked data-season-all />
+                <span>All seasons</span>
+              </label>
+              <div class="season-rows" data-season-list>${seasonRows}</div>`
+            : `<div class="season-rows">${seasonRows}</div>`
+        }
+      </section>`
+    : ''
 
   const plexRow = plex
     ? `<div class="plex-row">
@@ -930,16 +1029,26 @@ function detailBody({ user, media, details, notice, error, plex = null }) {
       </div>`
     : ''
 
-  const isAvailable = media?.status === MediaStatus.AVAILABLE
-  const alreadyRequested = (media?.myActiveRequests ?? 0) > 0
-  const quota = media ? quotaSummary(user)[isTv ? 'tv' : 'movie'] : null
+  const quota = quotaSummary(user)[isTv ? 'tv' : 'movie']
+  const quotaLine =
+    quota.limit > 0 ? `<p class="muted small">${quota.used}/${quota.limit} requests used this month</p>` : ''
 
   let action
 
   if (isAvailable) {
     action = '<p class="badge badge-available">In library</p>'
-  } else if (alreadyRequested) {
-    action = '<p class="badge badge-pending">You already requested this</p>'
+  } else if (blocked) {
+    const where = [
+      requestedHere ? 'Requested in Discovarr' : null,
+      inService ? `Already in ${isTv ? 'Sonarr' : 'Radarr'}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+
+    action = `<div class="action-done">
+      <button class="btn" type="button" disabled>Already requested</button>
+      <p class="muted small">${escapeHtml(where)}</p>
+    </div>`
   } else {
     const formAction = media ? `/media/${media.id}/request` : '/media/import'
     action = `<form method="post" action="${formAction}" class="stack">
@@ -950,10 +1059,11 @@ function detailBody({ user, media, details, notice, error, plex = null }) {
              <input type="hidden" name="mediaType" value="${escapeHtml(entry.mediaType)}" />
              <input type="hidden" name="returnTo" value="/" />`
       }
-      ${picker}
+      ${isTv ? '<input type="hidden" name="seasonsSubmitted" value="1" />' : ''}
+      ${seasonsBlock}
       ${profilePicker}
       <button class="btn" type="submit">Request ${isTv ? 'seasons' : 'movie'}</button>
-      ${quota && quota.limit > 0 ? `<p class="muted small">${quota.used}/${quota.limit} requests used this month</p>` : ''}
+      ${quotaLine}
     </form>`
   }
 
@@ -966,28 +1076,103 @@ function detailBody({ user, media, details, notice, error, plex = null }) {
     .filter(Boolean)
     .join(' · ')
 
-  return `<a class="back" href="/">← Back to discover</a>
+  const backdropPath = entry.backdropPath ?? details?.backdropPath ?? null
+  // The title's own artwork, blurred far enough that it reads as a tint of the
+  // page rather than a picture competing with the poster.
+  const backdrop = backdropPath
+    ? `<div class="detail-backdrop" aria-hidden="true" style="background-image: url('${artwork(
+        backdropPath,
+        'w780'
+      )}')"></div>`
+    : ''
+
+  return `${backdrop}
+    <a class="back" href="/">← Back to discover</a>
     ${alert({ notice, error })}
-    <section class="detail">
-      ${poster({ ...entry, posterPath: entry.posterPath ?? details?.posterPath ?? null }, 'poster-lg')}
-      <div class="detail-body">
-        <h1>${escapeHtml(entry.title)}</h1>
-        ${details?.tagline ? `<p class="tagline">${escapeHtml(details.tagline)}</p>` : ''}
-        <p class="media-meta">${escapeHtml(meta)}</p>
-        <p class="overview">${escapeHtml(entry.overview || details?.overview || 'No description available yet.')}</p>
-        ${factsHtml}
-        ${
-          seasonRows.length
-            ? `<div class="panel"><h2 style="margin: 0">Seasons</h2><div class="season-list">${seasonRows.join('')}</div></div>`
-            : ''
-        }
-        ${plexRow}
-        ${action}
+    <div class="detail-wrap${collection?.parts?.length ? ' has-collection' : ''}">
+      <div class="detail-main">
+        <section class="detail">
+          ${poster({ ...entry, posterPath: entry.posterPath ?? details?.posterPath ?? null }, 'poster-lg')}
+          <div class="detail-body">
+            <h1>${escapeHtml(entry.title)}</h1>
+            ${details?.tagline ? `<p class="tagline">${escapeHtml(details.tagline)}</p>` : ''}
+            <p class="media-meta">${escapeHtml(meta)}</p>
+            <p class="overview">${escapeHtml(entry.overview || details?.overview || 'No description available yet.')}</p>
+            ${factsHtml}
+            ${plexRow}
+            ${pickable ? '' : seasonsBlock}
+            ${action}
+          </div>
+        </section>
+        ${castPanel(details)}
+        ${watchPanel(details)}
+        ${details ? '<p class="muted small">Metadata from TMDB.</p>' : ''}
       </div>
-    </section>
-    ${castPanel(details)}
-    ${watchPanel(details)}
-    ${details ? '<p class="muted small">Metadata from TMDB.</p>' : ''}`
+      ${collectionPanel(collection)}
+    </div>`
+}
+
+/**
+ * The rest of a film's collection, with anything already held locally marked so
+ * the panel only offers what is actually missing.
+ */
+async function loadCollection(details, mediaType, currentTmdbId, returnTo) {
+  if (mediaType !== MediaType.MOVIE || !details?.collection?.id) return null
+
+  try {
+    const collection = await collectionDetails(details.collection.id)
+    const parts = collection.parts
+      .filter((part) => Number(part.tmdbId) !== Number(currentTmdbId))
+      .map((part) => ({ ...part, state: partState(part.tmdbId) }))
+
+    return { ...collection, parts, returnTo }
+  } catch {
+    return null
+  }
+}
+
+/** 'library', 'requested' or null for one film of a collection. */
+function partState(tmdbId) {
+  const local = store.getMediaByTmdb(Number(tmdbId), MediaType.MOVIE)
+  if (!local) return null
+  if (local.status === MediaStatus.AVAILABLE) return 'library'
+
+  const active = store
+    .listRequestsForMedia(local.id)
+    .some((request) => ACTIVE_REQUEST_STATUSES.includes(request.status))
+  return active ? 'requested' : null
+}
+
+/**
+ * The season picker sends "all seasons" or a list of ticked ones. null means
+ * everything, which is what the request service defaults to.
+ */
+function seasonSelection(body) {
+  if (body.allSeasons === 'on' || body.allSeasons === '1') return null
+  if (!body.seasonsSubmitted) return null
+  const raw = body.season === undefined ? [] : [].concat(body.season)
+  return raw.map(Number).filter((number) => Number.isInteger(number))
+}
+
+function episodesHtml(season) {
+  const head = season.overview ? `<p class="muted small">${escapeHtml(season.overview)}</p>` : ''
+  const episodes = season.episodes.length
+    ? season.episodes
+        .map(
+          (episode) => `<article class="episode">
+            <div class="episode-head">
+              <strong>${escapeHtml(String(episode.number))}. ${escapeHtml(episode.name)}</strong>
+              <span class="muted small">${escapeHtml(episode.airDate ? formatDate(episode.airDate) : 'Unaired')}${
+                episode.runtime ? ` · ${episode.runtime} min` : ''
+              }</span>
+            </div>
+            <p class="episode-overview">${escapeHtml(episode.overview || 'No description yet.')}</p>
+          </article>`
+        )
+        .join('')
+    : '<p class="muted small">No episodes listed for this season.</p>'
+
+  return `${head}${episodes}`
 }
 
 // ---------------------------------------------------------------------------
@@ -1950,6 +2135,9 @@ export function registerPageRoutes(router) {
     try {
       const media = getMediaDetail(Number(params.id), user.id)
       const details = await loadTitleDetails(media.mediaType, media.tmdbId)
+      const kind = media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr'
+      const remote = await serviceLookup(kind, media.tmdbId)
+      const collection = await loadCollection(details, media.mediaType, media.tmdbId, `/media/${media.id}`)
       render(res, 200, {
         title: media.title,
         user,
@@ -1961,6 +2149,8 @@ export function registerPageRoutes(router) {
           notice: url.searchParams.get('notice'),
           error: url.searchParams.get('err'),
           plex: plexEntryFor(await plexEntries(), media.mediaType, media.tmdbId),
+          remote,
+          collection,
         }),
       })
     } catch (error) {
@@ -1990,6 +2180,8 @@ export function registerPageRoutes(router) {
 
     try {
       const details = await titleDetails(mediaType, tmdbId)
+      const remote = await serviceLookup(mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr', tmdbId)
+      const collection = await loadCollection(details, mediaType, tmdbId, `/title/${mediaType}/${tmdbId}`)
       render(res, 200, {
         title: details?.title ?? 'Title',
         user,
@@ -2001,6 +2193,8 @@ export function registerPageRoutes(router) {
           notice: url.searchParams.get('notice'),
           error: url.searchParams.get('err'),
           plex: plexEntryFor(await plexEntries(), mediaType, tmdbId),
+          remote,
+          collection,
         }),
       })
     } catch (error) {
@@ -2019,10 +2213,7 @@ export function registerPageRoutes(router) {
     const returnTo = safeReturn(body.returnTo, `/media/${params.id}`)
 
     try {
-      const rawSeasons = body.season
-      const seasonNumbers = body.seasonsSubmitted
-        ? (rawSeasons === undefined ? [] : [].concat(rawSeasons)).map(Number)
-        : null
+      const seasonNumbers = seasonSelection(body)
 
       await requestMedia({
         mediaId: Number(params.id),
@@ -2047,7 +2238,7 @@ export function registerPageRoutes(router) {
         mediaType: body.mediaType,
         tmdbId: Number(body.tmdbId),
         userId: user.id,
-        seasonNumbers: null,
+        seasonNumbers: seasonSelection(body),
         profileIndex: body.profile !== undefined && body.profile !== '' ? Number(body.profile) : null,
       })
       redirect(res, withMessage('/requests', 'notice', 'Request submitted'))
@@ -2065,6 +2256,56 @@ export function registerPageRoutes(router) {
     } catch (error) {
       failure(res, '/requests', error)
     }
+  })
+
+  // A season's episodes are fetched by the series page when the season is
+  // opened, so a twenty-season show asks TMDB for one list, not twenty.
+  router.get('/partial/tv/:tmdbId/season/:seasonNumber', async ({ req, res, params }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const tmdbId = Number(params.tmdbId)
+    const seasonNumber = Number(params.seasonNumber)
+    if (!Number.isInteger(tmdbId) || !Number.isInteger(seasonNumber)) throw new HttpError(400, 'Unknown season')
+
+    try {
+      sendHtml(res, 200, episodesHtml(await seasonDetails(tmdbId, seasonNumber)))
+    } catch (error) {
+      const message = error instanceof HttpError ? error.message : 'Episodes could not be loaded'
+      sendHtml(res, 200, `<p class="muted small">${escapeHtml(message)}</p>`)
+    }
+  })
+
+  // Requesting from the collection panel files one request per ticked film; a
+  // film that is already there is reported instead of failing the whole batch.
+  router.post('/collection/:id/request', async ({ req, res }) => {
+    const user = requireUser(req)
+    const body = await readBody(req)
+    const returnTo = safeReturn(body.returnTo, '/')
+    const ids = [...new Set([].concat(body.tmdbId ?? []).map(Number))].filter(
+      (id) => Number.isInteger(id) && id > 0
+    )
+
+    if (ids.length === 0) {
+      redirect(res, withMessage(returnTo, 'err', 'Pick at least one film'))
+      return
+    }
+
+    let done = 0
+    let skipped = 0
+
+    for (const tmdbId of ids) {
+      try {
+        await requestMedia({ mediaType: MediaType.MOVIE, tmdbId, userId: user.id, seasonNumbers: null })
+        done += 1
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error
+        skipped += 1
+      }
+    }
+
+    const message = `${done} film${done === 1 ? '' : 's'} requested${skipped ? ` · ${skipped} skipped` : ''}`
+    redirect(res, withMessage(returnTo, done ? 'notice' : 'err', message))
   })
 
   router.get('/requests', ({ req, res, url }) => {

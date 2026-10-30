@@ -324,7 +324,7 @@ test('the title page shows release date, facts and the seasons panel', async () 
 
   const seriesPage = await (await fetch(`${baseUrl}/media/${series.id}`, { headers: { cookie: adminCookie } })).text()
   assert.match(seriesPage, /Episodes/)
-  assert.match(seriesPage, /Seasons to request/)
+  assert.match(seriesPage, /class="media-meta">Series/)
 })
 
 test('settings is split into tabs', async () => {

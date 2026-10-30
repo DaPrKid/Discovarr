@@ -98,6 +98,16 @@ bootstrapping, which is only useful for demos.
 - **Type switches** — Anime, Animation, Documentary, Reality, Kids and Talk show
   sit beside the genres. Anime is matched through its TMDB keyword, so it stays
   distinct from Animation.
+- **Title pages with atmosphere** — a blurred still of the title itself tints the
+  page background, and a cast member TMDB has no headshot for borrows a still
+  from one of their own titles.
+- **Series, season by season** — every season opens to its episodes with their
+  descriptions and air dates, and a request covers all seasons or only the ones
+  you tick.
+- **Collections on the side** — a film that belongs to a series of films shows
+  the rest of them beside the page, with a tick box per film and a select-all.
+- **No duplicate requests** — a title already requested in Discovarr, or already
+  sitting in Radarr or Sonarr, shows a disabled "Already requested" button.
 - **Person pages** — every name in a title's cast opens that person's biography,
   dates and the full list of films and series they appear in.
 - **Genre shelves** — the genre pages lead with titles from the busiest
@@ -172,7 +182,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.9.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.10.0
 ```
 
 If you prefer to run the process without root at all, start the container with

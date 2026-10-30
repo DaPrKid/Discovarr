@@ -191,7 +191,48 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           if (field.matches('input[type=checkbox], input[type=radio], select')) panel.requestSubmit()
         })
       })()
-    </script>
+    
+      // "All seasons" hides and disables the season boxes; without this script
+      // the same fields still post, just with the list open.
+      document.querySelectorAll('[data-season-all]').forEach(function (toggle) {
+        var form = toggle.closest('form')
+        var list = form ? form.querySelector('[data-season-list]') : null
+        if (!list) return
+        var sync = function () {
+          list.hidden = toggle.checked
+          list.querySelectorAll('input[type=checkbox]').forEach(function (input) {
+            input.disabled = toggle.checked
+          })
+        }
+        toggle.addEventListener('change', sync)
+        sync()
+      })
+
+      // Episode lists load the first time a season is opened.
+      document.querySelectorAll('details[data-episodes]').forEach(function (block) {
+        block.addEventListener('toggle', function () {
+          if (!block.open || block.dataset.loaded) return
+          block.dataset.loaded = '1'
+          var target = block.querySelector('.episode-list')
+          fetch(block.dataset.episodes, { headers: { accept: 'text/html' }, credentials: 'same-origin' })
+            .then(function (response) { return response.ok ? response.text() : 'Episodes could not be loaded.' })
+            .then(function (html) { if (target) target.innerHTML = html })
+            .catch(function () { if (target) target.textContent = 'Episodes could not be loaded.' })
+        })
+      })
+
+      // "Select all" in the collection panel leaves films already held alone.
+      document.querySelectorAll('[data-collection-all]').forEach(function (toggle) {
+        var form = toggle.closest('form')
+        if (!form) return
+        toggle.addEventListener('change', function () {
+          form.querySelectorAll('[data-collection-part]').forEach(function (input) {
+            if (!input.disabled) input.checked = toggle.checked
+          })
+        })
+      })
+
+</script>
   </body>
 </html>`
 }

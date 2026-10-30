@@ -1741,3 +1741,207 @@ a.cast:hover strong {
     width: 132px;
   }
 }
+
+/* --- title page --------------------------------------------------------- */
+
+/* The title's own artwork, blurred down to a tint behind the page. It never
+   intercepts a click. */
+.detail-backdrop {
+  position: fixed;
+  inset: -12vh -8vw;
+  z-index: -1;
+  background-size: cover;
+  background-position: center 22%;
+  filter: blur(46px) saturate(1.15);
+  opacity: 0.32;
+  transform: scale(1.05);
+  pointer-events: none;
+}
+
+.detail-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 85% at 50% 0%, rgba(12, 14, 20, 0.08) 0%, var(--bg) 74%);
+}
+
+.detail-wrap {
+  display: grid;
+  gap: 26px;
+  align-items: start;
+}
+
+.detail-wrap.has-collection {
+  grid-template-columns: minmax(0, 1fr) 330px;
+}
+
+.detail-main {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+
+.collection-side {
+  position: sticky;
+  top: 24px;
+  margin: 0;
+}
+
+.collection-form {
+  display: grid;
+  gap: 12px;
+}
+
+.collection-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  max-height: 58vh;
+  overflow-y: auto;
+}
+
+.collection-part {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.collection-poster img,
+.collection-poster-empty {
+  display: block;
+  width: 38px;
+  height: 57px;
+  border-radius: 7px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.collection-text {
+  display: grid;
+  font-size: 0.84rem;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.season-panel {
+  margin: 0;
+}
+
+.season-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.season-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.season-block {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0f1219;
+}
+
+.season-block summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 0.86rem;
+  list-style: none;
+}
+
+.season-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.season-block summary span:nth-child(2) {
+  margin-left: auto;
+}
+
+.season-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 9px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.season-pick input:disabled + span {
+  opacity: 0.6;
+}
+
+.episode-list {
+  display: grid;
+  gap: 10px;
+  padding: 2px 12px 12px;
+}
+
+.episode {
+  display: grid;
+  gap: 4px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.episode-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 0.84rem;
+}
+
+.episode-overview {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #aab3c5;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+}
+
+.action-done {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.action-done .btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cast-photo-borrowed {
+  object-position: center 30%;
+  filter: saturate(0.85);
+}
+
+@media (max-width: 1100px) {
+  .detail-wrap.has-collection {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collection-side {
+    position: static;
+  }
+
+  .collection-parts {
+    max-height: none;
+  }
+}

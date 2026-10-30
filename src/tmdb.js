@@ -432,6 +432,16 @@ export function normalizeTmdbDetails(raw, mediaType) {
     totalSeasons: mediaType === MediaType.TV ? raw.number_of_seasons ?? null : null,
     totalEpisodes: mediaType === MediaType.TV ? raw.number_of_episodes ?? null : null,
     lastAirDate: raw.last_air_date ?? null,
+    // Movies that belong to a series of films carry the collection id, which the
+    // title page turns into a "rest of the collection" panel.
+    collection:
+      mediaType === MediaType.MOVIE && raw.belongs_to_collection
+        ? {
+            id: raw.belongs_to_collection.id,
+            name: raw.belongs_to_collection.name ?? 'Collection',
+            posterPath: raw.belongs_to_collection.poster_path ?? null,
+          }
+        : null,
     networks: (raw.networks ?? []).map((network) => network.name).filter(Boolean),
     creators: mediaType === MediaType.TV ? creators : [],
     directors: mediaType === MediaType.MOVIE ? directors : [],
@@ -455,7 +465,85 @@ export function normalizeTmdbDetails(raw, mediaType) {
 /** Full detail payload for one title, including cast and availability. */
 export async function titleDetails(mediaType, tmdbId) {
   const raw = await tmdbGet(`/${mediaType}/${tmdbId}`, { append_to_response: 'credits,watch/providers' })
-  return normalizeTmdbDetails(raw, mediaType)
+  return withCastArtwork(normalizeTmdbDetails(raw, mediaType), Number(tmdbId))
+}
+
+// ---------------------------------------------------------------------------
+// Title page extras: cast artwork, episodes and film collections
+// ---------------------------------------------------------------------------
+
+/**
+ * An image from one of a person's titles. Cast tiles fall back to one of these
+ * when TMDB has no headshot, so a cast row never shows a wall of initials.
+ * The pick is stable for a given title and person but differs between people.
+ */
+export async function castArtwork(personId, seed = 0) {
+  const images = await cachedJson(`person-art:${personId}`, async () => {
+    const data = await tmdbGet(`/person/${personId}/combined_credits`)
+    return (data.cast ?? []).map((credit) => credit.backdrop_path ?? credit.poster_path).filter(Boolean)
+  }).catch(() => [])
+
+  if (images.length === 0) return null
+  return images[Math.abs(Number(seed) || 0) % images.length]
+}
+
+/** Fills in artwork for cast members TMDB has no headshot for. */
+async function withCastArtwork(details, seed = 0) {
+  if (!details?.cast?.length) return details
+
+  let lookups = 0
+  const cast = await Promise.all(
+    details.cast.map(async (member, index) => {
+      if (member.profilePath || lookups >= 6) return member
+      lookups += 1
+      const artworkPath = await castArtwork(member.id, seed * 7 + index)
+      return artworkPath ? { ...member, artworkPath } : member
+    })
+  )
+
+  return { ...details, cast }
+}
+
+/** One season of episodes, for the lazy-loaded season lists on a series page. */
+export async function seasonDetails(tmdbId, seasonNumber) {
+  const season = Number(seasonNumber)
+  return cachedJson(`season:${Number(tmdbId)}:${season}`, async () => {
+    const raw = await tmdbGet(`/tv/${Number(tmdbId)}/season/${season}`)
+    return {
+      name: raw.name ?? `Season ${season}`,
+      overview: raw.overview ?? '',
+      airDate: raw.air_date ?? null,
+      episodes: (raw.episodes ?? []).map((episode) => ({
+        number: episode.episode_number,
+        name: episode.name ?? `Episode ${episode.episode_number}`,
+        overview: episode.overview ?? '',
+        airDate: episode.air_date ?? null,
+        runtime: episode.runtime ?? null,
+      })),
+    }
+  })
+}
+
+/** Every film in a TMDB collection, oldest first. */
+export async function collectionDetails(id) {
+  return cachedJson(`collection:${Number(id)}`, async () => {
+    const raw = await tmdbGet(`/collection/${Number(id)}`)
+    return {
+      id: raw.id,
+      name: raw.name ?? 'Collection',
+      overview: raw.overview ?? '',
+      parts: (raw.parts ?? [])
+        .filter((part) => part.id)
+        .map((part) => ({
+          tmdbId: part.id,
+          title: part.title ?? 'Untitled',
+          releaseDate: part.release_date ?? null,
+          posterPath: part.poster_path ?? null,
+          rating: part.vote_average ? Math.round(part.vote_average * 10) / 10 : null,
+        }))
+        .sort((left, right) => String(left.releaseDate ?? '').localeCompare(String(right.releaseDate ?? ''))),
+    }
+  })
 }
 
 /** Everything one person page needs: biography plus every credited title. */

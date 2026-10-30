@@ -100,10 +100,75 @@ before(async () => {
         vote_average: 8.1,
         vote_count: 1200,
         runtime: 110,
+        backdrop_path: '/backdrop.jpg',
+        number_of_seasons: 2,
+        number_of_episodes: 5,
+        seasons: [
+          { season_number: 1, name: 'Season 1', episode_count: 3 },
+          { season_number: 2, name: 'Season 2', episode_count: 2 },
+        ],
         credits: {
           cast: [{ id: 77, name: 'Ada Actor', character: 'Lead', profile_path: '/ada.jpg' }],
           crew: [],
         },
+      }
+    } else if (url.pathname === '/3/tv/999/season/1') {
+      body = {
+        name: 'Season 1',
+        overview: 'The first season.',
+        air_date: '2021-02-03',
+        episodes: [
+          {
+            episode_number: 1,
+            name: 'Pilot Episode',
+            overview: 'A test begins.',
+            air_date: '2021-02-03',
+            runtime: 45,
+          },
+          {
+            episode_number: 2,
+            name: 'Second Episode',
+            overview: 'Testing continues.',
+            air_date: '2021-02-10',
+            runtime: 44,
+          },
+        ],
+      }
+    } else if (url.pathname === '/3/movie/888') {
+      body = {
+        id: 888,
+        title: 'Collection Film',
+        overview: 'One part of a pair.',
+        release_date: '2019-01-01',
+        backdrop_path: '/eight.jpg',
+        belongs_to_collection: { id: 55, name: 'Test Collection', poster_path: '/collection.jpg' },
+        credits: {
+          cast: [{ id: 78, name: 'No Photo Actor', character: 'Sidekick', profile_path: null }],
+          crew: [],
+        },
+      }
+    } else if (url.pathname === '/3/movie/889') {
+      body = {
+        id: 889,
+        title: 'Collection Film Two',
+        overview: 'The other part.',
+        release_date: '2021-06-01',
+        credits: { cast: [], crew: [] },
+      }
+    } else if (url.pathname === '/3/collection/55') {
+      body = {
+        id: 55,
+        name: 'Test Collection',
+        parts: [
+          { id: 888, title: 'Collection Film', release_date: '2019-01-01', poster_path: '/one.jpg', vote_average: 7 },
+          { id: 889, title: 'Collection Film Two', release_date: '2021-06-01', poster_path: '/two.jpg', vote_average: 6.5 },
+        ],
+      }
+    } else if (url.pathname === '/3/person/78/combined_credits') {
+      body = {
+        cast: [
+          { id: 701, media_type: 'movie', title: 'Their Other Film', release_date: '2018-01-01', poster_path: '/other.jpg' },
+        ],
       }
     } else if (url.pathname === '/3/person/77') {
       body = {
@@ -324,4 +389,81 @@ test('a title page links its cast to a person page with their credits', async ()
   assert.match(person, /class="media-card"/)
   assert.match(person, /\/title\/movie\/601/)
   assert.match(person, /\/title\/tv\/602/)
+})
+
+test('a series page lists seasons and serves episode detail on demand', async () => {
+  const tv = await (await page('/title/tv/999')).text()
+  assert.match(tv, /class="detail-backdrop"/)
+  assert.match(tv, /name="allSeasons"/)
+  assert.match(tv, /data-episodes="\/partial\/tv\/999\/season\/1"/)
+  assert.match(tv, /name="season" value="2"/)
+  assert.match(tv, /Season 2/)
+  assert.match(tv, /class="episode-list"/)
+
+  const episodes = await (await page('/partial/tv/999/season/1')).text()
+  assert.match(episodes, /Pilot Episode/)
+  assert.match(episodes, /A test begins\./)
+  assert.match(episodes, /2021-02-03/)
+  assert.match(episodes, /class="episode"/)
+})
+
+test('a film collection sits beside the title and requests what is picked', async () => {
+  const movie = await (await page('/title/movie/888')).text()
+  assert.match(movie, /class="collection-side/)
+  assert.match(movie, /Test Collection/)
+  assert.match(movie, /class="collection-part"/)
+  assert.match(movie, /name="tmdbId" value="889"/)
+  // The film being viewed is not offered again, so the panel lists one part.
+  assert.equal((movie.match(/class="collection-part"/g) ?? []).length, 1)
+  // A cast member with no headshot borrows a still from one of their own titles.
+  assert.match(movie, /other\.jpg/)
+
+  const response = await fetch(`${baseUrl}/collection/55/request`, {
+    method: 'POST',
+    headers: { cookie: adminCookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'tmdbId=889&returnTo=/title/movie/888',
+    redirect: 'manual',
+  })
+  assert.equal(response.status, 303)
+
+  const detail = await (await page('/title/movie/889')).text()
+  assert.match(detail, /Already requested/)
+  assert.match(detail, /type="button" disabled/)
+  assert.doesNotMatch(detail, /Request movie/)
+})
+
+test('a series request covers all seasons or only the ticked ones', async () => {
+  const one = await fetch(`${baseUrl}/media/import`, {
+    method: 'POST',
+    headers: { cookie: adminCookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'mediaType=tv&tmdbId=999&seasonsSubmitted=1&season=2&returnTo=/requests',
+    redirect: 'manual',
+  })
+  assert.equal(one.status, 303)
+
+  const requests = await (await page('/requests')).text()
+  assert.match(requests, /Season 2/)
+
+  // The picker is gone once the title has an active request.
+  const after = await (await page('/title/tv/999')).text()
+  assert.match(after, /Already requested/)
+  assert.doesNotMatch(after, /name="allSeasons"/)
+
+  // Asking again, even for every season, is refused instead of duplicated.
+  const again = await fetch(`${baseUrl}/media/import`, {
+    method: 'POST',
+    headers: { cookie: adminCookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'mediaType=tv&tmdbId=999&allSeasons=on&returnTo=/',
+    redirect: 'manual',
+  })
+  assert.match(again.headers.get('location'), /err=/)
+})
+
+test('the title page styles carry the backdrop, seasons and collection panel', async () => {
+  const css = await (await fetch(`${baseUrl}/styles.css?v=0.10.0`)).text()
+  assert.match(css, /\.detail-backdrop \{[^}]*filter: blur\(46px\)/)
+  assert.match(css, /\.detail-wrap\.has-collection \{\s*grid-template-columns: minmax\(0, 1fr\) 330px;/)
+  assert.match(css, /\.season-block summary \{/)
+  assert.match(css, /\.episode-overview \{/)
+  assert.match(css, /\.collection-side \{/)
 })
