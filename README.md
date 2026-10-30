@@ -15,19 +15,20 @@ It is a self-contained implementation inspired by the domain model of
 - Node.js 24, ES modules, **zero runtime dependencies**
 - SQLite through Node's built-in `node:sqlite`
 - Server-rendered HTML, no client bundle
-- Docker image on `node:24-alpine`, running as the non-root `node` user
+- Docker image on `node:24-alpine`; the entrypoint drops to `PUID:PGID`
+  (`99:100`, Unraid `nobody:users`) after preparing `/data`
 
 ## Quick start
 
 ```bash
-ADMIN_PASSWORD='pick-something-long' docker compose up --build
-# http://localhost:5055
+# then open http://localhost:5055 and create the administrator
+docker compose up --build
 ```
 
 ```bash
 # plain Docker
 docker build -t discovarr .
-docker run --rm -p 5055:5055 -e ADMIN_PASSWORD='pick-something-long' -v discovarr-data:/data discovarr
+docker run --rm -p 5055:5055 -v discovarr-data:/data discovarr
 ```
 
 ```bash
@@ -36,16 +37,18 @@ npm start          # http://localhost:5055, database in ./data
 npm test           # end-to-end HTTP tests
 ```
 
-### Seeded accounts
+### First run
 
-| Account | Email | Password | Role |
-| --- | --- | --- | --- |
-| Administrator | `admin@discovarr.local` (`ADMIN_EMAIL`) | `ADMIN_PASSWORD`, else `admin` | admin |
-| Demo user | `sam@discovarr.local` | `sam` | user |
+The image ships no accounts. On first start every page redirects to `/setup`,
+where you create the administrator with an **email, username and password** —
+the first account is always the admin. Sign in afterwards with the username (or
+the email) and that password.
 
-Accounts are only seeded into an empty database. Set `ADMIN_PASSWORD` before the
-first boot, or change the password afterwards on the Account page. `SEED_DEMO_USER=false`
-skips the demo user.
+If you would rather have the account created at boot, set `ADMIN_PASSWORD` (plus
+optionally `ADMIN_EMAIL` and `ADMIN_USERNAME`) and the administrator is seeded
+into the empty database instead; `/setup` then redirects to `/login`.
+`SEED_DEMO_USER=true` additionally seeds `sam@discovarr.local` / `sam` while
+bootstrapping, which is only useful for demos.
 
 ## Features
 
@@ -68,7 +71,9 @@ skips the demo user.
   manage users, manage settings).
 - **Notifications** — webhook (Discord-compatible `content`, plus structured
   fields) for new requests, approvals/declines and titles becoming available.
-- **Accounts** — self-service password change that revokes other sessions.
+- **Accounts** — first-run `/setup` page where the first account becomes the
+  administrator, sign-in by username or email, self-service password change
+  that revokes other sessions.
 - **Audit log** — requests, approvals, dispatch failures, user and settings
   changes, sync runs, all visible on the settings page.
 - **Security** — scrypt password hashes, server-side sessions, HttpOnly cookies,
@@ -83,7 +88,6 @@ without manual `chown`:
 ```bash
 docker run -d --name discovarr -p 5060:5055 \
   -e PUID=99 -e PGID=100 \
-  -e ADMIN_PASSWORD='pick-something-long' \
   -v /mnt/user/appdata/discovarr:/data \
   --restart unless-stopped discovarr:0.2.0
 ```
@@ -100,9 +104,10 @@ created with `umask 002` so the group can write them.
 | `HOST` | `0.0.0.0` | Listen address |
 | `DATABASE_FILE` | `./data/discovarr.db` | SQLite file (image: `/data/discovarr.db`) |
 | `IMAGE_CACHE_DIR` | `<database dir>/images` | TMDB artwork cache |
-| `ADMIN_EMAIL` | `admin@discovarr.local` | Seeded admin email |
-| `ADMIN_PASSWORD` | `admin` | Seeded admin password |
-| `SEED_DEMO_USER` | `true` | Seed `sam@discovarr.local` |
+| `ADMIN_PASSWORD` | unset | Bootstrap only: create the first administrator at boot instead of using `/setup` |
+| `ADMIN_EMAIL` | `admin@discovarr.local` | Bootstrap admin email (used with `ADMIN_PASSWORD`) |
+| `ADMIN_USERNAME` | `admin` | Bootstrap admin username (used with `ADMIN_PASSWORD`) |
+| `SEED_DEMO_USER` | `false` | Bootstrap only: also seed the demo user `sam@discovarr.local` |
 | `SESSION_TTL_HOURS` | `168` | Session lifetime |
 | `COOKIE_SECURE` | `false` | Force the `Secure` cookie flag (auto behind `x-forwarded-proto: https`) |
 | `COOKIE_SAMESITE` | `lax` | `lax`, `strict` or `none`; `none` needs HTTPS and suits embedded previews |
@@ -125,7 +130,7 @@ relevant. Admin-only endpoints require the matching permission.
 | Method | Path | Notes |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness, version, TMDB state, last sync |
-| `POST` | `/auth/login` · `/auth/logout` | Session |
+| `POST` | `/auth/login` · `/auth/logout` | `{ username, password }` — the username or the email |
 | `GET` | `/auth/me` | Current user |
 | `POST` | `/auth/password` | `{ currentPassword, newPassword }` |
 | `GET` | `/search?query=&type=` | TMDB search |

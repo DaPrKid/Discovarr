@@ -12,6 +12,7 @@ import {
 import {
   approveRequest,
   changePassword,
+  createFirstAdmin,
   createUserByAdmin,
   declineRequest,
   deleteRequest,
@@ -74,7 +75,9 @@ function parseType(value) {
 function pageUser(req, res, returnTo) {
   const user = currentUser(req)
   if (!user) {
-    redirect(res, `/login?returnTo=${encodeURIComponent(returnTo)}`)
+    // An installation with no accounts at all sends visitors to the setup page
+    // so the first administrator can be created.
+    redirect(res, store.countUsers() === 0 ? '/setup' : `/login?returnTo=${encodeURIComponent(returnTo)}`)
     return null
   }
   return user
@@ -112,11 +115,30 @@ function loginPage({ returnTo, error, notice }) {
       <p class="muted">Request and track media for your library.</p>
       ${alert({ error, notice })}
       <form method="post" action="/login" class="stack">
-        <label>Email <input type="email" name="email" required autofocus /></label>
-        <label>Password <input type="password" name="password" required /></label>
+        <label>Username <input type="text" name="username" required autofocus autocomplete="username" placeholder="username or email" /></label>
+        <label>Password <input type="password" name="password" required autocomplete="current-password" /></label>
         <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
         <button class="btn" type="submit">Sign in</button>
       </form>
+    </section>`,
+  })
+}
+
+function setupPage({ appName, error, values = {} }) {
+  return layout({
+    appName,
+    title: 'Create your account',
+    body: `<section class="auth">
+      <h1>Welcome to ${escapeHtml(appName)}</h1>
+      <p class="muted">No accounts exist yet. The first account you create is the administrator, and can invite everyone else.</p>
+      ${alert({ error })}
+      <form method="post" action="/setup" class="stack">
+        <label>Email <input type="email" name="email" value="${escapeHtml(values.email ?? '')}" required autofocus /></label>
+        <label>Username <input type="text" name="username" value="${escapeHtml(values.username ?? '')}" required minlength="3" maxlength="40" autocomplete="username" /></label>
+        <label>Password <input type="password" name="password" required minlength="6" autocomplete="new-password" /></label>
+        <button class="btn" type="submit">Create administrator</button>
+      </form>
+      <p class="muted small">Sign in from then on with your username (or email) and password.</p>
     </section>`,
   })
 }
@@ -447,7 +469,7 @@ function settingsBody({ user, settings, users, audit, options, notice, error }) 
     <form method="post" action="/settings/users" class="stack panel">
       <h2 style="margin: 0">Add a user</h2>
       <div class="row-grid">
-        <label>Name <input type="text" name="username" required maxlength="40" /></label>
+        <label>Username <input type="text" name="username" required minlength="3" maxlength="40" /></label>
         <label>Email <input type="email" name="email" required /></label>
         <label>Password <input type="password" name="password" required minlength="6" /></label>
         <label>Role
@@ -519,7 +541,39 @@ function permissionsFromBody(body) {
 // ---------------------------------------------------------------------------
 
 export function registerPageRoutes(router) {
+  router.get('/setup', ({ req, res, url }) => {
+    if (store.countUsers() > 0) return redirect(res, currentUser(req) ? '/' : '/login')
+
+    sendHtml(res, 200, setupPage({ appName: appName(), error: url.searchParams.get('err'), values: {} }))
+  })
+
+  router.post('/setup', async ({ req, res }) => {
+    if (store.countUsers() > 0) return redirect(res, '/login')
+
+    const body = await readBody(req)
+
+    try {
+      const user = createFirstAdmin({ email: body.email, username: body.username, password: body.password })
+      const token = createSession(user.id)
+      redirect(res, withMessage('/settings', 'notice', `Welcome, ${user.username}`), {
+        'set-cookie': sessionCookie(token, req),
+      })
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error
+      sendHtml(
+        res,
+        error.status,
+        setupPage({
+          appName: appName(),
+          error: error.message,
+          values: { email: body.email ?? '', username: body.username ?? '' },
+        })
+      )
+    }
+  })
+
   router.get('/login', ({ req, res, url }) => {
+    if (store.countUsers() === 0) return redirect(res, '/setup')
     if (currentUser(req)) return redirect(res, '/')
 
     sendHtml(
@@ -537,7 +591,7 @@ export function registerPageRoutes(router) {
     const body = await readBody(req)
     const returnTo = safeReturn(body.returnTo, '/')
     const key = clientKey(req)
-    const user = store.findUserByEmail(body.email ?? '')
+    const user = store.findUserByLogin(body.username ?? body.email ?? '')
 
     if (!user || !verifyPassword(String(body.password ?? ''), user.passwordHash)) {
       const limit = loginLimiter.record(key)
@@ -545,7 +599,7 @@ export function registerPageRoutes(router) {
       return redirect(
         res,
         `/login?returnTo=${encodeURIComponent(returnTo)}&err=${encodeURIComponent(
-          limit.allowed ? 'Incorrect email or password' : `Too many attempts. Try again in ${limit.retryAfterSeconds}s.`
+          limit.allowed ? 'Incorrect username or password' : `Too many attempts. Try again in ${limit.retryAfterSeconds}s.`
         )}`
       )
     }

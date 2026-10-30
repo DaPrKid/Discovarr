@@ -33,7 +33,7 @@ import { serviceOptions, serviceSummary } from './services.js'
 import { searchTmdb, tmdbConfigured } from './tmdb.js'
 import { syncLibrary, syncState } from './sync.js'
 
-const APP_VERSION = '0.2.0'
+const APP_VERSION = '0.3.0'
 
 function parseType(value) {
   return value === MediaType.MOVIE || value === MediaType.TV ? value : 'all'
@@ -59,6 +59,7 @@ export function registerApiRoutes(router) {
       version: APP_VERSION,
       uptimeSeconds: Math.round(process.uptime()),
       media: store.listMedia({}).length,
+      setupRequired: store.countUsers() === 0,
       tmdb: tmdbConfigured() ? 'configured' : 'offline',
       sync: syncState().lastRun,
     })
@@ -66,10 +67,10 @@ export function registerApiRoutes(router) {
 
   router.post('/api/v1/auth/login', async ({ req, res }) => {
     const body = await readBody(req)
-    const user = store.findUserByEmail(body.email ?? '')
+    const user = store.findUserByLogin(body.username ?? body.email ?? '')
 
     if (!user || !verifyPassword(String(body.password ?? ''), user.passwordHash)) {
-      throw new HttpError(401, 'Incorrect email or password')
+      throw new HttpError(401, 'Incorrect username or password')
     }
 
     const token = createSession(user.id)

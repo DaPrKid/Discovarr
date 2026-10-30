@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { registerApiRoutes } from './api.js'
 import { currentUser } from './auth.js'
 import { config } from './config.js'
-import { deleteExpiredSessions } from './db.js'
+import { countUsers, deleteExpiredSessions } from './db.js'
 import { createRouter, HttpError, sendHtml, sendJson } from './http.js'
 import { serveImage } from './images.js'
 import { registerPageRoutes } from './pages.js'
@@ -139,9 +139,9 @@ server.listen(config.port, config.host, () => {
     )
   }
 
-  if (config.isDefaultAdminPassword) {
+  if (countUsers() === 0) {
     console.warn(
-      `[discovarr] SECURITY: the admin password is the default "admin". Set ADMIN_PASSWORD before exposing this instance.`
+      `[discovarr] no accounts yet: open http://<host>:${config.port}/setup to create the first administrator.`
     )
   }
 })

@@ -110,6 +110,15 @@ ensureColumn('users', 'permissions', 'INTEGER NOT NULL DEFAULT 0')
 ensureColumn('users', 'quota_movie', 'INTEGER NOT NULL DEFAULT 0')
 ensureColumn('users', 'quota_tv', 'INTEGER NOT NULL DEFAULT 0')
 
+// Usernames identify an account on the sign-in form, so they are unique
+// regardless of case. Older databases may hold duplicates, which makes the
+// index impossible; that is logged rather than fatal.
+try {
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users (username COLLATE NOCASE)')
+} catch {
+  console.warn('[discovarr] duplicate usernames exist, so the unique username index was skipped')
+}
+
 const timestamp = () => new Date().toISOString()
 
 // ---------------------------------------------------------------------------
@@ -137,6 +146,22 @@ export function countUsers() {
 
 export function findUserByEmail(email) {
   return mapUser(db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(String(email)))
+}
+
+export function findUserByUsername(username) {
+  return mapUser(db.prepare('SELECT * FROM users WHERE lower(username) = lower(?)').get(String(username).trim()))
+}
+
+/** Sign-in lookup: the username or the email address both identify an account. */
+export function findUserByLogin(identifier) {
+  const value = String(identifier ?? '').trim()
+  if (!value) return null
+
+  return mapUser(
+    db
+      .prepare('SELECT * FROM users WHERE lower(username) = lower(?) OR lower(email) = lower(?)')
+      .get(value, value)
+  )
 }
 
 export function findUserById(id) {
@@ -634,10 +659,12 @@ function seed() {
     saveSettings(SETTING_DEFAULTS)
   }
 
-  if (countUsers() === 0) {
+  // Only the optional ADMIN_PASSWORD bootstrap seeds accounts. Without it the
+  // database stays empty and the app serves /setup for the first account.
+  if (countUsers() === 0 && config.adminPassword) {
     createUser({
       email: config.adminEmail,
-      username: 'Administrator',
+      username: config.adminUsername,
       password: config.adminPassword,
       role: Role.ADMIN,
       permissions: ALL_PERMISSIONS,

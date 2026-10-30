@@ -9,11 +9,11 @@ services:
     environment:
       PORT: "5055"
       DATABASE_FILE: /data/discovarr.db
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@discovarr.local}
-      # Override before exposing the instance: docker compose up with
-      # ADMIN_PASSWORD=... in .env or the shell environment.
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-now}
-      SEED_DEMO_USER: "true"
+      # Optional hands-off bootstrap. Leave ADMIN_PASSWORD empty and the first
+      # administrator is created in the browser at /setup on first start.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SEED_DEMO_USER: ${SEED_DEMO_USER:-false}
       # Unraid defaults: nobody (99) / users (100). Override with PUID/PGID.
       PUID: ${PUID:-99}
       PGID: ${PGID:-100}

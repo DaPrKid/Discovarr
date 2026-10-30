@@ -17,6 +17,18 @@ import { dispatchToService } from './services.js'
 import { tmdbDetails } from './tmdb.js'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const USERNAME_PATTERN = /^[a-zA-Z0-9._-]+$/
+
+/** Normalises a username and rejects names that cannot be typed at sign-in. */
+export function cleanUsername(value) {
+  const name = String(value ?? '').trim()
+  if (!name) throw new HttpError(400, 'Username is required')
+  if (name.length < 3 || name.length > 40) throw new HttpError(400, 'Username must be 3-40 characters')
+  if (!USERNAME_PATTERN.test(name)) {
+    throw new HttpError(400, 'Username can use letters, numbers, dots, dashes and underscores')
+  }
+  return name
+}
 
 export function currentPeriodStart(now = new Date()) {
   return new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
@@ -342,14 +354,15 @@ export function listRequestsFor(user, filter = 'all', { page = 1, take = 12 } = 
 
 export function createUserByAdmin({ email, username, password, role, permissions, quotaMovie, quotaTv }, actor) {
   const cleanEmail = String(email ?? '').trim()
-  const cleanName = String(username ?? '').trim()
+  const cleanName = cleanUsername(username)
 
-  if (!cleanEmail || !cleanName || !password) {
+  if (!cleanEmail || !password) {
     throw new HttpError(400, 'Email, username and password are required')
   }
   if (!EMAIL_PATTERN.test(cleanEmail)) throw new HttpError(400, 'Enter a valid email address')
   if (String(password).length < 6) throw new HttpError(400, 'Password must be at least 6 characters')
   if (store.findUserByEmail(cleanEmail)) throw new HttpError(409, 'That email is already registered')
+  if (store.findUserByUsername(cleanName)) throw new HttpError(409, 'That username is taken')
 
   const user = store.createUser({
     email: cleanEmail,
@@ -368,6 +381,31 @@ export function createUserByAdmin({ email, username, password, role, permissions
 
   store.recordAudit(actor?.id ?? null, 'user.created', `${cleanEmail} (${user.role})`)
   return store.findUserById(user.id)
+}
+
+/** Creates the very first account, which is always the administrator. */
+export function createFirstAdmin({ email, username, password }) {
+  if (store.countUsers() > 0) throw new HttpError(409, 'Setup is already complete')
+
+  const cleanEmail = String(email ?? '').trim()
+  const cleanName = cleanUsername(username)
+
+  if (!cleanEmail) throw new HttpError(400, 'Email is required')
+  if (!EMAIL_PATTERN.test(cleanEmail)) throw new HttpError(400, 'Enter a valid email address')
+  if (String(password ?? '').length < 6) throw new HttpError(400, 'Password must be at least 6 characters')
+  if (store.findUserByEmail(cleanEmail)) throw new HttpError(409, 'That email is already registered')
+  if (store.findUserByUsername(cleanName)) throw new HttpError(409, 'That username is taken')
+
+  const user = store.createUser({
+    email: cleanEmail,
+    username: cleanName,
+    password: String(password),
+    role: Role.ADMIN,
+    permissions: ALL_PERMISSIONS,
+  })
+
+  store.recordAudit(user.id, 'setup.completed', cleanEmail)
+  return user
 }
 
 export function updateUserByAdmin(id, input, actor) {

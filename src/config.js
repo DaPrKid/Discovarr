@@ -13,16 +13,19 @@ export const config = {
   databaseFile,
   // TMDB artwork is cached next to the database so it survives restarts.
   imageCacheDir: process.env.IMAGE_CACHE_DIR ?? join(dirname(databaseFile), 'images'),
-  adminEmail: (process.env.ADMIN_EMAIL ?? 'admin@discovarr.local').toLowerCase(),
-  adminPassword: process.env.ADMIN_PASSWORD ?? 'admin',
+  // Optional hands-off bootstrap. When ADMIN_PASSWORD is set the first
+  // administrator is created at boot; otherwise the app serves the /setup
+  // page so the first account is created in the browser.
+  adminEmail: (process.env.ADMIN_EMAIL ?? '').trim().toLowerCase() || 'admin@discovarr.local',
+  adminUsername: (process.env.ADMIN_USERNAME ?? '').trim() || 'admin',
+  adminPassword: process.env.ADMIN_PASSWORD ?? '',
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS ?? 168),
   cookieSecure: bool(process.env.COOKIE_SECURE, false),
   cookieSameSite: (process.env.COOKIE_SAMESITE ?? 'lax').toLowerCase(),
-  seedDemoUser: bool(process.env.SEED_DEMO_USER, true),
+  seedDemoUser: bool(process.env.SEED_DEMO_USER, false),
   // Preview/demo only: treat every request as this user when no session
   // cookie is present, so a cookie-blocking embedded browser still works.
   demoAutoLoginEmail: (process.env.DEMO_AUTO_LOGIN ?? '').trim().toLowerCase() || null,
-  isDefaultAdminPassword: process.env.ADMIN_PASSWORD === undefined,
   tmdbApiKeyEnv: process.env.TMDB_API_KEY ?? '',
   loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? 8),
   loginRateWindowMs: Number(process.env.LOGIN_RATE_WINDOW_MINUTES ?? 15) * 60 * 1000,
