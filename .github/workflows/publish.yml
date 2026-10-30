@@ -1,0 +1,91 @@
+name: Publish image
+
+# Publishes ghcr.io/<owner>/discovarr. A version tag (v0.3.0 -> 0.3.0, plus
+# latest) or a manual run (tagged main) builds and pushes the image.
+#
+# Nothing is published to a public registry: a package first pushed from this
+# private repository inherits its visibility and stays private, so only someone
+# who has run `docker login ghcr.io` with read:packages can pull it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and push to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the image tags
+        run: |
+          set -euo pipefail
+          # GHCR requires a lowercase image path; the account name is not.
+          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=ghcr.io/${owner}/discovarr" >> "$GITHUB_ENV"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            echo "VERSION=${version}" >> "$GITHUB_ENV"
+            echo "EXTRA_TAG=latest" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=main" >> "$GITHUB_ENV"
+            echo "EXTRA_TAG=" >> "$GITHUB_ENV"
+          fi
+
+      - name: Push with the workflow token, no personal token needed
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          img_args=(-t "$IMAGE:$VERSION" -t "$IMAGE:sha-$SHORT_SHA")
+          if [ -n "$EXTRA_TAG" ]; then img_args+=(-t "$IMAGE:$EXTRA_TAG"); fi
+          docker build "${img_args[@]}" .
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:sha-$SHORT_SHA"
+          if [ -n "$EXTRA_TAG" ]; then docker push "$IMAGE:$EXTRA_TAG"; fi
+          {
+            echo "### Published"
+            echo
+            echo "- \`$IMAGE:$VERSION\`"
+            echo "- \`$IMAGE:sha-$SHORT_SHA\`"
+            if [ -n "$EXTRA_TAG" ]; then echo "- \`$IMAGE:$EXTRA_TAG\`"; fi
+            echo
+            echo "Pull on the server with \`docker login ghcr.io\` first."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The package stays private, so anonymous pulls are refused
+        run: |
+          set -euo pipefail
+          # Log out so the next pull is anonymous. A private package must reject
+          # it; a public one would hand the image to anyone who guessed the name.
+          docker logout ghcr.io
+          for attempt in 1 2 3 4 5; do
+            if docker pull "$IMAGE:$VERSION" > "$RUNNER_TEMP/pull.log" 2>&1; then
+              cat "$RUNNER_TEMP/pull.log"
+              echo "FAIL: an anonymous pull succeeded, so the package is public"
+              exit 1
+            fi
+            if grep -Eqi 'unauthorized|denied' "$RUNNER_TEMP/pull.log"; then
+              cat "$RUNNER_TEMP/pull.log"
+              echo "OK: anonymous pull was refused on attempt $attempt"
+              exit 0
+            fi
+            # A just-pushed package can take a moment to become visible.
+            cat "$RUNNER_TEMP/pull.log"
+            sleep 3
+          done
+          echo "FAIL: anonymous pull did not report unauthorized/denied"
+          exit 1

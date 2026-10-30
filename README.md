@@ -37,6 +37,26 @@ npm start          # http://localhost:5055, database in ./data
 npm test           # end-to-end HTTP tests
 ```
 
+## Pulling the published image (private)
+
+Pushing a `v*` tag, or running the **Publish image** workflow by hand, builds and
+pushes `ghcr.io/daprkid/discovarr` to the GitHub Container Registry. The package
+inherits this repository's visibility, so it is **private**: an anonymous
+`docker pull` is refused, and the image is only usable by accounts you grant
+access to. Publishing uses the workflow's own `GITHUB_TOKEN`, so no personal
+token is needed for that side.
+
+```bash
+# once, on the machine that runs the container; classic PAT with read:packages
+echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
+
+docker pull ghcr.io/daprkid/discovarr:0.3.0
+```
+
+Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
+`sha-<commit>`. The login is stored for the Docker daemon, so Unraid's Docker
+page and its update checks use it too once the credential exists.
+
 ### First run
 
 The image ships no accounts. On first start every page redirects to `/setup`,
@@ -89,7 +109,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5055 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped discovarr:0.2.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.3.0
 ```
 
 If you prefer to run the process without root at all, start the container with
