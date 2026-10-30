@@ -57,7 +57,10 @@ jobs:
           grep -E '^(Name|Uid|Gid):' "$RUNNER_TEMP/proc1.txt"
           test "$(awk '/^Uid:/{print $2}' "$RUNNER_TEMP/proc1.txt")" = 99
           test "$(awk '/^Gid:/{print $2}' "$RUNNER_TEMP/proc1.txt")" = 100
-          docker logs discovarr-ci 2>&1 | grep -q 'starting as 99:100'
+          # Captured first, then matched: `docker logs ... | grep -q` lets grep
+          # exit early, which kills docker with SIGPIPE and pipefail reports 141.
+          docker logs discovarr-ci > "$RUNNER_TEMP/app.log" 2>&1
+          grep -q 'starting as 99:100' "$RUNNER_TEMP/app.log"
 
       - name: /data belongs to 99:100 and the database landed there
         run: |
