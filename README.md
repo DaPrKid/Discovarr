@@ -86,6 +86,13 @@ bootstrapping, which is only useful for demos.
 - **Search that answers while you type** — Discover suggests matches with
   posters, year and availability as you type, keyboard-navigable, and the plain
   search form still submits when JavaScript is off.
+- **A denser Discover grid with pages** — a full poster wall per screen and
+  Previous/Next paging over trending titles and search results.
+- **Network and studio walls** — logos for 31 networks and 18 studios, each one
+  opening a page filtered by Popular, Recently released and Upcoming, with genre
+  chips for that network or studio.
+- **Genre shelves** — the genre pages lead with titles from the busiest
+  categories instead of a bare list of names.
 - **Requests** — movies or individual seasons, duplicate and already-available
   protection, pagination and status filters.
 - **Approval workflow** — `pending → approved → completed`, or `declined` /
@@ -156,7 +163,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.6.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.7.0
 ```
 
 If you prefer to run the process without root at all, start the container with

@@ -3,7 +3,6 @@ import { getSetting } from './db.js'
 import { MediaType } from './constants.js'
 import { HttpError } from './http.js'
 
-const BASE_URL = 'https://api.themoviedb.org/3'
 const IMAGE_BASE = 'https://image.tmdb.org/t/p'
 const TIMEOUT_MS = 8000
 
@@ -21,7 +20,9 @@ async function tmdbGet(path, params = {}) {
   const key = tmdbApiKey()
   if (!key) throw new HttpError(503, 'TMDB is not configured. Add an API key in settings.')
 
-  const url = new URL(`${BASE_URL}${path}`)
+  // config.tmdbBaseUrl is overridable so tests (and TMDB mirrors) can point the
+  // client at another host without touching the call sites.
+  const url = new URL(`${config.tmdbBaseUrl}${path}`)
   for (const [name, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(name, String(value))
   }
@@ -73,32 +74,55 @@ export function normalizeTmdbItem(raw, fallbackType = null) {
           .map((season) => ({
             seasonNumber: season.season_number,
             name: season.name ?? `Season ${season.season_number}`,
-            episodeCount: season.episode_count ?? 0,
+            episodes: season.episode_count ?? 0,
           }))
       : [],
   }
 }
 
-export async function searchTmdb(query, type = 'all') {
-  const data =
-    type === MediaType.MOVIE || type === MediaType.TV
-      ? await tmdbGet(`/search/${type}`, { query, include_adult: 'false' })
-      : await tmdbGet('/search/multi', { query, include_adult: 'false' })
+function normalizePage(data, fallbackPage) {
+  return {
+    items: [],
+    page: Number(data.page) || Number(fallbackPage) || 1,
+    totalPages: Math.min(Math.max(Number(data.total_pages) || 1, 1), 500),
+  }
+}
 
-  return (data.results ?? [])
-    .map((item) => normalizeTmdbItem(item, type === 'all' ? null : type))
-    .filter(Boolean)
-    .slice(0, 30)
+/** One page of TMDB search results, used by the Discover grid and suggestions. */
+export async function searchPage(query, type = 'all', page = 1) {
+  const path = type === MediaType.MOVIE || type === MediaType.TV ? `/search/${type}` : '/search/multi'
+  const data = await tmdbGet(path, { query, include_adult: 'false', page })
+
+  return {
+    ...normalizePage(data, page),
+    items: (data.results ?? [])
+      .map((item) => normalizeTmdbItem(item, type === 'all' ? null : type))
+      .filter(Boolean),
+  }
+}
+
+export async function searchTmdb(query, type = 'all') {
+  const { items } = await searchPage(query, type, 1)
+  return items.slice(0, 30)
+}
+
+/** One page of trending titles. */
+export async function trendingPage(type = 'all', page = 1) {
+  const path =
+    type === MediaType.MOVIE || type === MediaType.TV ? `/trending/${type}/week` : '/trending/all/week'
+  const data = await tmdbGet(path, { page })
+
+  return {
+    ...normalizePage(data, page),
+    items: (data.results ?? [])
+      .map((item) => normalizeTmdbItem(item, type === 'all' ? null : type))
+      .filter(Boolean),
+  }
 }
 
 export async function trendingTmdb(type = 'all') {
-  const path =
-    type === MediaType.MOVIE || type === MediaType.TV ? `/trending/${type}/week` : '/trending/all/week'
-  const data = await tmdbGet(path)
-  return (data.results ?? [])
-    .map((item) => normalizeTmdbItem(item, type === 'all' ? null : type))
-    .filter(Boolean)
-    .slice(0, 24)
+  const { items } = await trendingPage(type, 1)
+  return items.slice(0, 24)
 }
 
 export async function tmdbDetails(mediaType, tmdbId) {
@@ -127,6 +151,23 @@ const NETWORKS = Object.freeze([
   { id: 2, name: 'ABC' },
   { id: 71, name: 'The CW' },
   { id: 4, name: 'BBC One' },
+  { id: 19, name: 'Fox' },
+  { id: 30, name: 'USA Network' },
+  { id: 77, name: 'Syfy' },
+  { id: 41, name: 'TNT' },
+  { id: 68, name: 'TBS' },
+  { id: 47, name: 'Comedy Central' },
+  { id: 56, name: 'Cartoon Network' },
+  { id: 80, name: 'Adult Swim' },
+  { id: 13, name: 'Nickelodeon' },
+  { id: 54, name: 'Disney Channel' },
+  { id: 33, name: 'MTV' },
+  { id: 43, name: 'National Geographic' },
+  { id: 64, name: 'Discovery' },
+  { id: 65, name: 'History' },
+  { id: 318, name: 'Starz' },
+  { id: 14, name: 'PBS' },
+  { id: 26, name: 'Channel 4' },
 ])
 
 const STUDIOS = Object.freeze([
@@ -142,6 +183,12 @@ const STUDIOS = Object.freeze([
   { id: 1632, name: 'Lionsgate' },
   { id: 10342, name: 'Studio Ghibli' },
   { id: 521, name: 'DreamWorks Pictures' },
+  { id: 12, name: 'New Line Cinema' },
+  { id: 8411, name: 'Metro-Goldwyn-Mayer' },
+  { id: 10146, name: 'Focus Features' },
+  { id: 559, name: 'TriStar Pictures' },
+  { id: 14, name: 'Miramax' },
+  { id: 1, name: 'Lucasfilm' },
 ])
 
 const browseCache = new Map()
@@ -157,23 +204,78 @@ async function cachedJson(key, loader) {
   return value
 }
 
-/** Titles for one network, studio or genre through the discover endpoint. */
-export async function discoverTitles(mediaType, params = {}, limit = 24) {
-  const query = { include_adult: 'false', page: 1, sort_by: 'popularity.desc', ...params }
-  const key = `discover:${mediaType}:${JSON.stringify(query)}`
+/**
+ * TMDB discover parameters for the three filters offered on browse pages.
+ * "Recently released" only looks backwards and skips obscure entries, while
+ * "Upcoming" only looks forwards.
+ */
+export function browseSort(mediaType, sort = 'popular') {
+  const dateField = mediaType === MediaType.TV ? 'first_air_date' : 'primary_release_date'
+  const today = new Date().toISOString().slice(0, 10)
 
-  const data = await cachedJson(key, () => tmdbGet(`/discover/${mediaType}`, query))
+  if (sort === 'new') {
+    return { sort_by: `${dateField}.desc`, [`${dateField}.lte`]: today, 'vote_count.gte': '10' }
+  }
 
-  return (data.results ?? [])
-    .map((item) => normalizeTmdbItem(item, mediaType))
-    .filter(Boolean)
-    .slice(0, limit)
+  if (sort === 'upcoming') {
+    return { sort_by: `${dateField}.asc`, [`${dateField}.gte`]: today }
+  }
+
+  return { sort_by: 'popularity.desc' }
 }
 
-export async function networkShelves(limit = 12) {
+/** One paged slice of /discover for a network, studio or genre. */
+export async function discoverPage(mediaType, params = {}, { page = 1, sort = 'popular' } = {}) {
+  const query = {
+    include_adult: 'false',
+    page: Math.max(1, Number(page) || 1),
+    ...browseSort(mediaType, sort),
+    ...params,
+  }
+  const data = await cachedJson(`discover:${mediaType}:${JSON.stringify(query)}`, () =>
+    tmdbGet(`/discover/${mediaType}`, query)
+  )
+
+  return {
+    ...normalizePage(data, query.page),
+    items: (data.results ?? []).map((item) => normalizeTmdbItem(item, mediaType)).filter(Boolean),
+  }
+}
+
+/** Titles for one network, studio or genre through the discover endpoint. */
+export async function discoverTitles(mediaType, params = {}, limit = 24) {
+  const { items } = await discoverPage(mediaType, params, { page: 1 })
+  return items.slice(0, limit)
+}
+
+async function logoPathFor(kind, id) {
+  return cachedJson(`${kind}-logo:${id}`, async () => {
+    try {
+      const data = await tmdbGet(`/${kind}/${id}`)
+      return data.logo_path ?? null
+    } catch {
+      return null
+    }
+  })
+}
+
+export async function networkWithLogo(network) {
+  return { ...network, logoPath: await logoPathFor('network', network.id) }
+}
+
+export async function studioWithLogo(studio) {
+  return { ...studio, logoPath: await logoPathFor('company', studio.id) }
+}
+
+/** Every network we know, with its logo, for the logo wall. */
+export function networkDirectory() {
+  return Promise.all(NETWORKS.map(networkWithLogo))
+}
+
+export async function networkShelves(limit = 10, count = NETWORKS.length) {
   const shelves = await Promise.all(
-    NETWORKS.map(async (network) => ({
-      ...network,
+    NETWORKS.slice(0, count).map(async (network) => ({
+      ...(await networkWithLogo(network)),
       items: await discoverTitles(MediaType.TV, { with_networks: network.id }, limit).catch(() => []),
     }))
   )
@@ -185,10 +287,15 @@ export function networkById(id) {
   return NETWORKS.find((network) => String(network.id) === String(id)) ?? null
 }
 
-export async function studioShelves(limit = 12) {
+/** Every studio we know, with its logo, for the logo wall. */
+export function studioDirectory() {
+  return Promise.all(STUDIOS.map(studioWithLogo))
+}
+
+export async function studioShelves(limit = 10, count = STUDIOS.length) {
   const shelves = await Promise.all(
-    STUDIOS.map(async (studio) => ({
-      ...studio,
+    STUDIOS.slice(0, count).map(async (studio) => ({
+      ...(await studioWithLogo(studio)),
       items: await discoverTitles(MediaType.MOVIE, { with_companies: studio.id }, limit).catch(() => []),
     }))
   )
@@ -203,6 +310,19 @@ export function studioById(id) {
 export async function genreList(mediaType) {
   const data = await cachedJson(`genres:${mediaType}`, () => tmdbGet(`/genre/${mediaType}/list`))
   return (data.genres ?? []).map((genre) => ({ id: genre.id, name: genre.name })).filter((genre) => genre.id)
+}
+
+/** The busiest genres up front, each with a shelf of titles. */
+export async function genreShelves(mediaType, { count = 8, limit = 10 } = {}) {
+  const genres = (await genreList(mediaType)).slice(0, count)
+  const shelves = await Promise.all(
+    genres.map(async (genre) => ({
+      ...genre,
+      items: await discoverTitles(mediaType, { with_genres: genre.id }, limit).catch(() => []),
+    }))
+  )
+
+  return shelves.filter((shelf) => shelf.items.length > 0)
 }
 
 /**

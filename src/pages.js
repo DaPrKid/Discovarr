@@ -43,17 +43,23 @@ import {
   testServiceConnection,
 } from './services.js'
 import {
-  discoverTitles,
+  discoverPage,
   genreList,
+  genreShelves,
   networkById,
+  networkDirectory,
   networkShelves,
+  networkWithLogo,
   recommendedTitles,
+  searchPage,
   searchTmdb,
   studioById,
+  studioDirectory,
   studioShelves,
+  studioWithLogo,
   titleDetails,
   tmdbConfigured,
-  trendingTmdb,
+  trendingPage,
 } from './tmdb.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
@@ -179,6 +185,34 @@ const BROWSE_LINKS = Object.freeze([
   ['recommendations', '/recommendations', 'Recommendations'],
 ])
 
+const SORT_TABS = Object.freeze([
+  ['popular', 'Popular'],
+  ['new', 'Recently released'],
+  ['upcoming', 'Upcoming'],
+])
+
+// Titles per page in the Discover and browse grids.
+const PER_PAGE = 24
+
+function sortKey(value) {
+  return SORT_TABS.some(([key]) => key === value) ? value : 'popular'
+}
+
+function pageNumber(value) {
+  const page = Number.parseInt(String(value ?? ''), 10)
+  return Number.isFinite(page) && page > 0 ? page : 1
+}
+
+/** Builds a query string, dropping empty values so links stay tidy. */
+function browseHref(basePath, params = {}) {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '' || value === false) continue
+    search.set(key, String(value))
+  }
+  return `${basePath}${search.size ? `?${search}` : ''}`
+}
+
 function browseNav(browse) {
   return `<aside class="browse-nav">
     <p class="browse-heading">Browse</p>
@@ -211,13 +245,17 @@ function mediaGrid(items, { returnTo = '/', plex = {} } = {}) {
 }
 
 /** One browsable row: a network, studio or genre and the titles it made. */
-function shelf(title, items, href, plex) {
+function shelf(title, items, href, plex, { logoPath = null } = {}) {
   if (!items.length) return ''
+
+  const logo = logoPath
+    ? `<img class="shelf-logo" src="${escapeHtml(artwork(logoPath, 'w154'))}" alt="" loading="lazy" />`
+    : ''
 
   return `<section class="shelf">
     <div class="shelf-head">
-      <h2>${escapeHtml(title)}</h2>
-      <a class="inline-link" href="${href}">See all →</a>
+      <div class="shelf-title">${logo}<h2>${escapeHtml(title)}</h2></div>
+      <a class="inline-link" href="${escapeHtml(href)}">See all →</a>
     </div>
     <div class="shelf-row">${items
       .map((item) =>
@@ -229,6 +267,52 @@ function shelf(title, items, href, plex) {
       )
       .join('')}</div>
   </section>`
+}
+
+function brandLogo(name, logoPath) {
+  const inner = logoPath
+    ? `<img src="${escapeHtml(artwork(logoPath, 'w154'))}" alt="${escapeHtml(name)} logo" loading="lazy" />`
+    : `<span class="logo-fallback">${escapeHtml(initials(name))}</span>`
+
+  return `<span class="brand-logo">${inner}</span>`
+}
+
+function logoTile(name, logoPath, href) {
+  const inner = logoPath
+    ? `<img src="${escapeHtml(artwork(logoPath, 'w154'))}" alt="" loading="lazy" />`
+    : `<span class="logo-fallback">${escapeHtml(initials(name))}</span>`
+
+  return `<a class="logo-tile" href="${escapeHtml(href)}">
+    ${inner}
+    <span>${escapeHtml(name)}</span>
+    <em>See all →</em>
+  </a>`
+}
+
+/** Popular / recently released / upcoming, as pills that keep the other filters. */
+function sortBar(basePath, params, sort) {
+  return `<div class="filter-row">${SORT_TABS.map(([key, label]) => {
+    const href = browseHref(basePath, { ...params, sort: key === 'popular' ? '' : key })
+    return `<a class="filter-pill ${sort === key ? 'is-active' : ''}" href="${escapeHtml(href)}">${label}</a>`
+  }).join('')}</div>`
+}
+
+/** Genre chips for a single network, studio or genre page. */
+function genreChips(basePath, params, genres, selectedId) {
+  const all = `<a class="chip-link chip-sm ${selectedId ? '' : 'is-active'}" href="${escapeHtml(
+    browseHref(basePath, params)
+  )}">All genres</a>`
+
+  const links = genres
+    .map((genre) => {
+      const active = String(selectedId) === String(genre.id)
+      return `<a class="chip-link chip-sm ${active ? 'is-active' : ''}" href="${escapeHtml(
+        browseHref(basePath, { ...params, genre: genre.id })
+      )}">${escapeHtml(genre.name)}</a>`
+    })
+    .join('')
+
+  return `<div class="chips chips-sm">${all}${links}</div>`
 }
 
 function browseUnavailable(what) {
@@ -245,7 +329,7 @@ function browseUnavailable(what) {
     </section>`
 }
 
-function discoverBody({ user, type, query, source, items, error, plex = {} }) {
+function discoverBody({ user, type, query, source, items, page = 1, totalPages = 1, error, plex = {} }) {
   const tabs = [
     ['all', 'All'],
     ['movie', 'Movies'],
@@ -277,7 +361,7 @@ function discoverBody({ user, type, query, source, items, error, plex = {} }) {
     '',
     `<div class="page-head">
       <div>
-        <h1>Discover</h1>
+        <h1>${query ? `Results for “${escapeHtml(query)}”` : 'Discover'}</h1>
         <p class="muted">${source === 'tmdb' ? 'Trending on TMDB — request anything for the library.' : 'Local catalog (offline demo data).'}</p>
       </div>
       <form class="search" method="get" action="/" data-suggest="/search/suggest">
@@ -287,91 +371,148 @@ function discoverBody({ user, type, query, source, items, error, plex = {} }) {
       </form>
     </div>
     ${alert({ error })}
-    <div class="tabs">${tabLinks}</div>
-    ${grid}`
+    ${query ? '' : `<div class="tabs">${tabLinks}</div>`}
+    ${grid}
+    ${pagination({
+      page,
+      totalPages,
+      basePath: '/',
+      params: { type: type === 'all' ? '' : type, q: query },
+    })}`
   )
 }
 
-async function networksBody({ networkId, plex }) {
+async function networksBody({ networkId, sort: rawSort, genreId, page = 1, plex }) {
   if (!tmdbConfigured()) return discoverLayout('networks', browseUnavailable('Networks'))
 
+  const sort = sortKey(rawSort)
+
   if (networkId) {
-    const network = networkById(networkId) ?? { id: networkId, name: 'Network' }
-    const items = await discoverTitles(MediaType.TV, { with_networks: networkId }, 36)
+    const network = await networkWithLogo(networkById(networkId) ?? { id: Number(networkId), name: 'Network' })
+    const genres = await genreList(MediaType.TV).catch(() => [])
+    const selectedGenre = genreId ? genres.find((genre) => String(genre.id) === String(genreId)) : null
+    const params = { network: network.id, sort: sort === 'popular' ? '' : sort, genre: genreId ?? '' }
+    const result = await discoverPage(
+      MediaType.TV,
+      { with_networks: network.id, ...(genreId ? { with_genres: genreId } : {}) },
+      { page, sort }
+    )
 
     return discoverLayout(
       'networks',
       `<a class="back" href="/networks">← All networks</a>
-      <div class="page-head">
+      <div class="brand-head">
+        ${brandLogo(network.name, network.logoPath)}
         <div>
           <h1>${escapeHtml(network.name)}</h1>
-          <p class="muted">Series from ${escapeHtml(network.name)}.</p>
+          <p class="muted">${
+            selectedGenre ? `${escapeHtml(selectedGenre.name)} series` : 'Series'
+          } from ${escapeHtml(network.name)}.</p>
         </div>
       </div>
-      ${mediaGrid(items, { returnTo: `/networks?network=${encodeURIComponent(networkId)}`, plex })}`
+      ${sortBar('/networks', { network: network.id, genre: genreId }, sort)}
+      ${genreChips('/networks', { network: network.id, sort: sort === 'popular' ? '' : sort }, genres, genreId)}
+      ${mediaGrid(result.items, { returnTo: browseHref('/networks', params), plex })}
+      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/networks', params })}`
     )
   }
 
-  const rows = await networkShelves()
+  const [directory, rows] = await Promise.all([networkDirectory(), networkShelves(10, 8)])
 
   return discoverLayout(
     'networks',
     `<div class="page-head">
       <div>
         <h1>Networks</h1>
-        <p class="muted">Series grouped by the network that makes them.</p>
+        <p class="muted">All ${directory.length} networks and streaming services. Open one for its
+          popular, recently released and upcoming series.</p>
       </div>
     </div>
+    <div class="logo-wall">${directory
+      .map((network) => logoTile(network.name, network.logoPath, browseHref('/networks', { network: network.id })))
+      .join('')}</div>
     ${
-      rows
-        .map((row) => shelf(row.name, row.items, `/networks?network=${row.id}`, plex))
-        .join('') || '<p class="empty">TMDB returned no networks just now.</p>'
+      rows.length
+        ? `<h2 class="section-title">Popular on each network</h2>${rows
+            .map((row) =>
+              shelf(row.name, row.items, browseHref('/networks', { network: row.id }), plex, {
+                logoPath: row.logoPath,
+              })
+            )
+            .join('')}`
+        : '<p class="empty">TMDB returned no networks just now.</p>'
     }`
   )
 }
 
-async function studiosBody({ studioId, plex }) {
+async function studiosBody({ studioId, sort: rawSort, genreId, page = 1, plex }) {
   if (!tmdbConfigured()) return discoverLayout('studios', browseUnavailable('Studios'))
 
+  const sort = sortKey(rawSort)
+
   if (studioId) {
-    const studio = studioById(studioId) ?? { id: studioId, name: 'Studio' }
-    const items = await discoverTitles(MediaType.MOVIE, { with_companies: studioId }, 36)
+    const studio = await studioWithLogo(studioById(studioId) ?? { id: Number(studioId), name: 'Studio' })
+    const genres = await genreList(MediaType.MOVIE).catch(() => [])
+    const selectedGenre = genreId ? genres.find((genre) => String(genre.id) === String(genreId)) : null
+    const params = { studio: studio.id, sort: sort === 'popular' ? '' : sort, genre: genreId ?? '' }
+    const result = await discoverPage(
+      MediaType.MOVIE,
+      { with_companies: studio.id, ...(genreId ? { with_genres: genreId } : {}) },
+      { page, sort }
+    )
 
     return discoverLayout(
       'studios',
       `<a class="back" href="/studios">← All studios</a>
-      <div class="page-head">
+      <div class="brand-head">
+        ${brandLogo(studio.name, studio.logoPath)}
         <div>
           <h1>${escapeHtml(studio.name)}</h1>
-          <p class="muted">Films from ${escapeHtml(studio.name)}.</p>
+          <p class="muted">${
+            selectedGenre ? `${escapeHtml(selectedGenre.name)} films` : 'Films'
+          } from ${escapeHtml(studio.name)}.</p>
         </div>
       </div>
-      ${mediaGrid(items, { returnTo: `/studios?studio=${encodeURIComponent(studioId)}`, plex })}`
+      ${sortBar('/studios', { studio: studio.id, genre: genreId }, sort)}
+      ${genreChips('/studios', { studio: studio.id, sort: sort === 'popular' ? '' : sort }, genres, genreId)}
+      ${mediaGrid(result.items, { returnTo: browseHref('/studios', params), plex })}
+      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/studios', params })}`
     )
   }
 
-  const rows = await studioShelves()
+  const [directory, rows] = await Promise.all([studioDirectory(), studioShelves(10, 8)])
 
   return discoverLayout(
     'studios',
     `<div class="page-head">
       <div>
         <h1>Studios</h1>
-        <p class="muted">Films grouped by the studio that made them.</p>
+        <p class="muted">All ${directory.length} studios. Open one for its popular, recently
+          released and upcoming films.</p>
       </div>
     </div>
+    <div class="logo-wall">${directory
+      .map((studio) => logoTile(studio.name, studio.logoPath, browseHref('/studios', { studio: studio.id })))
+      .join('')}</div>
     ${
-      rows
-        .map((row) => shelf(row.name, row.items, `/studios?studio=${row.id}`, plex))
-        .join('') || '<p class="empty">TMDB returned no studios just now.</p>'
+      rows.length
+        ? `<h2 class="section-title">Popular from each studio</h2>${rows
+            .map((row) =>
+              shelf(row.name, row.items, browseHref('/studios', { studio: row.id }), plex, {
+                logoPath: row.logoPath,
+              })
+            )
+            .join('')}`
+        : '<p class="empty">TMDB returned no studios just now.</p>'
     }`
   )
 }
 
-async function genresBody({ mediaType, genreId, plex }) {
+async function genresBody({ mediaType, genreId, sort: rawSort, page = 1, plex }) {
   const isMovie = mediaType === MediaType.MOVIE
   const key = isMovie ? 'movie-genres' : 'tv-genres'
   const label = isMovie ? 'Movie Genres' : 'Series Genres'
+  const sort = sortKey(rawSort)
 
   if (!tmdbConfigured()) return discoverLayout(key, browseUnavailable(label))
 
@@ -379,7 +520,8 @@ async function genresBody({ mediaType, genreId, plex }) {
   const selected = genreId ? genres.find((genre) => String(genre.id) === String(genreId)) : null
 
   if (selected) {
-    const items = await discoverTitles(mediaType, { with_genres: selected.id }, 36)
+    const params = { genre: selected.id, sort: sort === 'popular' ? '' : sort }
+    const result = await discoverPage(mediaType, { with_genres: selected.id }, { page, sort })
 
     return discoverLayout(
       key,
@@ -387,27 +529,38 @@ async function genresBody({ mediaType, genreId, plex }) {
       <div class="page-head">
         <div>
           <h1>${escapeHtml(selected.name)}</h1>
-          <p class="muted">Popular ${isMovie ? 'films' : 'series'} in ${escapeHtml(selected.name)}.</p>
+          <p class="muted">${isMovie ? 'Films' : 'Series'} in ${escapeHtml(selected.name)}.</p>
         </div>
       </div>
-      ${mediaGrid(items, { returnTo: `/genres/${mediaType}?genre=${selected.id}`, plex })}`
+      ${sortBar(`/genres/${mediaType}`, { genre: selected.id }, sort)}
+      ${mediaGrid(result.items, { returnTo: browseHref(`/genres/${mediaType}`, params), plex })}
+      ${pagination({ page: result.page, totalPages: result.totalPages, basePath: `/genres/${mediaType}`, params })}`
     )
   }
+
+  const rows = await genreShelves(mediaType)
 
   return discoverLayout(
     key,
     `<div class="page-head">
       <div>
         <h1>${label}</h1>
-        <p class="muted">Pick a genre to see what is popular in it.</p>
+        <p class="muted">Pick a genre for its most popular titles, or scroll through a few below.</p>
       </div>
     </div>
     <div class="chips">${genres
       .map(
         (genre) =>
-          `<a class="chip-link" href="/genres/${mediaType}?genre=${genre.id}">${escapeHtml(genre.name)}</a>`
+          `<a class="chip-link" href="${escapeHtml(browseHref(`/genres/${mediaType}`, { genre: genre.id }))}">${escapeHtml(genre.name)}</a>`
       )
-      .join('')}</div>`
+      .join('')}</div>
+    ${
+      rows.length
+        ? rows
+            .map((row) => shelf(row.name, row.items, browseHref(`/genres/${mediaType}`, { genre: row.id }), plex))
+            .join('')
+        : '<p class="empty">TMDB returned no genres just now.</p>'
+    }`
   )
 }
 
@@ -1379,15 +1532,20 @@ export function registerPageRoutes(router) {
 
     const type = parseType(url.searchParams.get('type'))
     const query = url.searchParams.get('q') ?? ''
+    const page = pageNumber(url.searchParams.get('page'))
     let source = 'local'
+    let totalPages = 1
+    let currentPage = page
     let items = getCatalog({ type, query, userId: user.id }).map((item) => ({ item, local: item }))
     let error = url.searchParams.get('err')
 
     if (tmdbConfigured()) {
       try {
-        const found = query ? await searchTmdb(query, type) : await trendingTmdb(type)
+        const found = query ? await searchPage(query, type, page) : await trendingPage(type, page)
         source = 'tmdb'
-        items = found.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
+        totalPages = found.totalPages
+        currentPage = Math.min(found.page, found.totalPages)
+        items = found.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
         // Seeded rows have no artwork; the first browse fills it in from TMDB so
         // posters keep working on later visits without another lookup.
         for (const { item, local } of items) {
@@ -1396,15 +1554,33 @@ export function registerPageRoutes(router) {
           }
         }
       } catch (tmdbError) {
+        source = 'local'
         error = `TMDB unavailable, showing the local catalog: ${tmdbError.message}`
+        items = getCatalog({ type, query, userId: user.id }).map((item) => ({ item, local: item }))
       }
+    }
+
+    if (source === 'local') {
+      totalPages = Math.max(1, Math.ceil(items.length / PER_PAGE))
+      currentPage = Math.min(page, totalPages)
+      items = items.slice((currentPage - 1) * PER_PAGE, currentPage * PER_PAGE)
     }
 
     render(res, 200, {
       title: 'Discover',
       user,
       active: 'discover',
-      body: discoverBody({ user, type, query, source, items, error, plex: await plexEntries() }),
+      body: discoverBody({
+        user,
+        type,
+        query,
+        source,
+        items,
+        page: currentPage,
+        totalPages,
+        error,
+        plex: await plexEntries(),
+      }),
     })
   })
 
@@ -1453,12 +1629,17 @@ export function registerPageRoutes(router) {
     const user = pageUser(req, res)
     if (!user) return
 
-    const networkId = url.searchParams.get('network')
     render(res, 200, {
       title: 'Networks',
       user,
       active: 'discover',
-      body: await networksBody({ networkId, plex: await plexEntries() }),
+      body: await networksBody({
+        networkId: url.searchParams.get('network'),
+        sort: url.searchParams.get('sort'),
+        genreId: url.searchParams.get('genre'),
+        page: pageNumber(url.searchParams.get('page')),
+        plex: await plexEntries(),
+      }),
     })
   })
 
@@ -1466,12 +1647,17 @@ export function registerPageRoutes(router) {
     const user = pageUser(req, res)
     if (!user) return
 
-    const studioId = url.searchParams.get('studio')
     render(res, 200, {
       title: 'Studios',
       user,
       active: 'discover',
-      body: await studiosBody({ studioId, plex: await plexEntries() }),
+      body: await studiosBody({
+        studioId: url.searchParams.get('studio'),
+        sort: url.searchParams.get('sort'),
+        genreId: url.searchParams.get('genre'),
+        page: pageNumber(url.searchParams.get('page')),
+        plex: await plexEntries(),
+      }),
     })
   })
 
@@ -1490,6 +1676,8 @@ export function registerPageRoutes(router) {
       body: await genresBody({
         mediaType,
         genreId: url.searchParams.get('genre'),
+        sort: url.searchParams.get('sort'),
+        page: pageNumber(url.searchParams.get('page')),
         plex: await plexEntries(),
       }),
     })

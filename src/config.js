@@ -27,6 +27,8 @@ export const config = {
   // cookie is present, so a cookie-blocking embedded browser still works.
   demoAutoLoginEmail: (process.env.DEMO_AUTO_LOGIN ?? '').trim().toLowerCase() || null,
   tmdbApiKeyEnv: process.env.TMDB_API_KEY ?? '',
+  // Overridable so tests and TMDB-compatible mirrors can be pointed at another host.
+  tmdbBaseUrl: (process.env.TMDB_BASE_URL ?? 'https://api.themoviedb.org/3').replace(/\/+$/, ''),
   loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? 8),
   loginRateWindowMs: Number(process.env.LOGIN_RATE_WINDOW_MINUTES ?? 15) * 60 * 1000,
 }
