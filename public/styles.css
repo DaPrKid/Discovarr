@@ -12,6 +12,88 @@
   --warn: #ffc857;
   --danger: #ff6b81;
   --radius: 14px;
+  --glow-a: #211a45;
+  --glow-b: #102a3d;
+  --topbar: rgba(12, 14, 20, 0.85);
+}
+
+/* --- Alternate designs -------------------------------------------------- */
+
+/* Cinema: warm blacks, amber accent, serif headings — like a printed programme. */
+[data-theme='cinema'] {
+  color-scheme: dark;
+  --bg: #0d0a08;
+  --surface: #171210;
+  --surface-2: #221a15;
+  --line: #33261e;
+  --text: #f7ecdf;
+  --muted: #b19a85;
+  --accent: #e8a04b;
+  --accent-soft: #3a2a17;
+  --ok: #93d69a;
+  --warn: #f2c452;
+  --danger: #e5695f;
+  --radius: 10px;
+  --glow-a: #3d2411;
+  --glow-b: #1d1510;
+  --topbar: rgba(13, 10, 8, 0.88);
+}
+
+[data-theme='cinema'] h1,
+[data-theme='cinema'] h2,
+[data-theme='cinema'] .brand {
+  font-family: Georgia, 'Times New Roman', serif;
+  letter-spacing: 0;
+}
+
+/* Daylight: a light, paper-like design for rooms that are not dark. */
+[data-theme='daylight'] {
+  color-scheme: light;
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-2: #eef1f8;
+  --line: #dbe0ec;
+  --text: #1a1f2e;
+  --muted: #5c6780;
+  --accent: #4c5bd4;
+  --accent-soft: #e4e8ff;
+  --ok: #0f9d6b;
+  --warn: #a8730a;
+  --danger: #c23a4c;
+  --radius: 12px;
+  --glow-a: #e6ebff;
+  --glow-b: #eaf6fb;
+  --topbar: rgba(255, 255, 255, 0.92);
+}
+
+[data-theme='daylight'] input,
+[data-theme='daylight'] select,
+[data-theme='daylight'] textarea {
+  background: #fff;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.theme-pick select {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 0.78rem;
+  font-family: inherit;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 * {
@@ -22,8 +104,8 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(900px 420px at 12% -10%, #211a45 0%, transparent 60%),
-    radial-gradient(700px 380px at 88% 0%, #102a3d 0%, transparent 55%),
+    radial-gradient(900px 420px at 12% -10%, var(--glow-a) 0%, transparent 60%),
+    radial-gradient(700px 380px at 88% 0%, var(--glow-b) 0%, transparent 55%),
     var(--bg);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -63,7 +145,7 @@ h2 {
   gap: 24px;
   padding: 14px 28px;
   border-bottom: 1px solid var(--line);
-  background: rgba(12, 14, 20, 0.85);
+  background: var(--topbar);
   backdrop-filter: blur(10px);
   position: sticky;
   top: 0;
@@ -2058,16 +2140,105 @@ fieldset.plain {
   min-width: 0;
 }
 
-.calendar-day {
-  margin-bottom: 1.6rem;
+.cal-nav {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
-.calendar-day h2 {
-  font-size: 0.95rem;
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cal-weekday {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0 0.3rem 0.2rem;
+}
+
+.cal-cell {
+  min-height: 108px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.35rem 0.4rem;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.cal-cell.is-blank {
+  border-color: transparent;
+  background: transparent;
+}
+
+.cal-cell.is-today {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.cal-day {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.cal-cell.is-today .cal-day {
+  color: var(--accent);
   font-weight: 600;
-  margin: 0 0 0.7rem;
-  color: rgba(255, 255, 255, 0.72);
-  letter-spacing: 0.02em;
+}
+
+.cal-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cal-item {
+  font-size: 0.74rem;
+  line-height: 1.3;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-item-tv {
+  border-left: 2px solid var(--ok);
+}
+
+.cal-item-movie {
+  border-left: 2px solid var(--accent);
+}
+
+.cal-item:hover {
+  background: var(--accent-soft);
+}
+
+.cal-more {
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding-left: 2px;
+}
+
+@media (max-width: 760px) {
+  .cal-cell {
+    min-height: 80px;
+    padding: 0.25rem;
+  }
+
+  .cal-item {
+    font-size: 0.66rem;
+    padding: 1px 3px;
+  }
 }
 
 .collection-page-list {

@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { config } from './config.js'
 import {
   ALL_PERMISSIONS,
@@ -826,6 +828,42 @@ export function countSessions() {
 
 export function deleteExpiredSessions() {
   return Number(db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(timestamp()).changes)
+}
+
+/**
+ * A consistent copy of the database as bytes. VACUUM INTO writes a compacted
+ * snapshot through SQLite itself, so it is safe while the app is serving and
+ * does not need the WAL files alongside it.
+ */
+export function snapshotDatabase() {
+  const target = join(tmpdir(), `discovarr-${randomBytes(6).toString('hex')}.sqlite`)
+
+  try {
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`)
+    return readFileSync(target)
+  } finally {
+    rmSync(target, { force: true })
+  }
+}
+
+/**
+ * Every request that needed a retry, newest first: what is waiting for another
+ * attempt, what has exhausted its attempts, and why each one failed.
+ */
+export function listRetryQueue({ userId = null, limit = 50 } = {}) {
+  const scoped = userId === null ? '' : 'AND r.user_id = ?'
+  const params = userId === null ? [MediaRequestStatus.FAILED] : [MediaRequestStatus.FAILED, Number(userId)]
+
+  return db
+    .prepare(
+      `${REQUEST_SELECT}
+      WHERE r.status = ? ${scoped}
+      ORDER BY r.next_retry_at IS NULL, r.next_retry_at ASC, r.id DESC
+      LIMIT ${Number(limit) || 50}`
+    )
+    .all(...params)
+    .map(mapRequest)
 }
 
 // ---------------------------------------------------------------------------

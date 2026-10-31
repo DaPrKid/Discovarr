@@ -68,6 +68,7 @@ import {
 } from './tmdb.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
+import { downloadQueue } from './services.js'
 import { cacheStats, pruneCache } from './cache.js'
 import { diagnosticsSnapshot } from './diagnostics.js'
 import { importSettings, redactSettings } from './settingsfile.js'
@@ -1281,33 +1282,179 @@ function watchlistBody({ items, notice, error }) {
     }`
 }
 
-function calendarBody({ items, days, notice, error }) {
-  const groups = new Map()
-  for (const item of items) {
-    const key = item.releaseDate ? item.releaseDate.slice(0, 10) : 'Unscheduled'
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push(item)
+/** The month a ?month=YYYY-MM parameter points at; anything odd falls back to today. */
+function monthBounds(value, now = new Date()) {
+  const match = /^(\d{4})-(\d{1,2})$/.exec(String(value ?? ''))
+  let year = now.getUTCFullYear()
+  let month = now.getUTCMonth()
+
+  if (match) {
+    year = Number(match[1])
+    month = Number(match[2]) - 1
   }
 
-  const sections = [...groups.entries()]
-    .map(
-      ([date, entries]) => `<section class="calendar-day">
-        <h2>${date === 'Unscheduled' ? 'No date yet' : escapeHtml(formatDate(date))}</h2>
-        <div class="media-grid">${entries
-          .map((item) => mediaCard(item, { returnTo: '/calendar', local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
-          .join('')}</div>
-      </section>`
-    )
-    .join('')
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 0 || month > 11) {
+    year = now.getUTCFullYear()
+    month = now.getUTCMonth()
+  }
+
+  const start = new Date(Date.UTC(year, month, 1))
+  const end = new Date(Date.UTC(year, month + 1, 0))
+
+  return { year, month, start, end, key: `${year}-${String(month + 1).padStart(2, '0')}` }
+}
+
+function shiftMonth(key, delta) {
+  const [year, month] = key.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1 + delta, 1))
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+function monthName(key, { short = false } = {}) {
+  const [year, month] = key.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleString('en-GB', {
+    month: short ? 'short' : 'long',
+    year: short ? undefined : 'numeric',
+    timeZone: 'UTC',
+  })
+}
+
+function activityBody({ user, canManage, retry, queue, maxAttempts, notice, error }) {
+  const waiting = retry.filter((request) => (request.attempts ?? 0) < maxAttempts)
+  const exhausted = retry.filter((request) => (request.attempts ?? 0) >= maxAttempts)
+
+  const requestRow = (request) => `<tr>
+      <td>${escapeHtml(request.media?.title ?? `Request #${request.id}`)}<span class="muted small"> · #${request.id}</span></td>
+      <td>${escapeHtml(request.requester?.username ?? '—')}</td>
+      <td>${request.attempts ?? 0}</td>
+      <td>${
+        request.nextRetryAt
+          ? escapeHtml(String(request.nextRetryAt).replace('T', ' ').slice(0, 16))
+          : '<span class="muted">not scheduled</span>'
+      }</td>
+      <td class="muted small">${escapeHtml(String(request.note ?? '').slice(0, 180) || '—')}</td>
+    </tr>`
+
+  const requestTable = (rows, empty) =>
+    rows.length
+      ? `<table class="table">
+          <thead><tr><th>Title</th><th>Requested by</th><th>Attempts</th><th>Next attempt</th><th>Last error</th></tr></thead>
+          <tbody>${rows.map(requestRow).join('')}</tbody>
+        </table>`
+      : `<p class="muted small">${empty}</p>`
+
+  const queueTable = (service) => `<section class="panel">
+      <h2 style="margin: 0">${escapeHtml(service.label)} queue</h2>
+      ${
+        service.error
+          ? `<p class="muted small">${escapeHtml(service.error)}</p>`
+          : service.items.length
+            ? `<table class="table">
+                <thead><tr><th>Title</th><th>Status</th><th>Progress</th><th>Finishes</th></tr></thead>
+                <tbody>${service.items
+                  .map(
+                    (item) => `<tr>
+                      <td>${escapeHtml(item.title)}</td>
+                      <td>${escapeHtml(String(item.status))}</td>
+                      <td>${item.progress === null ? '—' : `${item.progress}%`}</td>
+                      <td>${item.eta ? escapeHtml(String(item.eta).replace('T', ' ').slice(0, 16)) : '—'}</td>
+                    </tr>`
+                  )
+                  .join('')}</tbody>
+              </table>`
+            : '<p class="muted small">Nothing queued.</p>'
+      }
+    </section>`
+
+  return `<div class="page-head">
+      <div>
+        <h1>Activity</h1>
+        <p class="muted">Sent to your download client and what happened next.</p>
+      </div>
+    </div>
+    ${alert({ notice, error })}
+
+    <section class="panel">
+      <h2 style="margin: 0">Waiting for another attempt</h2>
+      <p class="muted small">Retried automatically after the backoff, up to ${maxAttempts} attempt(s).</p>
+      ${requestTable(waiting, 'Nothing is waiting to be retried.')}
+    </section>
+
+    <section class="panel">
+      <h2 style="margin: 0">Gave up</h2>
+      <p class="muted small">Out of attempts. Retry one by hand from the Requests page once the service is healthy.</p>
+      ${requestTable(exhausted, 'No request has run out of attempts.')}
+    </section>
+
+    ${canManage ? queue.map(queueTable).join('') : ''}`
+}
+
+function calendarChip(item) {
+  const kind = item.mediaType === MediaType.TV ? 'Series' : 'Film'
+  return `<a class="cal-item cal-item-${item.mediaType === MediaType.TV ? 'tv' : 'movie'}" href="/title/${item.mediaType}/${item.tmdbId}" title="${escapeHtml(
+    `${item.title} · ${kind}`
+  )}">${escapeHtml(item.title)}</a>`
+}
+
+/** A month grid: one box per day, with what releases that day inside it. */
+function calendarBody({ items, month, notice, error }) {
+  const byDay = new Map()
+  for (const item of items) {
+    const day = item.releaseDate ? String(item.releaseDate).slice(0, 10) : null
+    if (!day || !day.startsWith(month.key)) continue
+    if (!byDay.has(day)) byDay.set(day, [])
+    byDay.get(day).push(item)
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const lead = (month.start.getUTCDay() + 6) % 7
+  const total = month.end.getUTCDate()
+  const cells = []
+
+  for (let blank = 0; blank < lead; blank += 1) {
+    cells.push('<div class="cal-cell is-blank" aria-hidden="true"></div>')
+  }
+
+  for (let day = 1; day <= total; day += 1) {
+    const iso = `${month.key}-${String(day).padStart(2, '0')}`
+    const entries = byDay.get(iso) ?? []
+    const shown = entries.slice(0, 3)
+
+    cells.push(`<div class="cal-cell${iso === today ? ' is-today' : ''}${entries.length ? ' has-releases' : ''}">
+        <span class="cal-day">${day}</span>
+        <div class="cal-items">${shown.map((item) => calendarChip(item)).join('')}${
+          entries.length > shown.length ? `<span class="cal-more">+${entries.length - shown.length} more</span>` : ''
+        }</div>
+      </div>`)
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push('<div class="cal-cell is-blank" aria-hidden="true"></div>')
+  }
+
+  const count = [...byDay.values()].reduce((total, entries) => total + entries.length, 0)
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
   return `<div class="page-head">
       <div>
         <h1>Calendar</h1>
-        <p class="muted">Films and series arriving in the next ${days} days.</p>
+        <p class="muted">${count} release(s) in ${escapeHtml(monthName(month.key))}. Every day shows what arrives on it.</p>
+      </div>
+      <div class="cal-nav">
+        <a class="btn btn-sm btn-ghost" href="/calendar?month=${shiftMonth(month.key, -1)}">← ${escapeHtml(
+          monthName(shiftMonth(month.key, -1), { short: true })
+        )}</a>
+        <a class="btn btn-sm" href="/calendar">Today</a>
+        <a class="btn btn-sm btn-ghost" href="/calendar?month=${shiftMonth(month.key, 1)}">${escapeHtml(
+          monthName(shiftMonth(month.key, 1), { short: true })
+        )} →</a>
       </div>
     </div>
     ${alert({ notice, error })}
-    ${sections || '<p class="empty">Nothing scheduled in that window.</p>'}`
+    <div class="cal-grid">
+      ${weekdays.map((name) => `<div class="cal-weekday">${name}</div>`).join('')}
+      ${cells.join('')}
+    </div>`
 }
 
 /** Local state of one collection part, for the collection page's tick boxes. */
@@ -1887,6 +2034,8 @@ function settingsBody({ user, settings, users, audit, options, tab, notice, erro
           <label>Password <input type="password" name="smtpPassword" value="${escapeHtml(settings['smtp.password'])}" autocomplete="off" /></label>
           <label>From address <input type="email" name="smtpFrom" value="${escapeHtml(settings['smtp.from'])}" placeholder="discovarr@example.com" /></label>
           <label>From name <input type="text" name="smtpFromName" value="${escapeHtml(settings['smtp.fromName'])}" /></label>
+          <label><input type="checkbox" name="smtpVerifyTls" ${settings['smtp.verifyTls'] === 'false' ? '' : 'checked'} /> Verify the server certificate</label>
+          <p class="muted small">Leave this on. Turn it off only for a relay on your own network with a self-signed certificate.</p>
         </div>
         <p class="muted small">Email goes to the users who turn it on in Account and tick the events they want.</p>
         <div class="row">
@@ -2170,6 +2319,7 @@ function settingsFromBody(body) {
       password: body.smtpPassword,
       from: body.smtpFrom,
       fromName: body.smtpFromName,
+      verifyTls: body.smtpVerifyTls !== undefined,
     }
   }
 
@@ -2756,16 +2906,43 @@ export function registerPageRoutes(router) {
     })
   })
 
+  router.get('/activity', async ({ req, res, url }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const canManage = hasPermission(user, Permission.MANAGE_SETTINGS)
+    const maxAttempts = Number(store.getSetting('requests.maxAttempts') ?? 3)
+
+    render(res, 200, {
+      title: 'Activity',
+      user,
+      active: 'activity',
+      body: activityBody({
+        user,
+        canManage,
+        retry: store.listRetryQueue(canManage ? {} : { userId: user.id }),
+        maxAttempts,
+        queue: canManage ? await downloadQueue({ limit: 15 }) : [],
+        notice: url.searchParams.get('notice'),
+        error: url.searchParams.get('err'),
+      }),
+    })
+  })
+
   router.get('/calendar', async ({ req, res, url }) => {
     const user = pageUser(req, res)
     if (!user) return
 
-    const days = 45
+    const month = monthBounds(url.searchParams.get('month'))
     let items = []
     let error = url.searchParams.get('err')
 
     try {
-      items = await loadUpcoming({ days })
+      items = await loadUpcoming({
+        from: month.start.toISOString().slice(0, 10),
+        until: month.end.toISOString().slice(0, 10),
+        limit: 200,
+      })
     } catch (failure) {
       error = failure instanceof HttpError ? failure.message : 'The calendar could not be loaded'
     }
@@ -2774,7 +2951,7 @@ export function registerPageRoutes(router) {
       title: 'Calendar',
       user,
       active: 'calendar',
-      body: calendarBody({ items, days, notice: url.searchParams.get('notice'), error }),
+      body: calendarBody({ items, month, notice: url.searchParams.get('notice'), error }),
     })
   })
 
@@ -3025,6 +3202,21 @@ export function registerPageRoutes(router) {
     } catch (error) {
       failure(res, '/account', error)
     }
+  })
+
+  router.get('/settings/backup', async ({ req, res }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot download a backup')
+
+    const snapshot = store.snapshotDatabase()
+    store.recordAudit(actor.id, 'settings.backup_downloaded', `${snapshot.length} bytes`)
+
+    res.writeHead(200, {
+      'content-type': 'application/vnd.sqlite3',
+      'content-disposition': `attachment; filename="discovarr-${new Date().toISOString().slice(0, 10)}.sqlite"`,
+      'cache-control': 'no-store',
+      'content-length': snapshot.length,
+    })
+    res.end(snapshot)
   })
 
   router.get('/settings', async ({ req, res, url }) => {

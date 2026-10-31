@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.14.0
+docker pull ghcr.io/daprkid/discovarr:0.15.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -110,11 +110,22 @@ bootstrapping, which is only useful for demos.
   sitting in Radarr or Sonarr, shows a disabled "Already requested" button.
 - **Watchlist** — save any title for later from its page, whether or not it is
   in the catalog yet, then work through it from the Watchlist tab.
-- **Release calendar** — the next 45 days of film and series releases, grouped
-  by date, each with the same one-click request as the browse pages.
+- **Release calendar** — a real month grid, one box per day, with the films and
+  series that arrive on that day inside it. Move between months with the arrows;
+  today is outlined. Every entry links to its title page.
+- **Three designs** — pick Midnight, Cinema (warm blacks and serif headings) or
+  Daylight (a light theme) from the top bar. The choice is remembered in the
+  browser, so it never flashes the wrong theme on load.
 - **Collection pages** — a film's collection opens as its own page listing every
   part, which are already in your library and which are still missing, with a
   tick box per film and one button for the rest.
+- **Activity** — one page for everything that happened after a request was
+  approved: which requests are waiting for another automatic attempt and when,
+  which have run out, and what Radarr and Sonarr are downloading right now with
+  progress and an estimated finish.
+- **A real backup** — Settings → Tasks downloads the SQLite database itself
+  (`VACUUM INTO`, so it is consistent while the app is running and needs no
+  `-wal` files).
 - **Trailers** — a title page links to its YouTube trailer when TMDB has one.
 - **API tokens** — create a named token in Account and call `/api/v1/…` with
   `Authorization: Bearer <token>`. The token is shown once, stored only as a
@@ -223,7 +234,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.14.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.15.0
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -324,6 +335,10 @@ notification work.
 
 `npm test` boots the real server on a free port against a temporary database and
 exercises login, permissions, quotas, request/approval/dispatch, retry,
+the calendar month grid, the watchlist, collections, API tokens, the activity
+page, the database download, SMTP over implicit TLS and STARTTLS (with a
+certificate generated for the run, including a test that an untrusted one is
+rejected),
 pagination, password change, CSRF rejection and the image proxy guard. The
 services suite runs a stand-in Radarr that rejects a wrong API key and records
 the POST it receives, which covers connection testing, folder and profile

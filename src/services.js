@@ -387,6 +387,49 @@ export async function serviceLookup(kind, tmdbId) {
   return value
 }
 
+/**
+ * What Radarr or Sonarr is doing right now: queued, downloading, importing or
+ * stuck. Read-only, and capped, because the queue endpoint is unbounded.
+ */
+export async function serviceQueue(kind, limit = 20) {
+  const { enabled, configured } = serviceSummary(kind)
+  if (!enabled || !configured) return []
+
+  const data = await arrRequest(kind, `/queue?page=1&pageSize=${Number(limit)}&includeUnknownMovieItems=false`)
+  const records = Array.isArray(data.records) ? data.records : []
+
+  return records.slice(0, limit).map((record) => {
+    const size = Number(record.size ?? 0)
+    const left = Number(record.sizeleft ?? 0)
+
+    return {
+      id: record.id,
+      title: record.title ?? record.movie?.title ?? record.series?.title ?? 'Unknown',
+      status: record.trackedDownloadStatus ?? record.status ?? 'queued',
+      progress: size > 0 ? Math.min(100, Math.max(0, Math.round(((size - left) / size) * 100))) : null,
+      eta: record.estimatedCompletionTime ?? null,
+    }
+  })
+}
+
+/** Both download clients' queues, with a per-service error instead of a throw. */
+export async function downloadQueue({ limit = 15 } = {}) {
+  const kinds = ['radarr', 'sonarr'].filter((kind) => {
+    const { enabled, configured } = serviceSummary(kind)
+    return enabled && configured
+  })
+
+  const results = await Promise.allSettled(
+    kinds.map(async (kind) => ({ kind, label: LABELS[kind], items: await serviceQueue(kind, limit) }))
+  )
+
+  return results.map((result, index) =>
+    result.status === 'fulfilled'
+      ? { ...result.value, error: null }
+      : { kind: kinds[index], label: LABELS[kinds[index]], items: [], error: result.reason?.message ?? 'unreachable' }
+  )
+}
+
 /** Pulls the current library so statuses can be reconciled. */
 export async function fetchLibrary(kind) {
   const { enabled, configured } = serviceSummary(kind)

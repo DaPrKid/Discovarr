@@ -148,18 +148,27 @@ export async function sendTestMail(to) {
   if (!to) throw new Error('Your account has no email address to send to')
 
   const appName = getSetting('app.name') ?? 'Discovarr'
-  await sendMail({
-    host: getSetting('smtp.host'),
-    port: getSetting('smtp.port'),
-    security: getSetting('smtp.security'),
-    user: getSetting('smtp.user'),
-    password: getSetting('smtp.password'),
-    from: getSetting('smtp.from'),
-    fromName: getSetting('smtp.fromName') || appName,
-    to,
-    subject: `${appName}: test message`,
-    text: `This is a test message from ${appName}. If you are reading it, the mail settings work.`,
-  })
+  const result = await sendMail(
+    {
+      host: getSetting('smtp.host'),
+      port: getSetting('smtp.port'),
+      security: getSetting('smtp.security'),
+      user: getSetting('smtp.user'),
+      password: getSetting('smtp.password'),
+      from: getSetting('smtp.from'),
+      fromName: getSetting('smtp.fromName') || appName,
+      to,
+      subject: `${appName}: test message`,
+      text: `This is a test message from ${appName}. If you are reading it, the mail settings work.`,
+    },
+    // Verification stays on unless a local relay with a self-signed certificate
+    // was explicitly allowed in the mail settings.
+    { tlsOptions: { rejectUnauthorized: getSetting('smtp.verifyTls') !== 'false' } }
+  )
 
-  return { ok: true, detail: `Test message sent to ${to}` }
+  const how = result.security === 'ssl' ? 'implicit TLS' : result.security === 'starttls' ? 'STARTTLS' : 'plaintext'
+  const crypto = result.protocol ? ` ${result.protocol}${result.cipher ? ` / ${result.cipher}` : ''}` : ''
+  const auth = result.auth ? `, AUTH ${result.auth}` : ', no authentication'
+
+  return { ok: true, detail: `Test message sent to ${to} via ${how}${crypto}${auth}` }
 }

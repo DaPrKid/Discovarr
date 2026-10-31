@@ -36,6 +36,7 @@ function navigation({ user, active, appName, canManageSettings }) {
     ['calendar', '/calendar', 'Calendar'],
     ['watchlist', '/watchlist', 'Watchlist'],
     ['requests', '/requests', 'Requests'],
+    ['activity', '/activity', 'Activity'],
   ]
 
   if (canManageSettings) items.push(['settings', '/settings', 'Settings'])
@@ -53,6 +54,14 @@ function navigation({ user, active, appName, canManageSettings }) {
         .join('')}
     </nav>
     <div class="account">
+      <label class="theme-pick" title="Appearance">
+        <span class="sr-only">Appearance</span>
+        <select data-theme-picker aria-label="Appearance">
+          <option value="midnight">Midnight</option>
+          <option value="cinema">Cinema</option>
+          <option value="daylight">Daylight</option>
+        </select>
+      </label>
       <a class="bell" href="/notifications" aria-label="Notifications${unread ? `, ${unread} unread` : ''}" title="Notifications">
         <span aria-hidden="true">✉</span>${unread ? `<span class="bell-count">${unread > 99 ? '99+' : unread}</span>` : ''}
       </a>
@@ -64,12 +73,32 @@ function navigation({ user, active, appName, canManageSettings }) {
 
 export function layout({ appName = 'Discovarr', title = '', user = null, active = '', body = '', canManageSettings = false, version = APP_VERSION }) {
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="midnight">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)} · ${escapeHtml(appName)}</title>
     <link rel="stylesheet" href="/styles.css?v=${escapeHtml(version)}" />
+    <script>
+      // The chosen look is stored per browser, so it is applied before the first
+      // paint and never flashes the default theme.
+      ;(function () {
+        var root = document.documentElement
+        try {
+          var saved = localStorage.getItem('discovarr-theme')
+          if (saved === 'cinema' || saved === 'daylight' || saved === 'midnight') root.dataset.theme = saved
+        } catch (error) {}
+        document.addEventListener('DOMContentLoaded', function () {
+          var picker = document.querySelector('[data-theme-picker]')
+          if (!picker) return
+          picker.value = root.dataset.theme
+          picker.addEventListener('change', function () {
+            root.dataset.theme = picker.value
+            try { localStorage.setItem('discovarr-theme', picker.value) } catch (error) {}
+          })
+        })
+      })()
+    </script>
   </head>
   <body>
     ${

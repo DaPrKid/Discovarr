@@ -364,10 +364,11 @@ export async function genreList(mediaType) {
  * Films and series with a release date in the next `days`, oldest first, so a
  * calendar can show what is actually coming rather than TMDB's popularity.
  */
-export async function upcomingTitles({ days = 45, limit = 30 } = {}) {
+export async function upcomingTitles({ days = 45, limit = 30, from: fromDate = null, until: untilDate = null } = {}) {
   const iso = (date) => date.toISOString().slice(0, 10)
-  const from = iso(new Date())
-  const until = iso(new Date(Date.now() + days * 24 * 60 * 60 * 1000))
+  // An explicit window (a calendar month) wins over the rolling `days` default.
+  const from = fromDate ?? iso(new Date())
+  const until = untilDate ?? iso(new Date(Date.now() + days * 24 * 60 * 60 * 1000))
 
   const [movies, shows] = await Promise.all([
     tmdbGet('/discover/movie', {

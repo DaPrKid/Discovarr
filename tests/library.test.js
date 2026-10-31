@@ -179,8 +179,8 @@ test('the title page offers the watchlist toggle', async () => {
   assert.match(html, /All 2 films in Test Collection/)
 })
 
-test('the calendar lists upcoming films and series by release date', async () => {
-  const response = await get('/calendar')
+test('the calendar lists upcoming films and series in a month grid', async () => {
+  const response = await get('/calendar?month=2026-11')
   assert.equal(response.status, 200)
   const html = await response.text()
 
@@ -188,7 +188,10 @@ test('the calendar lists upcoming films and series by release date', async () =>
   assert.match(html, /Coming Movie/)
   assert.match(html, /Coming Series/)
   assert.match(html, /Later Movie/)
-  assert.match(html, /calendar-day/)
+  assert.match(html, /November 2026/)
+  assert.match(html, /cal-cell/)
+  assert.match(html, /cal-grid/)
+  assert.match(html, /title=\"Coming Movie · Film\"/)
 })
 
 test('the collection page ticks only the films that are missing', async () => {
@@ -233,6 +236,28 @@ test('an API token authenticates the API and can be revoked', async () => {
     headers: { authorization: `Bearer ${token}` },
   })
   assert.equal(after.status, 401)
+})
+
+test('the activity page lists the retry queue and the download queue', async () => {
+  const response = await get('/activity')
+  assert.equal(response.status, 200)
+
+  const html = await response.text()
+  assert.match(html, /Activity/)
+  assert.match(html, /Waiting for another attempt/)
+  assert.match(html, /Gave up/)
+  assert.match(html, /Nothing is waiting to be retried/) // nothing has failed in this run
+})
+
+test('the database can be downloaded as a real SQLite file', async () => {
+  const response = await get('/settings/backup')
+  assert.equal(response.status, 200)
+  assert.match(String(response.headers.get('content-type')), /sqlite3/)
+  assert.match(String(response.headers.get('content-disposition')), /attachment; filename="discovarr-\d{4}-\d{2}-\d{2}\.sqlite"/)
+
+  const bytes = Buffer.from(await response.arrayBuffer())
+  assert.equal(bytes.subarray(0, 15).toString('utf8'), 'SQLite format 3')
+  assert.ok(bytes.length > 4096, 'the snapshot looks empty')
 })
 
 test('a wrong token is refused', async () => {

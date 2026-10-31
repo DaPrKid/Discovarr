@@ -80,9 +80,18 @@ function greet(socket, timeoutMs) {
   return new SmtpSession(socket)
 }
 
-function upgradeToTls(socket, host, timeoutMs) {
+/** What the connection actually negotiated, for the settings test message. */
+function describe(socket) {
+  try {
+    return { protocol: socket.getProtocol(), cipher: socket.getCipher()?.name ?? null }
+  } catch {
+    return { protocol: null, cipher: null }
+  }
+}
+
+function upgradeToTls(socket, host, timeoutMs, tlsOptions = {}) {
   return new Promise((resolve, reject) => {
-    const secure = tlsConnect({ socket, servername: host }, () => {
+    const secure = tlsConnect({ socket, servername: host, ...tlsOptions }, () => {
       secure.setTimeout(timeoutMs)
       resolve(secure)
     })
@@ -126,7 +135,7 @@ function buildMessage({ from, fromName, to, subject, text }) {
 
 export async function sendMail(
   { host, port = 587, security = 'starttls', user = '', password = '', from, fromName = 'Discovarr', to, subject, text },
-  { timeoutMs = DEFAULT_TIMEOUT } = {}
+  { timeoutMs = DEFAULT_TIMEOUT, tlsOptions = {} } = {}
 ) {
   if (!host) throw new Error('No mail server host configured')
   if (!from) throw new Error('No sender address configured')
@@ -138,7 +147,7 @@ export async function sendMail(
   const socket = await new Promise((resolve, reject) => {
     const connect = implicitTls ? tlsConnect : netConnect
     const options = implicitTls
-      ? { host, port: portNumber, servername: host }
+      ? { host, port: portNumber, servername: host, ...tlsOptions }
       : { host, port: portNumber }
     const attempt = connect(options, () => resolve(attempt))
     attempt.setTimeout(timeoutMs, () => attempt.destroy(new Error('Connecting to the mail server timed out')))
@@ -151,22 +160,32 @@ export async function sendMail(
 
   await session.command(`EHLO discovarr`, [250])
 
+  // Reported back so a settings test can say what it actually negotiated rather
+  // than just "sent".
+  let encrypted = implicitTls ? describe(socket) : null
+  let auth = null
+
   if (security === 'starttls') {
     await session.command('STARTTLS', [220])
-    const secure = await upgradeToTls(session.socket, host, timeoutMs)
+    const secure = await upgradeToTls(session.socket, host, timeoutMs, tlsOptions)
+    encrypted = describe(secure)
     session = greet(secure, timeoutMs)
     await session.command('EHLO discovarr', [250])
+  } else if (!implicitTls) {
+    encrypted = { protocol: null, cipher: null }
   }
 
   if (user) {
     // AUTH PLAIN is one round trip; fall back to LOGIN when it is refused.
     try {
       await session.command(`AUTH PLAIN ${b64(`\0${user}\0${password}`)}`, [235])
+      auth = 'PLAIN'
     } catch (plainError) {
       if (/^535/.test(String(plainError.message))) throw plainError
       await session.command('AUTH LOGIN', [334])
       await session.command(b64(user), [334])
       await session.command(b64(password), [235])
+      auth = 'LOGIN'
     }
   }
 
@@ -184,5 +203,11 @@ export async function sendMail(
   }
 
   session.socket.end()
-  return { sent: true }
+  return {
+    sent: true,
+    security: implicitTls ? 'ssl' : security === 'starttls' ? 'starttls' : 'none',
+    protocol: encrypted?.protocol ?? null,
+    cipher: encrypted?.cipher ?? null,
+    auth,
+  }
 }

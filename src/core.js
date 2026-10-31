@@ -681,6 +681,7 @@ export function updateSettings(input, actor) {
     if (smtp.password !== undefined) entries['smtp.password'] = String(smtp.password ?? '')
     if (smtp.from !== undefined) entries['smtp.from'] = String(smtp.from ?? '').trim()
     if (smtp.fromName !== undefined) entries['smtp.fromName'] = String(smtp.fromName ?? '').trim()
+    if (smtp.verifyTls !== undefined) entries['smtp.verifyTls'] = smtp.verifyTls ? 'true' : 'false'
   }
 
   if (input.cache) {
