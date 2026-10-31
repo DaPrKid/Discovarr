@@ -360,6 +360,40 @@ export async function genreList(mediaType) {
  * Recommendations seeded by the titles a user already asked for. Falls back to
  * popular titles for a brand new account, so the page is never empty.
  */
+/**
+ * Films and series with a release date in the next `days`, oldest first, so a
+ * calendar can show what is actually coming rather than TMDB's popularity.
+ */
+export async function upcomingTitles({ days = 45, limit = 30 } = {}) {
+  const iso = (date) => date.toISOString().slice(0, 10)
+  const from = iso(new Date())
+  const until = iso(new Date(Date.now() + days * 24 * 60 * 60 * 1000))
+
+  const [movies, shows] = await Promise.all([
+    tmdbGet('/discover/movie', {
+      'primary_release_date.gte': from,
+      'primary_release_date.lte': until,
+      sort_by: 'primary_release_date.asc',
+      include_adult: 'false',
+    }),
+    tmdbGet('/discover/tv', {
+      'first_air_date.gte': from,
+      'first_air_date.lte': until,
+      sort_by: 'first_air_date.asc',
+      include_adult: 'false',
+    }),
+  ])
+
+  const items = [
+    ...(movies.results ?? []).filter((raw) => raw.release_date).map((raw) => normalizeTmdbItem(raw, MediaType.MOVIE)),
+    ...(shows.results ?? []).filter((raw) => raw.first_air_date).map((raw) => normalizeTmdbItem(raw, MediaType.TV)),
+  ].filter(Boolean)
+
+  return items
+    .sort((a, b) => String(a.releaseDate ?? '').localeCompare(String(b.releaseDate ?? '')))
+    .slice(0, limit)
+}
+
 export async function recommendedTitles(seeds = [], limit = 30) {
   const lists = await Promise.all(
     seeds.slice(0, 3).map(async (seed) => {

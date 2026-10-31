@@ -71,6 +71,7 @@ import { cacheStats, pruneCache } from './cache.js'
 import { diagnosticsSnapshot } from './diagnostics.js'
 import { importSettings, redactSettings } from './settingsfile.js'
 import { sendTestMail } from './notifications.js'
+import { upcomingTitles as loadUpcoming } from './tmdb.js'
 import { updateNotifications } from './core.js'
 import { APP_VERSION as BUILD_VERSION } from './constants.js'
 import {
@@ -1108,6 +1109,18 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
     .filter(Boolean)
     .join(' · ')
 
+  const returnHere = media ? `/media/${media.id}` : `/title/${entry.mediaType}/${entry.tmdbId}`
+  const watched = store.isWatched(user?.id, entry.tmdbId, entry.mediaType)
+  const watchToggle = `<form method="post" action="/watchlist/toggle" class="watch-toggle">
+      <input type="hidden" name="tmdbId" value="${escapeHtml(entry.tmdbId)}" />
+      <input type="hidden" name="mediaType" value="${escapeHtml(entry.mediaType)}" />
+      <input type="hidden" name="title" value="${escapeHtml(entry.title)}" />
+      <input type="hidden" name="posterPath" value="${escapeHtml(entry.posterPath ?? '')}" />
+      <input type="hidden" name="releaseDate" value="${escapeHtml(entry.releaseDate ?? '')}" />
+      <input type="hidden" name="returnTo" value="${escapeHtml(returnHere)}" />
+      <button class="btn btn-sm btn-ghost" type="submit">${watched ? '★ Saved to your watchlist' : '☆ Save to watchlist'}</button>
+    </form>`
+
   const backdropPath = entry.backdropPath ?? details?.backdropPath ?? null
   // The title's own artwork, blurred far enough that it reads as a tint of the
   // page rather than a picture competing with the poster.
@@ -1134,11 +1147,22 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
             ${plexRow}
             ${pickable ? '' : seasonsBlock}
             ${action}
+            ${watchToggle}
           </div>
         </section>
         ${castPanel(details)}
         ${watchPanel(details)}
-        ${details ? '<p class="muted small">Metadata from TMDB.</p>' : ''}
+        ${
+          details
+            ? `<p class="muted small">Metadata from TMDB.${
+                collection
+                  ? ` · <a href="/collection/${collection.id}">All ${collection.parts.length + 1} films in ${escapeHtml(
+                      collection.name
+                    )}</a>`
+                  : ''
+              }</p>`
+            : ''
+        }
       </div>
       ${collectionPanel(collection)}
     </div>`
@@ -1210,6 +1234,124 @@ function episodesHtml(season) {
 // ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
+
+function watchlistBody({ items, notice, error }) {
+  const cards = items.map((item) => {
+    const local = store.getMediaByTmdb(item.tmdbId, item.mediaType)
+    const active = local
+      ? store.listRequestsForMedia(local.id).filter((request) => request.status === 1 || request.status === 2)
+      : []
+
+    return `<div class="watch-row">
+      ${poster({ ...item, id: item.tmdbId, title: item.title })}
+      <div class="watch-body">
+        <a class="media-title" href="${local ? `/media/${local.id}` : `/title/${item.mediaType}/${item.tmdbId}`}">${escapeHtml(item.title)}</a>
+        <p class="media-meta">${item.mediaType === 'tv' ? 'Series' : 'Movie'}${
+          item.releaseDate ? ` · ${escapeHtml(item.releaseDate.slice(0, 4))}` : ''
+        }${local?.status === MediaStatus.AVAILABLE ? ' · <span class="badge badge-available">Available</span>' : ''}</p>
+        ${active.length ? '<p class="muted small">Requested</p>' : ''}
+      </div>
+      <form method="post" action="/watchlist/toggle">
+        <input type="hidden" name="tmdbId" value="${escapeHtml(item.tmdbId)}" />
+        <input type="hidden" name="mediaType" value="${escapeHtml(item.mediaType)}" />
+        <input type="hidden" name="title" value="${escapeHtml(item.title)}" />
+        <input type="hidden" name="returnTo" value="/watchlist" />
+        <button class="btn btn-sm btn-ghost" type="submit">Remove</button>
+      </form>
+    </div>`
+  })
+
+  return `<div class="page-head">
+      <div>
+        <h1>Watchlist</h1>
+        <p class="muted">Titles saved for later, newest first.</p>
+      </div>
+    </div>
+    ${alert({ notice, error })}
+    ${
+      cards.length
+        ? `<div class="watch-list">${cards.join('')}</div>`
+        : '<p class="empty">Nothing saved yet. Open a title and press <strong>Save to watchlist</strong>.</p>'
+    }`
+}
+
+function calendarBody({ items, days, notice, error }) {
+  const groups = new Map()
+  for (const item of items) {
+    const key = item.releaseDate ? item.releaseDate.slice(0, 10) : 'Unscheduled'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(item)
+  }
+
+  const sections = [...groups.entries()]
+    .map(
+      ([date, entries]) => `<section class="calendar-day">
+        <h2>${date === 'Unscheduled' ? 'No date yet' : escapeHtml(formatDate(date))}</h2>
+        <div class="media-grid">${entries
+          .map((item) => mediaCard(item, { returnTo: '/calendar', local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
+          .join('')}</div>
+      </section>`
+    )
+    .join('')
+
+  return `<div class="page-head">
+      <div>
+        <h1>Calendar</h1>
+        <p class="muted">Films and series arriving in the next ${days} days.</p>
+      </div>
+    </div>
+    ${alert({ notice, error })}
+    ${sections || '<p class="empty">Nothing scheduled in that window.</p>'}`
+}
+
+/** Local state of one collection part, for the collection page's tick boxes. */
+function collectionPartState(tmdbId) {
+  const local = store.getMediaByTmdb(tmdbId, MediaType.MOVIE)
+  if (!local) return { state: 'unknown', label: 'Not requested', blocked: false }
+  if (local.status === MediaStatus.AVAILABLE) return { state: 'available', label: 'In library', blocked: true }
+
+  const active = store
+    .listRequestsForMedia(local.id)
+    .filter((request) => request.status === 1 || request.status === 2)
+
+  if (active.length) return { state: 'pending', label: 'Requested', blocked: true }
+  return { state: 'unknown', label: '', blocked: false }
+}
+
+function collectionPageBody({ collection, parts, notice, error }) {
+  const inLibrary = parts.filter((part) => part.state === 'available').length
+
+  const rows = parts
+    .map(
+      (part) => `<label class="collection-page-row${part.blocked ? ' is-blocked' : ''}">
+        <input type="checkbox" name="tmdbId" value="${escapeHtml(part.tmdbId)}" ${part.blocked ? 'disabled' : 'checked'} />
+        ${poster(part, 'poster-sm')}
+        <span class="collection-page-text">
+          <strong>${escapeHtml(part.title)}</strong>
+          <span class="muted small">${part.releaseDate ? escapeHtml(part.releaseDate.slice(0, 4)) : 'No date'}${
+            part.voteAverage ? ` · ${escapeHtml(String(part.voteAverage))}/10` : ''
+          }</span>
+          ${part.label ? `<span class="badge badge-${part.state}">${escapeHtml(part.label)}</span>` : ''}
+        </span>
+      </label>`
+    )
+    .join('')
+
+  return `<a class="back" href="/">← Back to discover</a>
+    ${alert({ notice, error })}
+    <div class="page-head">
+      <div>
+        <h1>${escapeHtml(collection.name)}</h1>
+        <p class="muted">${parts.length} film(s) · ${inLibrary} in your library</p>
+      </div>
+    </div>
+    <form method="post" action="/collection/${escapeHtml(collection.id)}/request" class="stack panel">
+      <input type="hidden" name="returnTo" value="/collection/${escapeHtml(collection.id)}" />
+      <div class="collection-page-list">${rows}</div>
+      <button class="btn" type="submit">Request selected films</button>
+      <p class="muted small">Films already in the library or already requested stay unticked.</p>
+    </form>`
+}
 
 function notificationsBody({ items, notice, error }) {
   const list = items.length
@@ -2535,6 +2677,99 @@ export function registerPageRoutes(router) {
 
     const message = `${done} film${done === 1 ? '' : 's'} requested${skipped ? ` · ${skipped} skipped` : ''}`
     redirect(res, withMessage(returnTo, done ? 'notice' : 'err', message))
+  })
+
+  router.post('/watchlist/toggle', async ({ req, res }) => {
+    const user = requireUser(req)
+    const body = await readBody(req)
+    const returnTo = safeReturn(body.returnTo, '/watchlist')
+
+    const tmdbId = Number(body.tmdbId)
+    const mediaType = body.mediaType === MediaType.TV ? MediaType.TV : MediaType.MOVIE
+
+    if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
+      return redirect(res, withMessage(returnTo, 'err', 'Unknown title'))
+    }
+
+    const result = store.toggleWatchlist(user.id, {
+      tmdbId,
+      mediaType,
+      title: String(body.title ?? 'Untitled'),
+      posterPath: String(body.posterPath ?? '') || null,
+      releaseDate: String(body.releaseDate ?? '') || null,
+    })
+
+    redirect(
+      res,
+      withMessage(returnTo, 'notice', result.added ? 'Saved to your watchlist' : 'Removed from your watchlist')
+    )
+  })
+
+  router.get('/watchlist', ({ req, res, url }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    render(res, 200, {
+      title: 'Watchlist',
+      user,
+      active: 'watchlist',
+      body: watchlistBody({
+        items: store.listWatchlist(user.id),
+        notice: url.searchParams.get('notice'),
+        error: url.searchParams.get('err'),
+      }),
+    })
+  })
+
+  router.get('/calendar', async ({ req, res, url }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    const days = 45
+    let items = []
+    let error = url.searchParams.get('err')
+
+    try {
+      items = await loadUpcoming({ days })
+    } catch (failure) {
+      error = failure instanceof HttpError ? failure.message : 'The calendar could not be loaded'
+    }
+
+    render(res, 200, {
+      title: 'Calendar',
+      user,
+      active: 'calendar',
+      body: calendarBody({ items, days, notice: url.searchParams.get('notice'), error }),
+    })
+  })
+
+  router.get('/collection/:id', async ({ req, res, params, url }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    try {
+      const collection = await collectionDetails(Number(params.id))
+      const parts = collection.parts.map((part) => ({ ...part, ...collectionPartState(part.tmdbId) }))
+
+      render(res, 200, {
+        title: collection.name,
+        user,
+        active: 'discover',
+        body: collectionPageBody({
+          collection,
+          parts,
+          notice: url.searchParams.get('notice'),
+          error: url.searchParams.get('err'),
+        }),
+      })
+    } catch (error) {
+      render(res, 502, {
+        title: 'Collection unavailable',
+        user,
+        active: 'discover',
+        body: `<h1>Collection unavailable</h1><p class="muted">${escapeHtml(error.message)}</p><a class="back" href="/">← Back to discover</a>`,
+      })
+    }
   })
 
   router.post('/requests/bulk', async ({ req, res }) => {

@@ -33,6 +33,8 @@ export function escapeHtml(value) {
 function navigation({ user, active, appName, canManageSettings }) {
   const items = [
     ['discover', '/', 'Discover'],
+    ['calendar', '/calendar', 'Calendar'],
+    ['watchlist', '/watchlist', 'Watchlist'],
     ['requests', '/requests', 'Requests'],
   ]
 

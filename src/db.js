@@ -136,6 +136,17 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id);
   CREATE INDEX IF NOT EXISTS idx_requests_retry ON requests (status, next_retry_at);
+
+  CREATE TABLE IF NOT EXISTS watchlist (
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    tmdb_id INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    poster_path TEXT,
+    release_date TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, tmdb_id, media_type)
+  );
 `)
 
 // Usernames identify an account on the sign-in form, so they are unique
@@ -570,6 +581,71 @@ export function listFailedForRetry(now = timestamp(), limit = 20) {
     )
     .all(MediaRequestStatus.FAILED, now, Number(limit))
     .map(mapRequest)
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist
+// ---------------------------------------------------------------------------
+
+function mapWatchlist(row) {
+  return {
+    tmdbId: row.tmdb_id,
+    mediaType: row.media_type,
+    title: row.title,
+    posterPath: row.poster_path ?? null,
+    releaseDate: row.release_date,
+    createdAt: row.created_at,
+    local: row.media_id ? { id: row.media_id, status: row.media_status } : null,
+  }
+}
+
+/** Watchlist rows carry the local media id when the title is already known. */
+export function listWatchlist(userId) {
+  return db
+    .prepare(
+      `SELECT w.*, m.id AS media_id, m.status AS media_status
+      FROM watchlist w
+      LEFT JOIN media m ON m.tmdb_id = w.tmdb_id AND m.media_type = w.media_type
+      WHERE w.user_id = ?
+      ORDER BY w.created_at DESC`
+    )
+    .all(Number(userId))
+    .map(mapWatchlist)
+}
+
+export function isWatched(userId, tmdbId, mediaType) {
+  if (!userId) return false
+  return Boolean(
+    db
+      .prepare('SELECT 1 AS present FROM watchlist WHERE user_id = ? AND tmdb_id = ? AND media_type = ?')
+      .get(Number(userId), Number(tmdbId), mediaType)
+  )
+}
+
+/** Adds the title, or removes it when it is already saved. */
+export function toggleWatchlist(userId, { tmdbId, mediaType, title, posterPath = null, releaseDate = null }) {
+  if (isWatched(userId, tmdbId, mediaType)) {
+    db.prepare('DELETE FROM watchlist WHERE user_id = ? AND tmdb_id = ? AND media_type = ?').run(
+      Number(userId),
+      Number(tmdbId),
+      mediaType
+    )
+    return { added: false }
+  }
+
+  db.prepare(
+    'INSERT INTO watchlist (user_id, tmdb_id, media_type, title, poster_path, release_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(Number(userId), Number(tmdbId), mediaType, title, posterPath, releaseDate, timestamp())
+
+  return { added: true }
+}
+
+export function removeFromWatchlist(userId, tmdbId, mediaType) {
+  db.prepare('DELETE FROM watchlist WHERE user_id = ? AND tmdb_id = ? AND media_type = ?').run(
+    Number(userId),
+    Number(tmdbId),
+    mediaType
+  )
 }
 
 // ---------------------------------------------------------------------------

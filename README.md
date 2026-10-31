@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.12.0
+docker pull ghcr.io/daprkid/discovarr:0.13.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -108,6 +108,13 @@ bootstrapping, which is only useful for demos.
   the rest of them beside the page, with a tick box per film and a select-all.
 - **No duplicate requests** — a title already requested in Discovarr, or already
   sitting in Radarr or Sonarr, shows a disabled "Already requested" button.
+- **Watchlist** — save any title for later from its page, whether or not it is
+  in the catalog yet, then work through it from the Watchlist tab.
+- **Release calendar** — the next 45 days of film and series releases, grouped
+  by date, each with the same one-click request as the browse pages.
+- **Collection pages** — a film's collection opens as its own page listing every
+  part, which are already in your library and which are still missing, with a
+  tick box per film and one button for the rest.
 - **Person pages** — every name in a title's cast opens that person's biography,
   dates and the full list of films and series they appear in.
 - **Genre shelves** — the genre pages lead with titles from the busiest
@@ -211,7 +218,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.12.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.13.0
 ```
 
 If you prefer to run the process without root at all, start the container with
