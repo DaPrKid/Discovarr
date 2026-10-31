@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.3.1
+docker pull ghcr.io/daprkid/discovarr:0.11.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -114,6 +114,21 @@ bootstrapping, which is only useful for demos.
   categories instead of a bare list of names.
 - **Requests** — movies or individual seasons, duplicate and already-available
   protection, pagination and status filters.
+- **Artwork cache with limits** — posters and backdrops are cached on disk, and
+  the cache is pruned on a schedule against a size and an age limit (500 MB and
+  60 days by default), least recently used first. A **Prune cache** button in
+  Settings → Tasks applies the limits immediately.
+- **Settings backup** — every setting downloads as one JSON file, secrets
+  blanked unless you ask for them, and pastes back in on another machine. Only
+  known keys are written, and a blank secret in the file never clears a key you
+  already have.
+- **Diagnostics** — Settings → Tasks reports the database and write-ahead log
+  size, artwork cache size, title, user and session counts, request counts by
+  status, how each service is configured (never its credentials), and the last
+  sync.
+- **Sync that backs off** — a failing Radarr or Sonarr is retried after two
+  minutes, then four, eight, and so on up to half an hour, with the error and
+  the next attempt surfaced in Settings → Tasks instead of only in the log.
 - **Approval workflow** — `pending → approved → completed`, or `declined` /
   `failed`. Media and season statuses track `requested`, `processing`,
   `partly available`, `available`.
@@ -182,7 +197,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.10.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.11.0
 ```
 
 If you prefer to run the process without root at all, start the container with

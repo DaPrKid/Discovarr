@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.10.0'
+export const APP_VERSION = '0.11.0'
 
 // Lifecycle values mirror the enums Seerr uses, so the API and database stay
 // familiar to anyone coming from that codebase.
@@ -105,6 +105,11 @@ export const SETTING_DEFAULTS = Object.freeze({
   'plex.token': '',
 
   'sync.intervalMinutes': '30',
+
+  // Artwork cache limits, applied on a schedule and on demand. 0 disables
+  // either rule, so the cache can grow unbounded if that is what you want.
+  'cache.maxMb': '500',
+  'cache.maxAgeDays': '60',
 
   'notifications.webhookUrl': '',
   'notifications.onRequest': 'true',

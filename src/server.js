@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url'
 import { registerApiRoutes } from './api.js'
 import { currentUser } from './auth.js'
 import { config } from './config.js'
-import { countUsers, deleteExpiredSessions } from './db.js'
+import { countUsers, deleteExpiredSessions, getSettings } from './db.js'
 import { createRouter, HttpError, sendHtml, sendJson } from './http.js'
+import { pruneCache } from './cache.js'
 import { serveImage } from './images.js'
 import { registerPageRoutes } from './pages.js'
 import { startSyncScheduler } from './sync.js'
@@ -119,6 +120,19 @@ const server = createServer((req, res) => {
 deleteExpiredSessions()
 setInterval(deleteExpiredSessions, 60 * 60 * 1000).unref()
 startSyncScheduler()
+
+// Artwork is cached forever otherwise. Six-hourly is often enough to keep an
+// install in check without competing with a sync for the disk.
+setInterval(() => {
+  const settings = getSettings()
+  const result = pruneCache({
+    maxMb: Number(settings['cache.maxMb'] ?? 500),
+    maxAgeDays: Number(settings['cache.maxAgeDays'] ?? 60),
+  })
+  if (result.removed > 0) {
+    console.log(`[discovarr] pruned ${result.removed} cached image(s), ${result.bytes} bytes freed`)
+  }
+}, 6 * 60 * 60 * 1000).unref()
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {

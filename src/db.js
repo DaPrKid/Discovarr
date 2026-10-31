@@ -589,6 +589,10 @@ export function deleteOtherSessions(userId, keepToken) {
   )
 }
 
+export function countSessions() {
+  return db.prepare('SELECT COUNT(*) AS count FROM sessions WHERE expires_at > ?').get(timestamp()).count
+}
+
 export function deleteExpiredSessions() {
   return Number(db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(timestamp()).changes)
 }

@@ -606,6 +606,15 @@ export function updateSettings(input, actor) {
     entries['sync.intervalMinutes'] = String(Math.max(0, Number(input.syncIntervalMinutes ?? 30) || 0))
   }
 
+  if (input.cache) {
+    if (input.cache.maxMb !== undefined) {
+      entries['cache.maxMb'] = String(Math.max(0, Number(input.cache.maxMb ?? 500) || 0))
+    }
+    if (input.cache.maxAgeDays !== undefined) {
+      entries['cache.maxAgeDays'] = String(Math.max(0, Number(input.cache.maxAgeDays ?? 60) || 0))
+    }
+  }
+
   if (input.plex) {
     const plex = input.plex
     if (plex.enabled !== undefined) entries['plex.enabled'] = plex.enabled ? 'true' : 'false'

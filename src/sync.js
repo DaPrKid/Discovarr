@@ -5,9 +5,19 @@ import { fetchLibrary, serviceSummary } from './services.js'
 let running = false
 let lastRun = null
 let lastSummary = null
+let lastError = null
+let attempts = 0
+let nextAttemptAt = null
+
+/** Two minutes, doubling, capped at half an hour: a service that is down is
+ * retried soon at first, then left alone instead of being hammered. */
+export function backoffDelayMs(failures) {
+  const step = Math.max(0, Number(failures) || 0)
+  return Math.min(2 * 60_000 * 2 ** Math.max(0, step - 1), 30 * 60_000)
+}
 
 export function syncState() {
-  return { running, lastRun, lastSummary }
+  return { running, lastRun, lastSummary, lastError, attempts, nextAttemptAt }
 }
 
 function applyLibraryItem(item) {
@@ -95,6 +105,18 @@ export async function syncLibrary({ actorId = null } = {}) {
 
     lastRun = new Date().toISOString()
     lastSummary = summary
+
+    // A sync that reached every configured service counts as healthy even if
+    // it had nothing to change; only real errors reset the backoff.
+    if (summary.errors.length === 0) {
+      attempts = 0
+      nextAttemptAt = null
+      lastError = null
+    } else {
+      attempts += 1
+      lastError = summary.errors.join(' | ')
+      nextAttemptAt = new Date(Date.now() + backoffDelayMs(attempts)).toISOString()
+    }
     store.recordAudit(
       actorId,
       'sync.run',
@@ -115,6 +137,10 @@ export function startSyncScheduler() {
     const minutes = Number(store.getSetting('sync.intervalMinutes') ?? 30)
     if (!Number.isFinite(minutes) || minutes <= 0) return
     if (lastRun && Date.now() - Date.parse(lastRun) < minutes * 60 * 1000) return
+
+    // After a failure the interval no longer applies: the backoff schedule
+    // decides when to try again, so a restart loop cannot spin.
+    if (nextAttemptAt && Date.now() < Date.parse(nextAttemptAt)) return
 
     const ready = ['radarr', 'sonarr'].some((kind) => {
       const service = serviceSummary(kind)

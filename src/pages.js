@@ -67,6 +67,10 @@ import {
 } from './tmdb.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
+import { cacheStats, pruneCache } from './cache.js'
+import { diagnosticsSnapshot } from './diagnostics.js'
+import { importSettings, redactSettings } from './settingsfile.js'
+import { APP_VERSION as BUILD_VERSION } from './constants.js'
 import {
   alert,
   escapeHtml,
@@ -91,6 +95,32 @@ function appName() {
 
 function safeReturn(value, fallback = '/') {
   return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : fallback
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0))
+  const days = Math.floor(total / 86400)
+  const hours = Math.floor((total % 86400) / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
+/** One line describing a service's configuration, never its credentials. */
+function serviceLine(summary) {
+  if (!summary) return 'not configured'
+  if (!summary.enabled) return 'disabled'
+  if (!summary.configured) return 'enabled, but no URL or API key saved'
+  return `enabled · root folder ${summary.rootFolder || 'not set'} · profile ${summary.qualityProfileName || 'default'}`
 }
 
 function withMessage(path, key, text) {
@@ -1613,6 +1643,79 @@ function settingsBody({ user, settings, users, audit, options, tab, notice, erro
       </table>
     </section>`
 
+  const diag = diagnosticsSnapshot()
+  const cache = cacheStats()
+
+  // A failing sync used to be visible only in docker logs; surface it here with
+  // the retry time so an administrator does not have to watch the container.
+  const syncHealth = diag.sync.lastError
+    ? `<section class="panel alert-panel">
+        <h2 style="margin: 0">The last sync had errors</h2>
+        <p class="muted small">${escapeHtml(diag.sync.lastError)}</p>
+        ${
+          diag.sync.nextAttemptAt
+            ? `<p class="muted small">Attempt ${escapeHtml(String(diag.sync.attempts))}, retrying after ${escapeHtml(
+                diag.sync.nextAttemptAt.replace('T', ' ').slice(0, 19)
+              )}.</p>`
+            : ''
+        }
+        <form method="post" action="/settings/sync"><button class="btn btn-sm" type="submit">Retry now</button></form>
+      </section>`
+    : ''
+
+  const cachePanel = `<form method="post" action="/settings" class="stack panel">
+      <h2 style="margin: 0">Artwork cache</h2>
+      <p class="muted small">${cache.files} file(s), ${formatBytes(cache.bytes)}, in <code>${escapeHtml(cache.directory)}</code></p>
+      <input type="hidden" name="settingsSection" value="cache" />
+      <input type="hidden" name="settingsTab" value="tasks" />
+      <div class="row-grid">
+        <label>Maximum size (MB, 0 = unlimited)
+          <input type="number" name="cacheMaxMb" min="0" value="${escapeHtml(settings['cache.maxMb'])}" />
+        </label>
+        <label>Delete images older than (days, 0 = never)
+          <input type="number" name="cacheMaxAgeDays" min="0" value="${escapeHtml(settings['cache.maxAgeDays'])}" />
+        </label>
+      </div>
+      <button class="btn btn-sm" type="submit">Save cache limits</button>
+    </form>
+
+    <form method="post" action="/settings/cache/prune" class="panel">
+      <h2 style="margin: 0">Prune now</h2>
+      <p class="muted small">Removes images past those limits, least recently used first. Posters are fetched from TMDB again the next time they are shown.</p>
+      <button class="btn btn-sm btn-ghost" type="submit">Prune cache</button>
+    </form>`
+
+  const backupPanel = `<section class="panel">
+      <h2 style="margin: 0">Backup and restore</h2>
+      <p class="muted small">Every setting as one JSON file, so a move to another machine does not mean retyping keys.</p>
+      <p><a class="btn btn-sm" href="/settings/export">Download settings</a>
+        <a class="btn btn-sm btn-ghost" href="/settings/export?secrets=1">Download with secrets</a></p>
+      <form method="post" action="/settings/import" class="stack">
+        <label>Restore from JSON
+          <textarea name="payload" rows="6" placeholder="Paste the contents of discovarr-settings.json"></textarea>
+        </label>
+        <button class="btn btn-sm btn-ghost" type="submit">Import settings</button>
+        <p class="muted small">Only known settings are written and unknown keys are ignored. Blank secrets are skipped, so a redacted file cannot wipe keys that are already saved.</p>
+      </form>
+    </section>`
+
+  const diagnosticsPanel = `<section class="panel">
+      <h2 style="margin: 0">Diagnostics</h2>
+      <table class="table">
+        <tbody>
+          <tr><th>Version</th><td>${escapeHtml(diag.version)} · Node ${escapeHtml(diag.node)} · ${escapeHtml(diag.platform)}</td></tr>
+          <tr><th>Uptime</th><td>${escapeHtml(formatDuration(diag.uptimeSeconds))}</td></tr>
+          <tr><th>Database</th><td>${formatBytes(diag.database.bytes)} (write-ahead log ${formatBytes(diag.database.walBytes)})</td></tr>
+          <tr><th>Artwork cache</th><td>${diag.cache.files} file(s), ${formatBytes(diag.cache.bytes)}</td></tr>
+          <tr><th>Catalog</th><td>${diag.counts.media} title(s) · ${diag.counts.users} user(s) · ${diag.counts.sessions} active session(s)</td></tr>
+          <tr><th>Requests</th><td>${diag.counts.pending} pending · ${diag.counts.approved} approved · ${diag.counts.failed} failed · ${diag.counts.completed} completed · ${diag.counts.declined} declined</td></tr>
+          <tr><th>Radarr</th><td>${escapeHtml(serviceLine(diag.services.radarr))}</td></tr>
+          <tr><th>Sonarr</th><td>${escapeHtml(serviceLine(diag.services.sonarr))}</td></tr>
+          <tr><th>Last sync</th><td>${diag.sync.lastRun ? escapeHtml(diag.sync.lastRun.replace('T', ' ').slice(0, 19)) : 'never'}${diag.sync.lastError ? ' · last attempt failed' : ''}</td></tr>
+        </tbody>
+      </table>
+    </section>`
+
   const tasks = `<form method="post" action="/settings" class="stack">
       <input type="hidden" name="settingsSection" value="tasks" />
       <input type="hidden" name="settingsTab" value="tasks" />
@@ -1631,7 +1734,12 @@ function settingsBody({ user, settings, users, audit, options, tab, notice, erro
       <h2 style="margin: 0">Run a sync now</h2>
       <p class="muted small">Pulls the Radarr and Sonarr libraries and marks finished requests as available.</p>
       <button class="btn btn-sm btn-ghost" type="submit">Sync now</button>
-    </form>`
+    </form>
+
+    ${syncHealth}
+    ${cachePanel}
+    ${backupPanel}
+    ${diagnosticsPanel}`
 
   const content =
     current === 'users'
@@ -1777,6 +1885,12 @@ function settingsFromBody(body) {
 
   if (section === 'tasks' && body.syncIntervalMinutes !== undefined) {
     input.syncIntervalMinutes = body.syncIntervalMinutes
+  }
+
+  if (section === 'cache') {
+    input.cache = {}
+    if (body.cacheMaxMb !== undefined) input.cache.maxMb = body.cacheMaxMb
+    if (body.cacheMaxAgeDays !== undefined) input.cache.maxAgeDays = body.cacheMaxAgeDays
   }
 
   return input
@@ -2674,6 +2788,74 @@ export function registerPageRoutes(router) {
       redirect(res, withMessage('/settings?tab=tasks', result.ok ? 'notice' : 'err', message))
     } catch (error) {
       failure(res, '/settings', error)
+    }
+  })
+
+  router.post('/settings/cache/prune', ({ req, res }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+    const settings = store.getSettings()
+
+    const result = pruneCache({
+      maxMb: Number(settings['cache.maxMb'] ?? 500),
+      maxAgeDays: Number(settings['cache.maxAgeDays'] ?? 60),
+    })
+
+    store.recordAudit(
+      actor.id,
+      'settings.cache_pruned',
+      `${result.removed} file(s), ${formatBytes(result.bytes)} freed`
+    )
+    redirect(
+      res,
+      withMessage(
+        '/settings?tab=tasks',
+        'notice',
+        result.removed
+          ? `Removed ${result.removed} cached image(s), freeing ${formatBytes(result.bytes)}`
+          : 'The cache is already within its limits'
+      )
+    )
+  })
+
+  router.get('/settings/export', ({ req, res, url }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+    const includeSecrets = url.searchParams.get('secrets') === '1'
+    const settings = store.getSettings()
+
+    store.recordAudit(actor.id, 'settings.exported', includeSecrets ? 'including secrets' : 'secrets redacted')
+
+    sendJson(
+      res,
+      200,
+      {
+        app: 'discovarr',
+        version: BUILD_VERSION,
+        exportedAt: new Date().toISOString(),
+        settings: includeSecrets ? settings : redactSettings(settings),
+      },
+      { 'content-disposition': 'attachment; filename="discovarr-settings.json"' }
+    )
+  })
+
+  router.post('/settings/import', async ({ req, res }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+    const body = await readBody(req)
+
+    try {
+      const result = importSettings([].concat(body.payload ?? '')[0])
+      store.recordAudit(actor.id, 'settings.imported', `${result.applied} key(s)`)
+      redirect(
+        res,
+        withMessage(
+          '/settings?tab=tasks',
+          'notice',
+          `Imported ${result.applied} setting(s)${
+            result.ignored.length ? ` · ignored ${result.ignored.length} unknown key(s)` : ''
+          }`
+        )
+      )
+    } catch (error) {
+      failure(res, '/settings?tab=tasks', error)
     }
   })
 
