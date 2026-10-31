@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.11.0
+docker pull ghcr.io/daprkid/discovarr:0.12.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -150,7 +150,21 @@ bootstrapping, which is only useful for demos.
   permission bitmask (request movies/series, auto-approve, manage requests,
   manage users, manage settings).
 - **Notifications** — webhook (Discord-compatible `content`, plus structured
-  fields) for new requests, approvals/declines and titles becoming available.
+  fields) for new requests, approvals/declines and titles becoming available,
+  and now email over SMTP too: STARTTLS, implicit TLS or a plain relay on the
+  same host, with a **Send me a test message** button in Settings.
+- **A bell in the header** — approvals, declines, titles becoming available and
+  a dispatch that finally gives up all land in `/notifications`, with an unread
+  count and a *mark all read* button.
+- **Per-user notification choices** — each account decides whether email is
+  wanted and which events matter (approved, declined, available); the bell
+  always shows the account's own updates.
+- **Bulk request management** — tick requests on the Requests page and approve,
+  retry, decline or delete them in one post, with the outcome reported per
+  request instead of failing the batch.
+- **Background retries** — a failed dispatch is retried automatically after two
+  minutes, four, eight and so on, up to a configured number of attempts, and
+  only then is the requester told it failed.
 - **Accounts** — first-run `/setup` page where the first account becomes the
   administrator, sign-in by username or email, self-service password change
   that revokes other sessions.
@@ -197,7 +211,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.11.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.12.0
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -303,6 +317,7 @@ badge, the play deep link and the browse sidebar.
 ## Limitations
 
 - Single container, single writer: SQLite in WAL mode, no external database.
-- Notification channels are webhook only (Discord/generic); no SMTP yet.
+- Notification email is plain text from one SMTP account; there is no per-user
+  mail server or mailing-list management.
 - Dispatch assumes Radarr/Sonarr v3 APIs; failures surface verbatim in the note.
 - The seeded catalog is demo data, used only when TMDB is not configured.

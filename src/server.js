@@ -11,6 +11,7 @@ import { createRouter, HttpError, sendHtml, sendJson } from './http.js'
 import { pruneCache } from './cache.js'
 import { serveImage } from './images.js'
 import { registerPageRoutes } from './pages.js'
+import { startRetryQueue } from './retry.js'
 import { startSyncScheduler } from './sync.js'
 import { escapeHtml, layout } from './views.js'
 
@@ -120,6 +121,7 @@ const server = createServer((req, res) => {
 deleteExpiredSessions()
 setInterval(deleteExpiredSessions, 60 * 60 * 1000).unref()
 startSyncScheduler()
+startRetryQueue()
 
 // Artwork is cached forever otherwise. Six-hourly is often enough to keep an
 // install in check without competing with a sync for the disk.

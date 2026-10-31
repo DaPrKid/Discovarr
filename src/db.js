@@ -113,6 +113,30 @@ ensureColumn('users', 'quota_tv', 'INTEGER NOT NULL DEFAULT 0')
 // choice made on the request form instead of always using the default.
 ensureColumn('requests', 'quality_profile_id', 'INTEGER')
 ensureColumn('requests', 'quality_profile_name', 'TEXT')
+// Background retry bookkeeping: how many dispatches have failed and when the
+// next automatic attempt is due.
+ensureColumn('requests', 'attempts', 'INTEGER NOT NULL DEFAULT 0')
+ensureColumn('requests', 'next_retry_at', 'TEXT')
+// Per-user notification choices: whether to also send email, and which events
+// the user cares about (1 approved, 2 declined, 4 available).
+ensureColumn('users', 'notify_email', 'INTEGER NOT NULL DEFAULT 0')
+ensureColumn('users', 'notify_events', 'INTEGER NOT NULL DEFAULT 7')
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    href TEXT,
+    read_at TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id);
+  CREATE INDEX IF NOT EXISTS idx_requests_retry ON requests (status, next_retry_at);
+`)
 
 // Usernames identify an account on the sign-in form, so they are unique
 // regardless of case. Older databases may hold duplicates, which makes the
@@ -139,6 +163,8 @@ function mapUser(row) {
     permissions: row.permissions ?? 0,
     quotaMovie: row.quota_movie ?? 0,
     quotaTv: row.quota_tv ?? 0,
+    notifyEmail: row.notify_email === 1,
+    notifyEvents: row.notify_events ?? 7,
     createdAt: row.created_at,
     passwordHash: row.password_hash,
   }
@@ -192,6 +218,15 @@ export function updateUser(id, { role, permissions, quotaMovie, quotaTv }) {
     Number(permissions) || 0,
     Number(quotaMovie) || 0,
     Number(quotaTv) || 0,
+    Number(id)
+  )
+  return findUserById(id)
+}
+
+export function updateUserNotifications(id, { notifyEmail = false, notifyEvents = 7 } = {}) {
+  db.prepare('UPDATE users SET notify_email = ?, notify_events = ? WHERE id = ?').run(
+    notifyEmail ? 1 : 0,
+    Number(notifyEvents) || 0,
     Number(id)
   )
   return findUserById(id)
@@ -386,6 +421,8 @@ function mapRequest(row) {
     note: row.note,
     qualityProfileId: row.quality_profile_id ?? null,
     qualityProfileName: row.quality_profile_name ?? null,
+    attempts: row.attempts ?? 0,
+    nextRetryAt: row.next_retry_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     media: row.title
@@ -511,6 +548,76 @@ export function createRequest({
     )
 
   return getRequestById(Number(info.lastInsertRowid))
+}
+
+export function setRequestRetry(id, { attempts = 0, nextRetryAt = null } = {}) {
+  db.prepare('UPDATE requests SET attempts = ?, next_retry_at = ?, updated_at = ? WHERE id = ?').run(
+    Number(attempts) || 0,
+    nextRetryAt,
+    timestamp(),
+    Number(id)
+  )
+}
+
+/** Failed requests whose next automatic attempt is due. */
+export function listFailedForRetry(now = timestamp(), limit = 20) {
+  return db
+    .prepare(
+      `${REQUEST_SELECT}
+      WHERE r.status = ? AND (r.next_retry_at IS NULL OR r.next_retry_at <= ?)
+      ORDER BY r.next_retry_at IS NOT NULL, r.next_retry_at ASC
+      LIMIT ?`
+    )
+    .all(MediaRequestStatus.FAILED, now, Number(limit))
+    .map(mapRequest)
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export function createNotification({ userId, kind, title, body = '', href = null }) {
+  const info = db
+    .prepare('INSERT INTO notifications (user_id, kind, title, body, href, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(Number(userId), kind, title, body, href, timestamp())
+
+  return Number(info.lastInsertRowid)
+}
+
+export function listNotifications(userId, limit = 40) {
+  return db
+    .prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?')
+    .all(Number(userId), Number(limit))
+    .map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      title: row.title,
+      body: row.body,
+      href: row.href,
+      readAt: row.read_at,
+      createdAt: row.created_at,
+    }))
+}
+
+export function countUnreadNotifications(userId) {
+  return db
+    .prepare('SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL')
+    .get(Number(userId)).count
+}
+
+export function markNotificationsRead(userId, id = null) {
+  if (id === null) {
+    return Number(
+      db.prepare('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL').run(timestamp(), Number(userId))
+        .changes
+    )
+  }
+
+  return Number(
+    db
+      .prepare('UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL')
+      .run(timestamp(), Number(id), Number(userId)).changes
+  )
 }
 
 export function setRequestStatus(id, status, note = null) {

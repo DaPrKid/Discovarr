@@ -70,6 +70,8 @@ import { syncLibrary, syncState } from './sync.js'
 import { cacheStats, pruneCache } from './cache.js'
 import { diagnosticsSnapshot } from './diagnostics.js'
 import { importSettings, redactSettings } from './settingsfile.js'
+import { sendTestMail } from './notifications.js'
+import { updateNotifications } from './core.js'
 import { APP_VERSION as BUILD_VERSION } from './constants.js'
 import {
   alert,
@@ -1209,6 +1211,37 @@ function episodesHtml(season) {
 // Requests
 // ---------------------------------------------------------------------------
 
+function notificationsBody({ items, notice, error }) {
+  const list = items.length
+    ? `<div class="notification-list">${items
+        .map(
+          (item) => `<article class="notification${item.readAt ? '' : ' is-unread'}">
+            <div class="notification-head">
+              <strong>${escapeHtml(item.title)}</strong>
+              <span class="muted small">${escapeHtml(item.createdAt.slice(0, 16).replace('T', ' '))}</span>
+            </div>
+            ${item.body ? `<p class="muted small">${escapeHtml(item.body)}</p>` : ''}
+            ${item.href ? `<a class="small" href="${escapeHtml(item.href)}">Open the title →</a>` : ''}
+          </article>`
+        )
+        .join('')}</div>`
+    : '<p class="empty">Nothing yet. Approvals, declines and titles arriving will show up here.</p>'
+
+  return `<div class="page-head">
+      <div>
+        <h1>Notifications</h1>
+        <p class="muted">Updates about your own requests.</p>
+      </div>
+      ${
+        items.some((item) => !item.readAt)
+          ? '<form method="post" action="/notifications/read"><button class="btn btn-sm btn-ghost" type="submit">Mark all read</button></form>'
+          : ''
+      }
+    </div>
+    ${alert({ notice, error })}
+    ${list}`
+}
+
 function requestsBody({ user, result, filter, notice, error }) {
   const filters = [
     ['all', 'All'],
@@ -1227,8 +1260,23 @@ function requestsBody({ user, result, filter, notice, error }) {
     .join('')
 
   const { canManageRequests } = userPermissions(user)
+  const returnTo = `/requests${filter === 'all' ? '' : `?filter=${filter}`}`
+
+  const bulkBar = canManageRequests
+    ? `<form id="bulk" method="post" action="/requests/bulk" class="bulk-bar">
+        <span class="muted small">With selected:</span>
+        <button class="btn btn-sm" type="submit" name="action" value="approve">Approve</button>
+        <button class="btn btn-sm btn-ghost" type="submit" name="action" value="retry">Retry failed</button>
+        <button class="btn btn-sm btn-ghost" type="submit" name="action" value="decline">Decline</button>
+        <button class="btn btn-sm btn-danger" type="submit" name="action" value="delete">Delete</button>
+        <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
+      </form>`
+    : ''
+
   const list = result.results.length
-    ? `<div class="request-list">${result.results.map((request) => requestCard(request, { canManage: canManageRequests })).join('')}</div>`
+    ? `<div class="request-list">${result.results
+        .map((request) => requestCard(request, { canManage: canManageRequests, bulk: canManageRequests }))
+        .join('')}</div>`
     : '<p class="empty">No requests here yet.</p>'
 
   return `<div class="page-head">
@@ -1239,6 +1287,7 @@ function requestsBody({ user, result, filter, notice, error }) {
     </div>
     ${alert({ notice, error })}
     <div class="tabs">${tabs}</div>
+    ${bulkBar}
     ${list}
     ${pagination({ page: result.page, totalPages: result.totalPages, basePath: '/requests', params: { filter: filter === 'all' ? '' : filter } })}`
 }
@@ -1262,6 +1311,22 @@ function accountBody({ user, quota, notice, error }) {
       <label>New password <input type="password" name="newPassword" required minlength="6" autocomplete="new-password" /></label>
       <button class="btn btn-sm" type="submit">Update password</button>
       <p class="muted small">Changing your password signs out your other sessions.</p>
+    </form>
+
+    <form method="post" action="/account/notifications" class="stack panel">
+      <h2 style="margin: 0">Notifications</h2>
+      <p class="muted small">The bell in the header always shows your own updates. Email is optional.</p>
+      <label class="checkbox">
+        <input type="checkbox" name="notifyEmail" ${user.notifyEmail ? 'checked' : ''} />
+        <span>Also email me (needs SMTP configured by an administrator)</span>
+      </label>
+      <fieldset class="plain">
+        <legend class="muted small">Email me when</legend>
+        <label class="checkbox"><input type="checkbox" name="events" value="1" ${(user.notifyEvents ?? 0) & 1 ? 'checked' : ''} /> <span>My request is approved</span></label>
+        <label class="checkbox"><input type="checkbox" name="events" value="2" ${(user.notifyEvents ?? 0) & 2 ? 'checked' : ''} /> <span>My request is declined</span></label>
+        <label class="checkbox"><input type="checkbox" name="events" value="4" ${(user.notifyEvents ?? 0) & 4 ? 'checked' : ''} /> <span>A title I asked for becomes available</span></label>
+      </fieldset>
+      <button class="btn btn-sm" type="submit">Save notification preferences</button>
     </form>`
 }
 
@@ -1621,6 +1686,38 @@ function settingsBody({ user, settings, users, audit, options, tab, notice, erro
         <p class="muted small">A Discord or Slack incoming webhook works; the payload is a plain JSON message.</p>
       </fieldset>
       <button class="btn" type="submit">Save notification settings</button>
+    </form>
+
+    <form method="post" action="/settings" class="stack">
+      <input type="hidden" name="settingsSection" value="mail" />
+      <input type="hidden" name="settingsTab" value="notifications" />
+      <fieldset class="panel">
+        <legend>Email (SMTP)</legend>
+        <label class="checkbox">
+          <input type="checkbox" name="smtpEnabled" ${settings['smtp.enabled'] === 'true' ? 'checked' : ''} />
+          <span>Send notification email</span>
+        </label>
+        <div class="row-grid">
+          <label>Server <input type="text" name="smtpHost" value="${escapeHtml(settings['smtp.host'])}" placeholder="smtp.example.com" /></label>
+          <label>Port <input type="number" name="smtpPort" min="1" max="65535" value="${escapeHtml(settings['smtp.port'])}" /></label>
+          <label>Security
+            <select name="smtpSecurity">
+              <option value="starttls" ${settings['smtp.security'] === 'starttls' ? 'selected' : ''}>STARTTLS (587)</option>
+              <option value="ssl" ${settings['smtp.security'] === 'ssl' ? 'selected' : ''}>Implicit TLS (465)</option>
+              <option value="none" ${settings['smtp.security'] === 'none' ? 'selected' : ''}>None (relay on this host)</option>
+            </select>
+          </label>
+          <label>Username <input type="text" name="smtpUser" value="${escapeHtml(settings['smtp.user'])}" autocomplete="off" /></label>
+          <label>Password <input type="password" name="smtpPassword" value="${escapeHtml(settings['smtp.password'])}" autocomplete="off" /></label>
+          <label>From address <input type="email" name="smtpFrom" value="${escapeHtml(settings['smtp.from'])}" placeholder="discovarr@example.com" /></label>
+          <label>From name <input type="text" name="smtpFromName" value="${escapeHtml(settings['smtp.fromName'])}" /></label>
+        </div>
+        <p class="muted small">Email goes to the users who turn it on in Account and tick the events they want.</p>
+        <div class="row">
+          <button class="btn btn-sm" type="submit">Save mail settings</button>
+          <button class="btn btn-sm btn-ghost" type="submit" formaction="/settings/test/mail">Send me a test message</button>
+        </div>
+      </fieldset>
     </form>`
 
   const logs = `<section class="panel">
@@ -1724,6 +1821,10 @@ function settingsBody({ user, settings, users, audit, options, tab, notice, erro
         <label>Interval (minutes, 0 disables)
           <input type="number" name="syncIntervalMinutes" min="0" value="${escapeHtml(settings['sync.intervalMinutes'])}" />
         </label>
+        <label>Automatic retries of a failed dispatch
+          <input type="number" name="maxAttempts" min="0" max="10" value="${escapeHtml(settings['requests.maxAttempts'])}" />
+        </label>
+        <p class="muted small">A failed dispatch is retried after two minutes, then four, and so on. At 0 only a manual retry runs.</p>
         <p class="muted small">Last run: ${sync.lastRun ? escapeHtml(sync.lastRun.replace('T', ' ').slice(0, 19)) : 'never'}${sync.running ? ' · running now' : ''}</p>
         ${sync.lastSummary ? `<p class="muted small">Last result: ${escapeHtml(JSON.stringify(sync.lastSummary.services))}</p>` : ''}
         <button class="btn btn-sm" type="submit">Save schedule</button>
@@ -1883,8 +1984,22 @@ function settingsFromBody(body) {
     }
   }
 
-  if (section === 'tasks' && body.syncIntervalMinutes !== undefined) {
-    input.syncIntervalMinutes = body.syncIntervalMinutes
+  if (section === 'mail') {
+    input.smtp = {
+      enabled: body.smtpEnabled !== undefined,
+      host: body.smtpHost,
+      port: body.smtpPort,
+      security: body.smtpSecurity,
+      user: body.smtpUser,
+      password: body.smtpPassword,
+      from: body.smtpFrom,
+      fromName: body.smtpFromName,
+    }
+  }
+
+  if (section === 'tasks') {
+    if (body.syncIntervalMinutes !== undefined) input.syncIntervalMinutes = body.syncIntervalMinutes
+    if (body.maxAttempts !== undefined) input.maxAttempts = body.maxAttempts
   }
 
   if (section === 'cache') {
@@ -2422,6 +2537,45 @@ export function registerPageRoutes(router) {
     redirect(res, withMessage(returnTo, done ? 'notice' : 'err', message))
   })
 
+  router.post('/requests/bulk', async ({ req, res }) => {
+    const actor = requirePermission(req, Permission.MANAGE_REQUESTS, 'You cannot manage requests')
+    const body = await readBody(req)
+    const returnTo = safeReturn(body.returnTo, '/requests')
+    const action = String(body.action ?? '')
+    const ids = [...new Set([].concat(body.ids ?? []).map(Number))].filter(
+      (id) => Number.isInteger(id) && id > 0
+    )
+
+    if (ids.length === 0) return redirect(res, withMessage(returnTo, 'err', 'Tick at least one request first'))
+
+    if (!['approve', 'decline', 'retry', 'delete'].includes(action)) {
+      return redirect(res, withMessage(returnTo, 'err', 'Unknown bulk action'))
+    }
+
+    let done = 0
+    const problems = []
+
+    for (const id of ids) {
+      try {
+        if (action === 'approve') await approveRequest(id, actor)
+        else if (action === 'retry') await retryRequest(id, actor)
+        else if (action === 'decline') declineRequest(id, actor)
+        else deleteRequest(id, actor)
+        done += 1
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error
+        problems.push(`#${id}: ${error.message}`)
+      }
+    }
+
+    const label = { approve: 'approved', decline: 'declined', retry: 'retried', delete: 'deleted' }[action]
+    const message = `${done} request${done === 1 ? '' : 's'} ${label}${
+      problems.length ? ` · ${problems.join('; ')}` : ''
+    }`
+
+    redirect(res, withMessage(returnTo, problems.length ? 'err' : 'notice', message))
+  })
+
   router.get('/requests', ({ req, res, url }) => {
     const user = pageUser(req, res, '/requests')
     if (!user) return
@@ -2494,6 +2648,28 @@ export function registerPageRoutes(router) {
     }
   })
 
+  router.get('/notifications', ({ req, res, url }) => {
+    const user = pageUser(req, res)
+    if (!user) return
+
+    render(res, 200, {
+      title: 'Notifications',
+      user,
+      active: 'notifications',
+      body: notificationsBody({
+        items: store.listNotifications(user.id),
+        notice: url.searchParams.get('notice'),
+        error: url.searchParams.get('err'),
+      }),
+    })
+  })
+
+  router.post('/notifications/read', ({ req, res }) => {
+    const user = requireUser(req)
+    store.markNotificationsRead(user.id)
+    redirect(res, withMessage('/notifications', 'notice', 'All notifications marked read'))
+  })
+
   router.get('/account', ({ req, res, url }) => {
     const user = pageUser(req, res, '/account')
     if (!user) return
@@ -2509,6 +2685,21 @@ export function registerPageRoutes(router) {
         error: url.searchParams.get('err'),
       }),
     })
+  })
+
+  router.post('/account/notifications', async ({ req, res }) => {
+    const user = requireUser(req)
+    const body = await readBody(req)
+
+    try {
+      updateNotifications(user, {
+        notifyEmail: body.notifyEmail !== undefined,
+        events: body.events,
+      })
+      redirect(res, withMessage('/account', 'notice', 'Notification preferences saved'))
+    } catch (error) {
+      failure(res, '/account', error)
+    }
   })
 
   router.post('/account/password', async ({ req, res }) => {
@@ -2569,16 +2760,45 @@ export function registerPageRoutes(router) {
   router.post('/settings/test/:kind', async ({ req, res, params }) => {
     const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
 
-    if (!['sonarr', 'radarr', 'plex'].includes(params.kind)) {
+    if (!['sonarr', 'radarr', 'plex', 'mail'].includes(params.kind)) {
       return redirect(res, withMessage('/settings', 'err', 'Unknown service'))
     }
 
     try {
       updateSettings(settingsFromBody(await readBody(req)), actor)
       if (params.kind === 'plex') forgetPlex()
-      else forgetServiceOptions(params.kind)
+      else if (params.kind !== 'mail') forgetServiceOptions(params.kind)
     } catch (error) {
       return failure(res, '/settings', error)
+    }
+
+    if (params.kind === 'mail') {
+      const settings = store.getSettings()
+      const body = {
+        user: actor,
+        settings,
+        users: store.listUsers(),
+        audit: store.listAudit(30),
+        options: await loadOptionsForPage(),
+        tab: 'notifications',
+      }
+
+      try {
+        const result = await sendTestMail(actor.email)
+        return render(res, 200, {
+          title: 'Settings',
+          user: actor,
+          active: 'settings',
+          body: settingsBody({ ...body, notice: result.detail, error: null }),
+        })
+      } catch (error) {
+        return render(res, 200, {
+          title: 'Settings',
+          user: actor,
+          active: 'settings',
+          body: settingsBody({ ...body, notice: null, error: `Mail test failed: ${error.message}` }),
+        })
+      }
     }
 
     if (params.kind === 'plex') {

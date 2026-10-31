@@ -67,6 +67,13 @@ function applyLibraryItem(item) {
 
     if (ready) {
       store.setRequestStatus(request.id, MediaRequestStatus.COMPLETED, 'Available in the library (sync)')
+      store.createNotification({
+        userId: request.userId,
+        kind: 'available',
+        title: `${item.title} is now available`,
+        body: 'The library sync found it on disk.',
+        href: `/media/${media.id}`,
+      })
       completed += 1
     }
   }

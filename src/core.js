@@ -12,6 +12,7 @@ import {
 import * as store from './db.js'
 import { HttpError } from './http.js'
 import { notifyLater } from './notifications.js'
+import { backoffDelayMs } from './sync.js'
 import { verifyPassword } from './passwords.js'
 import { dispatchToService, profileAt, resolveProfile, saveServiceProfiles, serviceProfiles } from './services.js'
 import { tmdbDetails } from './tmdb.js'
@@ -212,6 +213,14 @@ async function approveAndDispatch(request, media, actor) {
 
     const note = result.dispatched ? result.detail : `Approved — ${result.reason}`
     store.setRequestStatus(request.id, MediaRequestStatus.APPROVED, note)
+    store.setRequestRetry(request.id, { attempts: 0, nextRetryAt: null })
+    store.createNotification({
+      userId: request.userId,
+      kind: 'approved',
+      title: `${media.title} was approved`,
+      body: result.dispatched ? 'Sent to the download client.' : note,
+      href: `/media/${media.id}`,
+    })
 
     notifyLater('approved', {
       message: `${media.title} was approved${result.dispatched ? ` and sent to the download client` : ''}`,
@@ -223,6 +232,27 @@ async function approveAndDispatch(request, media, actor) {
   } catch (error) {
     store.setRequestStatus(request.id, MediaRequestStatus.FAILED, `Dispatch failed: ${error.message}`)
     store.recordAudit(actor?.id ?? null, 'request.dispatch_failed', `#${request.id} ${error.message}`)
+
+    // Background retries take over from here unless the attempts are spent.
+    const attempts = (request.attempts ?? 0) + 1
+    const maxAttempts = Number(store.getSetting('requests.maxAttempts') ?? 3)
+    const exhausted = attempts >= Math.max(1, maxAttempts)
+
+    store.setRequestRetry(request.id, {
+      attempts,
+      nextRetryAt: exhausted ? null : new Date(Date.now() + backoffDelayMs(attempts)).toISOString(),
+    })
+
+    if (exhausted) {
+      store.createNotification({
+        userId: request.userId,
+        kind: 'failed',
+        title: `${media.title} could not be sent to ${media.mediaType === MediaType.MOVIE ? 'Radarr' : 'Sonarr'}`,
+        body: `Gave up after ${attempts} attempt(s): ${error.message}`,
+        href: `/media/${media.id}`,
+      })
+    }
+
     notifyLater('approved', { message: `${media.title} failed to dispatch: ${error.message}`, media, user: actor })
 
     return store.getRequestById(request.id)
@@ -270,6 +300,13 @@ export function declineRequest(id, actor) {
   }
 
   store.setRequestStatus(request.id, MediaRequestStatus.DECLINED)
+  store.createNotification({
+    userId: request.userId,
+    kind: 'declined',
+    title: `${request.media.title} was declined`,
+    body: 'An administrator declined this request.',
+    href: `/media/${request.mediaId}`,
+  })
 
   const stillActive = store
     .listRequestsForMedia(request.mediaId)
@@ -322,6 +359,13 @@ export function markAvailable(mediaId, actor) {
   for (const request of store.listRequestsForMedia(media.id)) {
     if (ACTIVE_REQUEST_STATUSES.includes(request.status)) {
       store.setRequestStatus(request.id, MediaRequestStatus.COMPLETED, 'Marked available by an administrator')
+      store.createNotification({
+        userId: request.userId,
+        kind: 'available',
+        title: `${media.title} is now available`,
+        body: 'Marked available by an administrator.',
+        href: `/media/${media.id}`,
+      })
     }
   }
 
@@ -585,6 +629,18 @@ export function setDefaultServiceProfile(kind, name, actor) {
   store.recordAudit(actor?.id ?? null, 'settings.profile_default', `${label}: ${name}`)
   return list
 }
+/** Per-user notification choices, saved from the Account page. */
+export function updateNotifications(user, { notifyEmail, events }) {
+  const mask = [].concat(events ?? []).reduce((total, value) => total | Number(value), 0)
+  const updated = store.updateUserNotifications(user.id, {
+    notifyEmail: notifyEmail === true || notifyEmail === 'true' || notifyEmail === 'on',
+    notifyEvents: mask,
+  })
+
+  store.recordAudit(user.id, 'account.notifications', `email=${updated.notifyEmail} events=${updated.notifyEvents}`)
+  return updated
+}
+
 export function updateSettings(input, actor) {
   const entries = {}
 
@@ -604,6 +660,27 @@ export function updateSettings(input, actor) {
   }
   if (input.syncIntervalMinutes !== undefined) {
     entries['sync.intervalMinutes'] = String(Math.max(0, Number(input.syncIntervalMinutes ?? 30) || 0))
+  }
+
+  if (input.maxAttempts !== undefined) {
+    entries['requests.maxAttempts'] = String(Math.min(10, Math.max(0, Number(input.maxAttempts ?? 3) || 0)))
+  }
+
+  if (input.smtp) {
+    const smtp = input.smtp
+    if (smtp.enabled !== undefined) entries['smtp.enabled'] = smtp.enabled ? 'true' : 'false'
+    if (smtp.host !== undefined) entries['smtp.host'] = String(smtp.host ?? '').trim()
+    if (smtp.port !== undefined) {
+      entries['smtp.port'] = String(Math.min(65535, Math.max(1, Number(smtp.port ?? 587) || 587)))
+    }
+    if (smtp.security !== undefined) {
+      const security = String(smtp.security ?? '').toLowerCase()
+      entries['smtp.security'] = ['starttls', 'ssl', 'none'].includes(security) ? security : 'starttls'
+    }
+    if (smtp.user !== undefined) entries['smtp.user'] = String(smtp.user ?? '').trim()
+    if (smtp.password !== undefined) entries['smtp.password'] = String(smtp.password ?? '')
+    if (smtp.from !== undefined) entries['smtp.from'] = String(smtp.from ?? '').trim()
+    if (smtp.fromName !== undefined) entries['smtp.fromName'] = String(smtp.fromName ?? '').trim()
   }
 
   if (input.cache) {

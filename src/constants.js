@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.11.0'
+export const APP_VERSION = '0.12.0'
 
 // Lifecycle values mirror the enums Seerr uses, so the API and database stay
 // familiar to anyone coming from that codebase.
@@ -75,6 +75,9 @@ export const ALL_PERMISSIONS = Object.values(Permission).reduce((all, flag) => a
 export const SETTING_DEFAULTS = Object.freeze({
   'app.name': 'Discovarr',
   'requests.autoApprove': 'false',
+  // A failed dispatch is retried in the background this many times before the
+  // request is left for an administrator with its error.
+  'requests.maxAttempts': '3',
 
   'tmdb.apiKey': '',
   // Where-to-watch region for the title page (ISO 3166-1 alpha-2).
@@ -112,6 +115,16 @@ export const SETTING_DEFAULTS = Object.freeze({
   'cache.maxAgeDays': '60',
 
   'notifications.webhookUrl': '',
+
+  'smtp.enabled': 'false',
+  'smtp.host': '',
+  'smtp.port': '587',
+  // 'starttls' (587), 'ssl' (465) or 'none' for a relay on the same host.
+  'smtp.security': 'starttls',
+  'smtp.user': '',
+  'smtp.password': '',
+  'smtp.from': '',
+  'smtp.fromName': 'Discovarr',
   'notifications.onRequest': 'true',
   'notifications.onApproval': 'true',
   'notifications.onAvailable': 'true',

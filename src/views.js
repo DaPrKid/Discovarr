@@ -9,6 +9,7 @@ import {
   REQUEST_STATUS_LABEL,
   Role,
 } from './constants.js'
+import { countUnreadNotifications } from './db.js'
 import { imageUrl } from './tmdb.js'
 
 export function escapeHtml(value) {
@@ -37,6 +38,8 @@ function navigation({ user, active, appName, canManageSettings }) {
 
   if (canManageSettings) items.push(['settings', '/settings', 'Settings'])
 
+  const unread = user?.id ? countUnreadNotifications(user.id) : 0
+
   return `<header class="topbar">
     <a class="brand" href="/">${escapeHtml(appName)}</a>
     <nav class="nav">
@@ -48,6 +51,9 @@ function navigation({ user, active, appName, canManageSettings }) {
         .join('')}
     </nav>
     <div class="account">
+      <a class="bell" href="/notifications" aria-label="Notifications${unread ? `, ${unread} unread` : ''}" title="Notifications">
+        <span aria-hidden="true">✉</span>${unread ? `<span class="bell-count">${unread > 99 ? '99+' : unread}</span>` : ''}
+      </a>
       <a class="chip" href="/account">${escapeHtml(user.username)}<em>${escapeHtml(user.role)}</em></a>
       <form method="post" action="/logout"><button class="link" type="submit">Sign out</button></form>
     </div>
@@ -332,7 +338,7 @@ export function requestStatusBadge(status) {
   return `<span class="badge badge-${key}">${escapeHtml(REQUEST_STATUS_LABEL[status] ?? 'Unknown')}</span>`
 }
 
-export function requestCard(request, { canManage = false } = {}) {
+export function requestCard(request, { canManage = false, bulk = false } = {}) {
   const seasons = request.seasons?.length
     ? `Season${request.seasons.length > 1 ? 's' : ''} ${request.seasons.join(', ')}`
     : request.media?.mediaType === MediaType.MOVIE
@@ -365,7 +371,14 @@ export function requestCard(request, { canManage = false } = {}) {
     )
   }
 
-  return `<article class="request-card">
+  // The checkbox belongs to the bulk form outside the list: forms cannot be
+  // nested, so it opts in with the form attribute instead.
+  const tick = bulk
+    ? `<input class="request-tick" type="checkbox" name="ids" value="${request.id}" form="bulk" aria-label="Select request ${request.id}" />`
+    : ''
+
+  return `<article class="request-card${bulk ? ' has-tick' : ''}">
+    ${tick}
     <div class="request-head">
       <a class="request-title" href="/media/${request.mediaId}">${escapeHtml(request.media?.title ?? 'Unknown title')}</a>
       ${requestStatusBadge(request.status)}
