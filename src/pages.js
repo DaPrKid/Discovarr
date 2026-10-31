@@ -1,4 +1,5 @@
-import { clearedSessionCookie, createSession, currentUser, endSession, hasPermission, requirePermission, requireUser, sessionCookie, sessionToken } from './auth.js'
+import { randomBytes } from 'node:crypto'
+import { clearedSessionCookie, createSession, currentUser, endSession, hashApiToken, hasPermission, requirePermission, requireUser, sessionCookie, sessionToken } from './auth.js'
 import { config } from './config.js'
 import {
   ACTIVE_REQUEST_STATUSES,
@@ -71,7 +72,7 @@ import { cacheStats, pruneCache } from './cache.js'
 import { diagnosticsSnapshot } from './diagnostics.js'
 import { importSettings, redactSettings } from './settingsfile.js'
 import { sendTestMail } from './notifications.js'
-import { upcomingTitles as loadUpcoming } from './tmdb.js'
+import { upcomingTitles as loadUpcoming, trailerFor } from './tmdb.js'
 import { updateNotifications } from './core.js'
 import { APP_VERSION as BUILD_VERSION } from './constants.js'
 import {
@@ -954,7 +955,7 @@ function collectionPanel(collection) {
   </aside>`
 }
 
-function detailBody({ user, media, details, notice, error, plex = null, remote = null, collection = null }) {
+function detailBody({ user, media, details, notice, error, plex = null, remote = null, collection = null, trailer = null }) {
   const entry = media ?? details
   const isTv = entry.mediaType === MediaType.TV
   const kind = isTv ? 'sonarr' : 'radarr'
@@ -1148,6 +1149,11 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
             ${pickable ? '' : seasonsBlock}
             ${action}
             ${watchToggle}
+            ${
+              trailer
+                ? `<p><a class="btn btn-sm btn-ghost" href="${escapeHtml(trailer.url)}" target="_blank" rel="noreferrer noopener">▶ Watch trailer</a></p>`
+                : ''
+            }
           </div>
         </section>
         ${castPanel(details)}
@@ -1438,7 +1444,7 @@ function requestsBody({ user, result, filter, notice, error }) {
 // Account
 // ---------------------------------------------------------------------------
 
-function accountBody({ user, quota, notice, error }) {
+function accountBody({ user, quota, notice, error, tokens = [], newToken = null }) {
   return `<h1>Account</h1>
     ${alert({ notice, error })}
     <section class="panel">
@@ -1469,7 +1475,35 @@ function accountBody({ user, quota, notice, error }) {
         <label class="checkbox"><input type="checkbox" name="events" value="4" ${(user.notifyEvents ?? 0) & 4 ? 'checked' : ''} /> <span>A title I asked for becomes available</span></label>
       </fieldset>
       <button class="btn btn-sm" type="submit">Save notification preferences</button>
-    </form>`
+    </form>
+
+    <section class="panel">
+      <h2 style="margin: 0">API tokens</h2>
+      <p class="muted small">For scripts and home automation: send <code>Authorization: Bearer &lt;token&gt;</code> to <code>/api/v1/…</code>. A token acts as your account, so treat it like a password.</p>
+      ${newToken ? `<p class="alert alert-ok">New token, shown once: <code>${escapeHtml(newToken)}</code></p>` : ''}
+      ${
+        tokens.length
+          ? `<table class="table">
+              <thead><tr><th>Name</th><th>Token</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+              <tbody>${tokens
+                .map(
+                  (token) => `<tr>
+                    <td>${escapeHtml(token.name)}</td>
+                    <td><code>${escapeHtml(token.prefix)}…</code></td>
+                    <td>${escapeHtml(token.createdAt.slice(0, 10))}</td>
+                    <td>${token.lastUsedAt ? escapeHtml(token.lastUsedAt.slice(0, 16).replace('T', ' ')) : 'never'}</td>
+                    <td><form method="post" action="/account/tokens/${token.id}/delete"><button class="btn btn-sm btn-danger" type="submit">Revoke</button></form></td>
+                  </tr>`
+                )
+                .join('')}</tbody>
+            </table>`
+          : '<p class="muted small">No tokens yet.</p>'
+      }
+      <form method="post" action="/account/tokens" class="row">
+        <label>Name <input type="text" name="name" maxlength="60" placeholder="Home Assistant" /></label>
+        <button class="btn btn-sm" type="submit">Create token</button>
+      </form>
+    </section>`
 }
 
 // ---------------------------------------------------------------------------
@@ -2566,6 +2600,7 @@ export function registerPageRoutes(router) {
           plex: plexEntryFor(await plexEntries(), mediaType, tmdbId),
           remote,
           collection,
+          trailer: await trailerFor(mediaType, tmdbId),
         }),
       })
     } catch (error) {
@@ -2916,10 +2951,53 @@ export function registerPageRoutes(router) {
       body: accountBody({
         user,
         quota: quotaSummary(user),
+        tokens: store.listApiTokens(user.id),
         notice: url.searchParams.get('notice'),
         error: url.searchParams.get('err'),
       }),
     })
+  })
+
+  router.post('/account/tokens', async ({ req, res }) => {
+    const user = requireUser(req)
+    const body = await readBody(req)
+    const name = String(body.name ?? '').trim().slice(0, 60) || 'API token'
+
+    const token = `dcv_${randomBytes(24).toString('base64url')}`
+    store.createApiToken({
+      userId: user.id,
+      name,
+      prefix: token.slice(0, 10),
+      tokenHash: hashApiToken(token),
+    })
+    store.recordAudit(user.id, 'account.token_created', name)
+
+    // Shown once, on the response to the creation itself, so it never appears
+    // in a redirect URL or a log line.
+    render(res, 200, {
+      title: 'Account',
+      user,
+      active: 'account',
+      body: accountBody({
+        user: store.findUserById(user.id),
+        quota: quotaSummary(user),
+        tokens: store.listApiTokens(user.id),
+        newToken: token,
+        notice: 'Token created',
+        error: null,
+      }),
+    })
+  })
+
+  router.post('/account/tokens/:id/delete', ({ req, res, params }) => {
+    const user = requireUser(req)
+    const removed = store.deleteApiToken(Number(params.id), user.id)
+    store.recordAudit(user.id, 'account.token_revoked', String(params.id))
+
+    redirect(
+      res,
+      withMessage('/account', removed ? 'notice' : 'err', removed ? 'Token revoked' : 'Token not found')
+    )
   })
 
   router.post('/account/notifications', async ({ req, res }) => {

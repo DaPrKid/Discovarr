@@ -137,6 +137,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id);
   CREATE INDEX IF NOT EXISTS idx_requests_retry ON requests (status, next_retry_at);
 
+  CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    prefix TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS watchlist (
     user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     tmdb_id INTEGER NOT NULL,
@@ -581,6 +591,44 @@ export function listFailedForRetry(now = timestamp(), limit = 20) {
     )
     .all(MediaRequestStatus.FAILED, now, Number(limit))
     .map(mapRequest)
+}
+
+// ---------------------------------------------------------------------------
+// API tokens
+// ---------------------------------------------------------------------------
+
+/** Tokens are stored as a SHA-256 hash, so the database never holds a usable one. */
+export function createApiToken({ userId, name, prefix, tokenHash }) {
+  const info = db
+    .prepare('INSERT INTO api_tokens (user_id, name, prefix, token_hash, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(Number(userId), name, prefix, tokenHash, timestamp())
+
+  return Number(info.lastInsertRowid)
+}
+
+export function listApiTokens(userId) {
+  return db
+    .prepare('SELECT id, name, prefix, created_at, last_used_at FROM api_tokens WHERE user_id = ? ORDER BY id DESC')
+    .all(Number(userId))
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      prefix: row.prefix,
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at,
+    }))
+}
+
+export function findApiToken(tokenHash) {
+  return db.prepare('SELECT id, user_id FROM api_tokens WHERE token_hash = ?').get(String(tokenHash)) ?? null
+}
+
+export function touchApiToken(id) {
+  db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(timestamp(), Number(id))
+}
+
+export function deleteApiToken(id, userId) {
+  return Number(db.prepare('DELETE FROM api_tokens WHERE id = ? AND user_id = ?').run(Number(id), Number(userId)).changes)
 }
 
 // ---------------------------------------------------------------------------

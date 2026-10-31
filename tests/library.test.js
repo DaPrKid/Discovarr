@@ -87,6 +87,8 @@ before(async () => {
       }
     } else if (url.pathname === '/3/movie/901' || url.pathname === '/3/movie/902') {
       body = { id: Number(url.pathname.split('/').pop()), title: 'Coming Movie', release_date: '2026-11-05' }
+    } else if (url.pathname === '/3/movie/888/videos') {
+      body = { results: [{ key: 'abc123', site: 'YouTube', type: 'Trailer', name: 'Official Trailer' }] }
     } else {
       body = { results: [] }
     }
@@ -199,4 +201,43 @@ test('the collection page ticks only the films that are missing', async () => {
   assert.match(html, /action="\/collection\/55\/request"/)
   assert.match(html, /name="tmdbId" value="889"/)
   assert.match(html, /2 film\(s\)/)
+})
+
+test('a title page links to its trailer', async () => {
+  const html = await (await get('/title/movie/888')).text()
+
+  assert.match(html, /Watch trailer/)
+  assert.match(html, /youtube\.com\/watch\?v=abc123/)
+})
+
+test('an API token authenticates the API and can be revoked', async () => {
+  const created = await postForm('/account/tokens', { name: 'Home Assistant' })
+  assert.equal(created.status, 200)
+
+  const html = await created.text()
+  const token = /New token, shown once: <code>(dcv_[^<]+)<\/code>/.exec(html)?.[1]
+  assert.ok(token, 'the new token was not shown once')
+  assert.match(html, /Home Assistant/)
+
+  const me = await fetch(`${baseUrl}/api/v1/auth/me`, { headers: { authorization: `Bearer ${token}` } })
+  assert.equal(me.status, 200)
+  assert.equal((await me.json()).user.username, 'owner')
+
+  const id = /action="\/account\/tokens\/(\d+)\/delete"/.exec(html)?.[1]
+  assert.ok(id, 'the token row has no revoke button')
+
+  const revoke = await postForm(`/account/tokens/${id}/delete`, {})
+  assert.equal(revoke.status, 303)
+
+  const after = await fetch(`${baseUrl}/api/v1/auth/me`, {
+    headers: { authorization: `Bearer ${token}` },
+  })
+  assert.equal(after.status, 401)
+})
+
+test('a wrong token is refused', async () => {
+  const response = await fetch(`${baseUrl}/api/v1/auth/me`, {
+    headers: { authorization: 'Bearer dcv_not-a-real-token' },
+  })
+  assert.equal(response.status, 401)
 })

@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.13.0
+docker pull ghcr.io/daprkid/discovarr:0.14.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -115,6 +115,11 @@ bootstrapping, which is only useful for demos.
 - **Collection pages** — a film's collection opens as its own page listing every
   part, which are already in your library and which are still missing, with a
   tick box per film and one button for the rest.
+- **Trailers** — a title page links to its YouTube trailer when TMDB has one.
+- **API tokens** — create a named token in Account and call `/api/v1/…` with
+  `Authorization: Bearer <token>`. The token is shown once, stored only as a
+  SHA-256 hash, records its last use, and can be revoked without touching your
+  password or sessions.
 - **Person pages** — every name in a title's cast opens that person's biography,
   dates and the full list of films and series they appear in.
 - **Genre shelves** — the genre pages lead with titles from the busiest
@@ -218,7 +223,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.13.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.14.0
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -253,7 +258,8 @@ and is edited on the Settings page.
 
 ## API
 
-Session cookie from `POST /api/v1/auth/login`; `filter`/`page`/`take` where
+Session cookie from `POST /api/v1/auth/login`, or a personal token from
+Account → API tokens sent as `Authorization: Bearer <token>`; `filter`/`page`/`take` where
 relevant. Admin-only endpoints require the matching permission.
 
 | Method | Path | Notes |
@@ -308,6 +314,11 @@ discovarr/
     ├── passwords.js      # scrypt hashing
     └── config.js         # environment configuration
 ```
+
+`cache.js` (artwork cache limits), `diagnostics.js` (the Tasks tab snapshot),
+`mail.js` (a small SMTP client), `retry.js` (background dispatch retries) and
+`settingsfile.js` (settings export and import) carry the maintenance and
+notification work.
 
 ## Tests
 

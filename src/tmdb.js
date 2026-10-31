@@ -581,6 +581,25 @@ export async function collectionDetails(id) {
 }
 
 /** Everything one person page needs: biography plus every credited title. */
+/**
+ * The best YouTube trailer for a title, or null. A missing or broken video list
+ * must never break the page, so failures are swallowed.
+ */
+export async function trailerFor(mediaType, tmdbId) {
+  try {
+    const data = await tmdbGet(`/${mediaType}/${tmdbId}/videos`, {})
+    const videos = Array.isArray(data.results) ? data.results : []
+    const pick =
+      videos.find((video) => video.site === 'YouTube' && video.type === 'Trailer') ??
+      videos.find((video) => video.site === 'YouTube')
+
+    if (!pick?.key) return null
+    return { key: pick.key, name: pick.name ?? 'Trailer', url: `https://www.youtube.com/watch?v=${pick.key}` }
+  } catch {
+    return null
+  }
+}
+
 export async function personDetails(id) {
   const raw = await cachedJson(`person:${id}`, () =>
     tmdbGet(`/person/${id}`, { append_to_response: 'combined_credits' })

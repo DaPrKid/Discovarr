@@ -1,7 +1,16 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { config, sessionTtlMs } from './config.js'
 import { Role } from './constants.js'
-import { deleteOtherSessions, deleteSession, findUserByEmail, insertSession, sessionUser } from './db.js'
+import {
+  deleteOtherSessions,
+  deleteSession,
+  findApiToken,
+  findUserByEmail,
+  findUserById,
+  insertSession,
+  sessionUser,
+  touchApiToken,
+} from './db.js'
 import { HttpError, parseCookies } from './http.js'
 
 export const SESSION_COOKIE = 'discovarr_session'
@@ -45,7 +54,26 @@ export function sessionToken(req) {
   return parseCookies(req.headers.cookie)[SESSION_COOKIE] ?? null
 }
 
+export function hashApiToken(token) {
+  return createHash('sha256').update(String(token)).digest('hex')
+}
+
+/** Personal API tokens authenticate scripts and home automation. */
+function bearerUser(req) {
+  const match = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization ?? '').trim())
+  if (!match) return null
+
+  const record = findApiToken(hashApiToken(match[1]))
+  if (!record) return null
+
+  touchApiToken(record.id)
+  return findUserById(record.user_id)
+}
+
 export function currentUser(req) {
+  const viaToken = bearerUser(req)
+  if (viaToken) return viaToken
+
   const token = sessionToken(req)
   if (token) {
     const user = sessionUser(token)
