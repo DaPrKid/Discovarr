@@ -58,16 +58,21 @@ export function hashApiToken(token) {
   return createHash('sha256').update(String(token)).digest('hex')
 }
 
-/** Personal API tokens authenticate scripts and home automation. */
-function bearerUser(req) {
-  const match = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization ?? '').trim())
-  if (!match) return null
+/** Resolves a plaintext personal token to its user, or null. */
+export function userForApiToken(token) {
+  if (!token) return null
 
-  const record = findApiToken(hashApiToken(match[1]))
+  const record = findApiToken(hashApiToken(token))
   if (!record) return null
 
   touchApiToken(record.id)
   return findUserById(record.user_id)
+}
+
+/** Personal API tokens authenticate scripts and home automation. */
+function bearerUser(req) {
+  const match = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization ?? '').trim())
+  return match ? userForApiToken(match[1]) : null
 }
 
 export function currentUser(req) {

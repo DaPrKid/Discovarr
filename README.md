@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.15.0
+docker pull ghcr.io/daprkid/discovarr:0.16.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -113,6 +113,9 @@ bootstrapping, which is only useful for demos.
 - **Release calendar** — a real month grid, one box per day, with the films and
   series that arrive on that day inside it. Move between months with the arrows;
   today is outlined. Every entry links to its title page.
+- **Calendar feed** — Account → API tokens also shows a `/calendar.ics?token=…`
+  URL to subscribe to from a phone or desktop calendar. It carries the next 120
+  days of releases plus your watchlist, and revoking the token stops it.
 - **Three designs** — pick Midnight, Cinema (warm blacks and serif headings) or
   Daylight (a light theme) from the top bar. The choice is remembered in the
   browser, so it never flashes the wrong theme on load.
@@ -234,7 +237,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.15.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.16.0
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -336,7 +339,7 @@ notification work.
 `npm test` boots the real server on a free port against a temporary database and
 exercises login, permissions, quotas, request/approval/dispatch, retry,
 the calendar month grid, the watchlist, collections, API tokens, the activity
-page, the database download, SMTP over implicit TLS and STARTTLS (with a
+page, the database download, the iCalendar feed, SMTP over implicit TLS and STARTTLS (with a
 certificate generated for the run, including a test that an untrusted one is
 rejected),
 pagination, password change, CSRF rejection and the image proxy guard. The

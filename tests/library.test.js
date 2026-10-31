@@ -260,6 +260,27 @@ test('the database can be downloaded as a real SQLite file', async () => {
   assert.ok(bytes.length > 4096, 'the snapshot looks empty')
 })
 
+test('the release calendar can be subscribed to with a token', async () => {
+  const created = await postForm('/account/tokens', { name: 'Calendar' })
+  const html = await created.text()
+  const token = /New token, shown once: <code>(dcv_[^<]+)<\/code>/.exec(html)?.[1]
+  assert.ok(token, 'no token was issued for the feed')
+
+  const feed = await fetch(`${baseUrl}/calendar.ics?token=${encodeURIComponent(token)}`)
+  assert.equal(feed.status, 200)
+  assert.match(String(feed.headers.get('content-type')), /text\/calendar/)
+
+  const body = await feed.text()
+  assert.match(body, /BEGIN:VCALENDAR/)
+  assert.match(body, /BEGIN:VEVENT/)
+  assert.match(body, /SUMMARY:Coming Movie/)
+  assert.match(body, /DTSTART;VALUE=DATE:20261105/)
+  assert.match(body, /END:VCALENDAR/)
+
+  const anonymous = await fetch(`${baseUrl}/calendar.ics`)
+  assert.equal(anonymous.status, 401)
+})
+
 test('a wrong token is refused', async () => {
   const response = await fetch(`${baseUrl}/api/v1/auth/me`, {
     headers: { authorization: 'Bearer dcv_not-a-real-token' },

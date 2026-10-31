@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { clearedSessionCookie, createSession, currentUser, endSession, hashApiToken, hasPermission, requirePermission, requireUser, sessionCookie, sessionToken } from './auth.js'
+import { clearedSessionCookie, createSession, currentUser, endSession, hashApiToken, hasPermission, requirePermission, requireUser, sessionCookie, sessionToken, userForApiToken } from './auth.js'
+import { buildReleaseCalendar } from './ics.js'
 import { config } from './config.js'
 import {
   ACTIVE_REQUEST_STATUSES,
@@ -1628,6 +1629,7 @@ function accountBody({ user, quota, notice, error, tokens = [], newToken = null 
       <h2 style="margin: 0">API tokens</h2>
       <p class="muted small">For scripts and home automation: send <code>Authorization: Bearer &lt;token&gt;</code> to <code>/api/v1/…</code>. A token acts as your account, so treat it like a password.</p>
       ${newToken ? `<p class="alert alert-ok">New token, shown once: <code>${escapeHtml(newToken)}</code></p>` : ''}
+      ${newToken ? `<p class="muted small">Calendar feed for your phone: <code>/calendar.ics?token=${escapeHtml(newToken)}</code></p>` : ''}
       ${
         tokens.length
           ? `<table class="table">
@@ -2904,6 +2906,35 @@ export function registerPageRoutes(router) {
         error: url.searchParams.get('err'),
       }),
     })
+  })
+
+  // Calendar apps cannot send headers or cookies, so the feed accepts a personal
+  // API token in the query string; the same URL therefore works in any client.
+  router.get('/calendar.ics', async ({ req, res, url }) => {
+    const token = url.searchParams.get('token')
+    const user = currentUser(req) ?? (token ? userForApiToken(token) : null)
+
+    if (!user) {
+      res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+      return res.end('A personal API token is required: Account → API tokens.')
+    }
+
+    let items = []
+    try {
+      items = await loadUpcoming({ days: 120, limit: 200 })
+    } catch {
+      items = []
+    }
+
+    const watchlist = store.listWatchlist(user.id).map((entry) => ({ ...entry, watchlist: true }))
+    const body = buildReleaseCalendar({ appName: appName(), items: [...watchlist, ...items] })
+
+    res.writeHead(200, {
+      'content-type': 'text/calendar; charset=utf-8',
+      'content-disposition': 'inline; filename="discovarr.ics"',
+      'cache-control': 'no-store',
+    })
+    res.end(body)
   })
 
   router.get('/activity', async ({ req, res, url }) => {
