@@ -18,6 +18,9 @@ const ARR_ROUTES = {
     { id: 4, name: 'HD-1080p' },
     { id: 5, name: 'Ultra-HD' },
   ],
+  '/api/v3/movie': [
+    { id: 91, title: 'Watch Arrival', tmdbId: 4242, year: 2024, hasFile: true, monitored: true },
+  ],
 }
 
 let server
@@ -473,6 +476,21 @@ test('discover search suggests titles while typing', async () => {
 
   const short = await (await fetch(`${baseUrl}/search/suggest?q=d`, { headers: { cookie: adminCookie } })).json()
   assert.deepEqual(short.results, [], 'a single character is not worth a lookup')
+})
+
+test('a watchlisted title notifies when the sync finds it in the library', async () => {
+  await postForm('/watchlist/toggle', {
+    tmdbId: '4242',
+    mediaType: 'movie',
+    title: 'Watch Arrival',
+    returnTo: '/watchlist',
+  })
+
+  const sync = await postForm('/settings/sync', {})
+  assert.equal(sync.status, 303)
+
+  const page = await (await fetch(`${baseUrl}/notifications`, { headers: { cookie: adminCookie } })).text()
+  assert.match(page, /Watch Arrival is now available/)
 })
 
 test('the inline script parses as a browser script', async () => {

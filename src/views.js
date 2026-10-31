@@ -26,6 +26,28 @@ export function escapeHtml(value) {
   )
 }
 
+/**
+ * Attributes that turn any title element into a hover preview. The basics are
+ * inline so the card can open instantly; the description is fetched once from
+ * /preview when the title is first hovered.
+ */
+export function previewAttrs({ mediaType, tmdbId, title, meta = '', overview = '', posterPath = null } = {}) {
+  if (!mediaType || !tmdbId) return ''
+
+  const poster = posterPath ? `/img/w154/${String(posterPath).replace(/^\//, '')}` : ''
+  const pairs = [
+    ['data-preview', '1'],
+    ['data-preview-url', `/preview/${mediaType}/${tmdbId}`],
+    ['data-preview-title', title ?? ''],
+    ['data-preview-meta', meta],
+    ['data-preview-poster', poster],
+  ]
+
+  if (overview) pairs.push(['data-preview-overview', overview])
+
+  return pairs.map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join('')
+}
+
 // ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
@@ -59,7 +81,10 @@ function navigation({ user, active, appName, canManageSettings }) {
         <select data-theme-picker aria-label="Appearance">
           <option value="midnight">Midnight</option>
           <option value="cinema">Cinema</option>
-          <option value="daylight">Daylight</option>
+          <option value="teal">Deep Teal</option>
+          <option value="forest">Enchanted Forest</option>
+          <option value="sapphire">Midnight Sapphire</option>
+          <option value="crimson">Imperial Crimson</option>
         </select>
       </label>
       <a class="bell" href="/notifications" aria-label="Notifications${unread ? `, ${unread} unread` : ''}" title="Notifications">
@@ -86,7 +111,8 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         var root = document.documentElement
         try {
           var saved = localStorage.getItem('discovarr-theme')
-          if (saved === 'cinema' || saved === 'daylight' || saved === 'midnight') root.dataset.theme = saved
+          var themes = ['midnight', 'cinema', 'teal', 'forest', 'sapphire', 'crimson']
+          if (themes.indexOf(saved) !== -1) root.dataset.theme = saved
         } catch (error) {}
         document.addEventListener('DOMContentLoaded', function () {
           var picker = document.querySelector('[data-theme-picker]')
@@ -107,6 +133,7 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         : `<header class="topbar"><span class="brand">${escapeHtml(appName)}</span></header>`
     }
     <main class="page">${body}</main>
+    <div class="hover-card" id="hover-card" hidden></div>
     <script>
       // Profile dialogs and "where to watch" toggles: tiny, no dependencies.
       document.addEventListener('click', (event) => {
@@ -269,6 +296,105 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         })
       })
 
+      // Hover previews: every title carries its own summary inline, and the
+      // description is fetched once the first time it is hovered. Pointer, touch
+      // and keyboard all work, and the card is kept inside the window.
+      ;(function () {
+        var card = document.getElementById('hover-card')
+        if (!card || !window.fetch) return
+
+        var cache = {}
+        var showing = null
+
+        card.innerHTML =
+          '<div class="hover-art"><img alt="" loading="lazy" /></div>' +
+          '<div class="hover-text"><strong class="hover-title"></strong>' +
+          '<span class="hover-meta"></span><p class="hover-overview"></p></div>'
+
+        var art = card.querySelector('.hover-art')
+        var image = card.querySelector('img')
+        var titleNode = card.querySelector('.hover-title')
+        var metaNode = card.querySelector('.hover-meta')
+        var overviewNode = card.querySelector('.hover-overview')
+
+        function place(x, y) {
+          card.style.left = '0px'
+          card.style.top = '0px'
+          var box = card.getBoundingClientRect()
+          var left = Math.max(12, Math.min(x + 16, window.innerWidth - box.width - 12))
+          var top = y + 18
+          if (top + box.height > window.innerHeight - 12) top = Math.max(12, y - box.height - 18)
+          card.style.left = left + 'px'
+          card.style.top = top + 'px'
+        }
+
+        function hide() {
+          showing = null
+          card.hidden = true
+        }
+
+        function fill(node) {
+          titleNode.textContent = node.dataset.previewTitle || ''
+          metaNode.textContent = node.dataset.previewMeta || ''
+          overviewNode.textContent = node.dataset.previewOverview || 'Loading the description…'
+          var poster = node.dataset.previewPoster || ''
+          art.hidden = !poster
+          if (poster) image.src = poster
+          return node
+        }
+
+        function overviewFor(node) {
+          if (node.dataset.previewOverview) return
+          var url = node.dataset.previewUrl
+          if (!url) return
+          if (!cache[url]) {
+            cache[url] = fetch(url, { headers: { accept: 'application/json' }, credentials: 'same-origin' })
+              .then(function (response) { return response.ok ? response.json() : null })
+              .catch(function () { return null })
+          }
+          cache[url].then(function (data) {
+            if (showing !== node) return
+            overviewNode.textContent =
+              data && data.overview ? data.overview : 'No description is available for this title yet.'
+            if (data && data.meta && !node.dataset.previewMeta) metaNode.textContent = data.meta
+            if (data && data.posterPath && !node.dataset.previewPoster) {
+              art.hidden = false
+              var art = String(data.posterPath)
+              if (art.charAt(0) === '/') art = art.slice(1)
+              image.src = '/img/w154/' + art
+            }
+          })
+        }
+
+        function consider(target, x, y) {
+          var node = target && target.closest ? target.closest('[data-preview]') : null
+          if (!node || node === showing) return
+          showing = fill(node)
+          card.hidden = false
+          place(x, y)
+          overviewFor(node)
+        }
+
+        document.addEventListener('pointerover', function (event) {
+          consider(event.target, event.clientX, event.clientY)
+        })
+        document.addEventListener('pointermove', function (event) {
+          if (!showing) return
+          var node = event.target.closest ? event.target.closest('[data-preview]') : null
+          if (!node) return hide()
+          place(event.clientX, event.clientY)
+        })
+        document.addEventListener('focusin', function (event) {
+          var node = event.target.closest ? event.target.closest('[data-preview]') : null
+          if (!node) return
+          var box = node.getBoundingClientRect()
+          consider(node, box.left, box.bottom - 10)
+        })
+        document.addEventListener('focusout', hide)
+        document.addEventListener('scroll', hide, true)
+        document.addEventListener('keydown', function (event) { if (event.key === 'Escape') hide() })
+      })()
+
 </script>
   </body>
 </html>`
@@ -347,13 +473,21 @@ export function mediaCard(item, { returnTo = '/', local = null, plex = null } = 
   // the TMDB-backed page for a title that has not been requested yet.
   const href = entry ? `/media/${entry.id}` : `/title/${mediaType}/${item.tmdbId}`
   const title = escapeHtml(view.title ?? item.title)
+  const preview = previewAttrs({
+    mediaType,
+    tmdbId: view.tmdbId ?? item.tmdbId,
+    title: view.title ?? item.title,
+    meta: `${meta}${year ? ` · ${year}` : ''}`,
+    overview: view.overview ?? item.overview ?? '',
+    posterPath: view.posterPath ?? item.posterPath ?? null,
+  })
 
   return `<article class="media-card">
-    <a href="${href}" class="poster-link">${poster(view)}${
+    <a href="${href}" class="poster-link"${preview}>${poster(view)}${
       plex ? '<span class="plex-ribbon" title="Available on Plex">Plex</span>' : ''
     }</a>
     <div class="media-body">
-      <a class="media-title" href="${href}">${title}</a>
+      <a class="media-title" href="${href}"${preview}>${title}</a>
       <p class="media-meta">${escapeHtml(meta)}${year ? ` · ${escapeHtml(year)}` : ''}</p>
       <div class="media-actions">${requestAction(item, entry, returnTo)}${
         plex

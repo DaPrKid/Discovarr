@@ -15,6 +15,8 @@
   --glow-a: #211a45;
   --glow-b: #102a3d;
   --topbar: rgba(12, 14, 20, 0.85);
+  --brand-a: #a48bff;
+  --brand-b: #6fe7ff;
 }
 
 /* --- Alternate designs -------------------------------------------------- */
@@ -37,6 +39,8 @@
   --glow-a: #3d2411;
   --glow-b: #1d1510;
   --topbar: rgba(13, 10, 8, 0.88);
+  --brand-a: #f0c07a;
+  --brand-b: #e8a04b;
 }
 
 [data-theme='cinema'] h1,
@@ -46,32 +50,98 @@
   letter-spacing: 0;
 }
 
-/* Daylight: a light, paper-like design for rooms that are not dark. */
-[data-theme='daylight'] {
-  color-scheme: light;
-  --bg: #f6f7fb;
-  --surface: #ffffff;
-  --surface-2: #eef1f8;
-  --line: #dbe0ec;
-  --text: #1a1f2e;
-  --muted: #5c6780;
-  --accent: #4c5bd4;
-  --accent-soft: #e4e8ff;
-  --ok: #0f9d6b;
-  --warn: #a8730a;
-  --danger: #c23a4c;
+/*
+ * The four colourways below own the whole page, not just the accent: --bg is
+ * the page itself, and --glow-a/--glow-b tint the two washes that sit on top of
+ * it, so the room the app is used in changes with the theme.
+ */
+
+/* Deep Teal on charcoal black. */
+[data-theme='teal'] {
+  color-scheme: dark;
+  --bg: #07100f;
+  --surface: #0d1a19;
+  --surface-2: #132524;
+  --line: #1e3a38;
+  --text: #e4f4f1;
+  --muted: #8fb3ad;
+  --accent: #14c8b4;
+  --accent-soft: #0f3b36;
+  --ok: #35d399;
+  --warn: #f2c14e;
+  --danger: #ff6f6f;
   --radius: 12px;
-  --glow-a: #e6ebff;
-  --glow-b: #eaf6fb;
-  --topbar: rgba(255, 255, 255, 0.92);
+  --glow-a: #0d3b39;
+  --glow-b: #06282b;
+  --topbar: rgba(7, 16, 15, 0.88);
+  --brand-a: #5eead4;
+  --brand-b: #7dd3fc;
 }
 
-[data-theme='daylight'] input,
-[data-theme='daylight'] select,
-[data-theme='daylight'] textarea {
-  background: #fff;
-  color: var(--text);
-  border-color: var(--line);
+/* Enchanted Forest on graphite grey. */
+[data-theme='forest'] {
+  color-scheme: dark;
+  --bg: #0f1211;
+  --surface: #171b19;
+  --surface-2: #1f2621;
+  --line: #2c372f;
+  --text: #eaf3e8;
+  --muted: #a1b3a0;
+  --accent: #3fa66b;
+  --accent-soft: #1c3a28;
+  --ok: #6fd18a;
+  --warn: #e6c15a;
+  --danger: #e06c6c;
+  --radius: 12px;
+  --glow-a: #16331f;
+  --glow-b: #1d2a25;
+  --topbar: rgba(15, 18, 17, 0.88);
+  --brand-a: #86efac;
+  --brand-b: #d9f99d;
+}
+
+/* Midnight Sapphire on smoked ebony. */
+[data-theme='sapphire'] {
+  color-scheme: dark;
+  --bg: #060a15;
+  --surface: #0d1322;
+  --surface-2: #141c31;
+  --line: #222d49;
+  --text: #e8eefc;
+  --muted: #93a1c2;
+  --accent: #4c7dff;
+  --accent-soft: #16224a;
+  --ok: #48d4a4;
+  --warn: #f0c463;
+  --danger: #ff6f8b;
+  --radius: 12px;
+  --glow-a: #14265c;
+  --glow-b: #0a1832;
+  --topbar: rgba(6, 10, 21, 0.9);
+  --brand-a: #7aa2ff;
+  --brand-b: #67e8f9;
+}
+
+/* Imperial Crimson on onyx black. */
+[data-theme='crimson'] {
+  color-scheme: dark;
+  --bg: #0b0709;
+  --surface: #150f12;
+  --surface-2: #1e1519;
+  --line: #33252a;
+  --text: #f9eaec;
+  --muted: #bd9ba2;
+  --accent: #e13b4f;
+  --accent-soft: #3d1018;
+  --ok: #5fcf95;
+  --warn: #f0bc55;
+  --danger: #ff7b6b;
+  --radius: 12px;
+  --glow-a: #4a0f1a;
+  --glow-b: #290a12;
+  --topbar: rgba(11, 7, 9, 0.9);
+  --brand-a: #ff9aa8;
+  --brand-b: #f5c26b;
 }
 
 .theme-pick select {
@@ -156,7 +226,7 @@ h2 {
   font-weight: 700;
   font-size: 1.05rem;
   letter-spacing: -0.01em;
-  background: linear-gradient(92deg, #a48bff, #6fe7ff);
+  background: linear-gradient(92deg, var(--brand-a), var(--brand-b));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -2270,4 +2340,68 @@ fieldset.plain {
   flex-wrap: wrap;
   gap: 0.35rem 0.6rem;
   align-items: baseline;
+}
+
+/* Hover preview card ------------------------------------------------------ */
+.hover-card {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  gap: 12px;
+  width: 330px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.hover-card[hidden] {
+  display: none;
+}
+
+.hover-art {
+  flex: 0 0 66px;
+}
+
+.hover-art[hidden] {
+  display: none;
+}
+
+.hover-art img {
+  display: block;
+  width: 66px;
+  border-radius: 8px;
+}
+
+.hover-text {
+  min-width: 0;
+}
+
+.hover-title {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.hover-meta {
+  display: block;
+  margin: 2px 0 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hover-overview {
+  margin: 0;
+  max-height: 9.6em;
+  overflow: hidden;
+  font-size: 0.8rem;
+  opacity: 0.88;
+}
+
+/* A title already on disk is marked so the calendar reads at a glance. */
+.cal-item.is-library {
+  border-left: 2px solid var(--ok);
 }

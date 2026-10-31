@@ -64,6 +64,7 @@ import {
   studioWithLogo,
   titleDetails,
   tmdbConfigured,
+  tmdbDetails,
   trendingPage,
   TYPE_GENRE_IDS,
 } from './tmdb.js'
@@ -85,6 +86,7 @@ import {
   pagination,
   permissionList,
   poster,
+  previewAttrs,
   requestCard,
   statusBadge,
 } from './views.js'
@@ -709,18 +711,40 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
 async function recommendationsBody({ user, plex }) {
   if (!tmdbConfigured()) return discoverLayout('recommendations', browseUnavailable('Recommendations'))
 
-  const seeds = store
-    .listRequests({ userId: user.id, take: 8 })
-    .filter((request) => request.media?.tmdbId)
-    .slice(0, 3)
+  const seeds = []
+  const seen = new Set()
+  const addSeed = (mediaType, tmdbId, title, why) => {
+    if (!tmdbId || !title) return
+    const key = `${mediaType}:${tmdbId}`
+    if (seen.has(key)) return
+    seen.add(key)
+    seeds.push({ mediaType, tmdbId, title, why })
+  }
 
-  const items = await recommendedTitles(
-    seeds.map((request) => ({ mediaType: request.media.mediaType, tmdbId: request.media.tmdbId }))
-  )
+  // The library speaks first: what a household actually watches says more about
+  // its taste than what it once asked for. The watchlist and requests fill the
+  // gaps while a library is still small.
+  for (const media of store.listMedia({})) {
+    if (media.status === MediaStatus.AVAILABLE) addSeed(media.mediaType, media.tmdbId, media.title, 'library')
+  }
+  for (const saved of store.listWatchlist(user.id)) {
+    addSeed(saved.mediaType, saved.tmdbId, saved.title, 'watchlist')
+  }
+  for (const request of store.listRequests({ userId: user.id, take: 8 })) {
+    if (request.media?.tmdbId) addSeed(request.media.mediaType, request.media.tmdbId, request.media.title, 'requested')
+  }
 
-  const reason = seeds.length
-    ? `Because you requested ${seeds.map((request) => request.media.title).join(', ')}.`
-    : 'Popular titles to start with — request a few and this page follows your taste.'
+  const chosen = seeds.slice(0, 3)
+  const items = await recommendedTitles(chosen.map(({ mediaType, tmdbId }) => ({ mediaType, tmdbId })))
+
+  const titles = chosen.map((seed) => seed.title).join(', ')
+  const reason = !chosen.length
+    ? 'Popular titles to start with — request a few and this page follows your taste.'
+    : chosen[0].why === 'library'
+      ? `Because ${titles} ${chosen.length === 1 ? 'is' : 'are'} in your library.`
+      : chosen[0].why === 'watchlist'
+        ? `Because you saved ${titles}.`
+        : `Because you requested ${titles}.`
 
   return discoverLayout(
     'recommendations',
@@ -1250,10 +1274,20 @@ function watchlistBody({ items, notice, error }) {
       ? store.listRequestsForMedia(local.id).filter((request) => request.status === 1 || request.status === 2)
       : []
 
+    const preview = previewAttrs({
+      mediaType: item.mediaType,
+      tmdbId: item.tmdbId,
+      title: item.title,
+      meta: `${item.mediaType === 'tv' ? 'Series' : 'Film'}${
+        item.releaseDate ? ` · ${item.releaseDate.slice(0, 4)}` : ''
+      }${local?.status === MediaStatus.AVAILABLE ? ' · In library' : ''}`,
+      posterPath: item.posterPath ?? local?.posterPath ?? null,
+    })
+
     return `<div class="watch-row">
       ${poster({ ...item, id: item.tmdbId, title: item.title })}
       <div class="watch-body">
-        <a class="media-title" href="${local ? `/media/${local.id}` : `/title/${item.mediaType}/${item.tmdbId}`}">${escapeHtml(item.title)}</a>
+        <a class="media-title" href="${local ? `/media/${local.id}` : `/title/${item.mediaType}/${item.tmdbId}`}"${preview}>${escapeHtml(item.title)}</a>
         <p class="media-meta">${item.mediaType === 'tv' ? 'Series' : 'Movie'}${
           item.releaseDate ? ` · ${escapeHtml(item.releaseDate.slice(0, 4))}` : ''
         }${local?.status === MediaStatus.AVAILABLE ? ' · <span class="badge badge-available">Available</span>' : ''}</p>
@@ -1392,9 +1426,69 @@ function activityBody({ user, canManage, retry, queue, maxAttempts, notice, erro
 
 function calendarChip(item) {
   const kind = item.mediaType === MediaType.TV ? 'Series' : 'Film'
-  return `<a class="cal-item cal-item-${item.mediaType === MediaType.TV ? 'tv' : 'movie'}" href="/title/${item.mediaType}/${item.tmdbId}" title="${escapeHtml(
-    `${item.title} · ${kind}`
-  )}">${escapeHtml(item.title)}</a>`
+  const href = item.localId ? `/media/${item.localId}` : `/title/${item.mediaType}/${item.tmdbId}`
+  const preview = previewAttrs({
+    mediaType: item.mediaType,
+    tmdbId: item.tmdbId,
+    title: item.title,
+    meta: `${kind}${item.inLibrary ? ' · In library' : ' · Requested'}`,
+    posterPath: item.posterPath ?? null,
+  })
+
+  return `<a class="cal-item cal-item-${item.mediaType === MediaType.TV ? 'tv' : 'movie'}${
+    item.inLibrary ? ' is-library' : ''
+  }" href="${href}"${preview} title="${escapeHtml(`${item.title} · ${kind}`)}">${escapeHtml(item.title)}</a>`
+}
+
+/**
+ * What belongs on a household calendar: titles already in the library, and
+ * titles somebody asked for. TMDB's whole release slate is noise next to that.
+ */
+function calendarScope() {
+  const scope = new Map()
+
+  for (const media of store.listMedia({})) {
+    if (!media.tmdbId) continue
+    const requested = store
+      .listRequestsForMedia(media.id)
+      .some((request) => request.status === 1 || request.status === 2 || request.status === 5)
+    const available = media.status === MediaStatus.AVAILABLE
+    if (!available && !requested) continue
+    scope.set(`${media.mediaType}:${media.tmdbId}`, { localId: media.id, inLibrary: available })
+  }
+
+  return scope
+}
+
+/** TMDB's month listing, narrowed to that scope, plus local titles it missed. */
+function calendarEntries(items, scope, month) {
+  const seen = new Set()
+  const entries = []
+
+  for (const item of items) {
+    const key = `${item.mediaType}:${item.tmdbId}`
+    const entry = scope.get(key)
+    if (!entry || seen.has(key)) continue
+    seen.add(key)
+    entries.push({ ...item, ...entry })
+  }
+
+  for (const [key, entry] of scope) {
+    if (seen.has(key)) continue
+    const media = store.getMedia(entry.localId)
+    const day = media?.releaseDate ? String(media.releaseDate).slice(0, 10) : null
+    if (!day || !day.startsWith(month.key)) continue
+    entries.push({
+      tmdbId: media.tmdbId,
+      mediaType: media.mediaType,
+      title: media.title,
+      releaseDate: day,
+      posterPath: media.posterPath ?? null,
+      ...entry,
+    })
+  }
+
+  return entries.sort((left, right) => String(left.releaseDate).localeCompare(String(right.releaseDate)))
 }
 
 /** A month grid: one box per day, with what releases that day inside it. */
@@ -1439,7 +1533,7 @@ function calendarBody({ items, month, notice, error }) {
   return `<div class="page-head">
       <div>
         <h1>Calendar</h1>
-        <p class="muted">${count} release(s) in ${escapeHtml(monthName(month.key))}. Every day shows what arrives on it.</p>
+        <p class="muted">${count} release(s) in ${escapeHtml(monthName(month.key))} — everything in your library and everything you have asked for.</p>
       </div>
       <div class="cal-nav">
         <a class="btn btn-sm btn-ghost" href="/calendar?month=${shiftMonth(month.key, -1)}">← ${escapeHtml(
@@ -2908,6 +3002,41 @@ export function registerPageRoutes(router) {
     })
   })
 
+  // The hover card asks about one title at a time. Metadata only, and only for a
+  // signed-in member, so it cannot be used as an open TMDB proxy.
+  router.get('/preview/:mediaType/:tmdbId', async ({ req, res, params }) => {
+    if (!currentUser(req)) return sendJson(res, 401, { error: 'Sign in first' })
+
+    const mediaType = parseType(params.mediaType)
+    if (mediaType === 'all' || !/^\d+$/.test(String(params.tmdbId))) {
+      return sendJson(res, 400, { error: 'Unknown title' })
+    }
+
+    const tmdbId = Number(params.tmdbId)
+    const local = store.getMediaByTmdb(tmdbId, mediaType)
+    let details = null
+    try {
+      details = await tmdbDetails(mediaType, tmdbId)
+    } catch {
+      details = null
+    }
+
+    const active = local
+      ? store.listRequestsForMedia(local.id).filter((request) => request.status === 1 || request.status === 2)
+      : []
+    const status = local?.status === MediaStatus.AVAILABLE ? 'In library' : active.length ? 'Requested' : ''
+    const year = String(details?.releaseDate ?? local?.releaseDate ?? '').slice(0, 4)
+
+    sendJson(res, 200, {
+      title: details?.title ?? local?.title ?? '',
+      meta: [mediaType === MediaType.TV ? 'Series' : 'Film', year || null, status || null]
+        .filter(Boolean)
+        .join(' · '),
+      overview: details?.overview ?? local?.overview ?? '',
+      posterPath: details?.posterPath ?? local?.posterPath ?? null,
+    })
+  })
+
   // Calendar apps cannot send headers or cookies, so the feed accepts a personal
   // API token in the query string; the same URL therefore works in any client.
   router.get('/calendar.ics', async ({ req, res, url }) => {
@@ -2926,8 +3055,14 @@ export function registerPageRoutes(router) {
       items = []
     }
 
+    // The feed follows the page: only titles in the library or asked for, plus
+    // the subscriber's own watchlist.
+    const scope = calendarScope()
     const watchlist = store.listWatchlist(user.id).map((entry) => ({ ...entry, watchlist: true }))
-    const body = buildReleaseCalendar({ appName: appName(), items: [...watchlist, ...items] })
+    const followed = items
+      .filter((item) => scope.has(`${item.mediaType}:${item.tmdbId}`))
+      .map((item) => ({ ...item, ...scope.get(`${item.mediaType}:${item.tmdbId}`) }))
+    const body = buildReleaseCalendar({ appName: appName(), items: [...watchlist, ...followed] })
 
     res.writeHead(200, {
       'content-type': 'text/calendar; charset=utf-8',
@@ -2977,6 +3112,8 @@ export function registerPageRoutes(router) {
     } catch (failure) {
       error = failure instanceof HttpError ? failure.message : 'The calendar could not be loaded'
     }
+
+    items = calendarEntries(items, calendarScope(), month)
 
     render(res, 200, {
       title: 'Calendar',

@@ -49,6 +49,8 @@ function applyLibraryItem(item) {
     }
   }
 
+  const wasAvailable = media.status === MediaStatus.AVAILABLE
+
   store.setMediaSyncedAt(media.id, new Date().toISOString())
 
   // Complete active requests whose content is now in the library.
@@ -78,14 +80,30 @@ function applyLibraryItem(item) {
     }
   }
 
-  return { updated, completed }
+  // Watching a title is a promise to be told, so the first sync that finds it in
+  // the library notifies everybody who saved it.
+  let watched = 0
+  if (item.status === MediaStatus.AVAILABLE && !wasAvailable) {
+    for (const watcher of store.listWatchers(item.tmdbId, item.mediaType)) {
+      store.createNotification({
+        userId: watcher.userId,
+        kind: 'available',
+        title: `${item.title} is now available`,
+        body: 'It is on your watchlist and the library sync found it.',
+        href: `/media/${media.id}`,
+      })
+      watched += 1
+    }
+  }
+
+  return { updated, completed, watched }
 }
 
 export async function syncLibrary({ actorId = null } = {}) {
   if (running) return { ok: false, error: 'A sync is already running' }
 
   running = true
-  const summary = { started: new Date().toISOString(), services: {}, updated: 0, completed: 0, errors: [] }
+  const summary = { started: new Date().toISOString(), services: {}, updated: 0, completed: 0, watched: 0, errors: [] }
 
   try {
     for (const kind of ['radarr', 'sonarr']) {
@@ -103,6 +121,7 @@ export async function syncLibrary({ actorId = null } = {}) {
           const result = applyLibraryItem(item)
           if (result.updated) summary.updated += 1
           summary.completed += result.completed
+          summary.watched += result.watched
         }
       } catch (error) {
         summary.services[kind] = `error: ${error.message}`

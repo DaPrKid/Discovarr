@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.16.0
+docker pull ghcr.io/daprkid/discovarr:0.17.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -111,14 +111,20 @@ bootstrapping, which is only useful for demos.
 - **Watchlist** — save any title for later from its page, whether or not it is
   in the catalog yet, then work through it from the Watchlist tab.
 - **Release calendar** — a real month grid, one box per day, with the films and
-  series that arrive on that day inside it. Move between months with the arrows;
-  today is outlined. Every entry links to its title page.
+  series that arrive on that day inside it. It only shows titles already in your
+  library and titles somebody has requested, so the grid is about this household
+  rather than everything TMDB knows. Move between months with the arrows; today
+  is outlined, and every entry links through to the full title page.
 - **Calendar feed** — Account → API tokens also shows a `/calendar.ics?token=…`
   URL to subscribe to from a phone or desktop calendar. It carries the next 120
   days of releases plus your watchlist, and revoking the token stops it.
-- **Three designs** — pick Midnight, Cinema (warm blacks and serif headings) or
-  Daylight (a light theme) from the top bar. The choice is remembered in the
-  browser, so it never flashes the wrong theme on load.
+- **Hover previews** — hover or focus any title, poster or calendar entry and a
+  card explains what it is about without leaving the page. The description is
+  fetched once per title and remembered for the rest of the visit.
+- **Six designs** — Midnight, Cinema (warm blacks and serif headings), Deep Teal,
+  Enchanted Forest, Midnight Sapphire and Imperial Crimson. Each one repaints the
+  page itself, not just the accent colour, and the choice is remembered in the
+  browser so it never flashes the wrong theme on load.
 - **Collection pages** — a film's collection opens as its own page listing every
   part, which are already in your library and which are still missing, with a
   tick box per film and one button for the rest.
@@ -237,7 +243,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.16.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.17.0
 ```
 
 If you prefer to run the process without root at all, start the container with

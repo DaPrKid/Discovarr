@@ -698,6 +698,18 @@ export function removeFromWatchlist(userId, tmdbId, mediaType) {
   )
 }
 
+/** Everyone who saved this title, so the sync can tell them when it lands. */
+export function listWatchers(tmdbId, mediaType) {
+  return db
+    .prepare(
+      `SELECT w.user_id AS userId, w.title
+       FROM watchlist w
+       JOIN users u ON u.id = w.user_id
+       WHERE w.tmdb_id = ? AND w.media_type = ?`
+    )
+    .all(Number(tmdbId), mediaType)
+}
+
 // ---------------------------------------------------------------------------
 // Notifications
 // ---------------------------------------------------------------------------

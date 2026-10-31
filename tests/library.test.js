@@ -179,19 +179,39 @@ test('the title page offers the watchlist toggle', async () => {
   assert.match(html, /All 2 films in Test Collection/)
 })
 
-test('the calendar lists upcoming films and series in a month grid', async () => {
+test('the calendar lists requested titles in a month grid, and only those', async () => {
+  const request = await postForm('/media/import', { tmdbId: '901', mediaType: 'movie', returnTo: '/' })
+  assert.equal(request.status, 303)
+
   const response = await get('/calendar?month=2026-11')
   assert.equal(response.status, 200)
   const html = await response.text()
 
   assert.match(html, /Calendar/)
   assert.match(html, /Coming Movie/)
-  assert.match(html, /Coming Series/)
-  assert.match(html, /Later Movie/)
   assert.match(html, /November 2026/)
   assert.match(html, /cal-cell/)
   assert.match(html, /cal-grid/)
+  assert.match(html, /data-preview/)
   assert.match(html, /title=\"Coming Movie · Film\"/)
+
+  // Nothing is on the calendar just because TMDB lists it: a title nobody has
+  // asked for and the library does not hold stays out.
+  assert.doesNotMatch(html, /Later Movie/)
+  assert.doesNotMatch(html, /Coming Series/)
+})
+
+test('the hover preview endpoint answers with a title summary', async () => {
+  const response = await get('/preview/movie/901')
+  assert.equal(response.status, 200)
+
+  const data = await response.json()
+  assert.equal(data.title, 'Coming Movie')
+  assert.match(data.meta, /Film/)
+  assert.equal(typeof data.overview, 'string')
+
+  assert.equal((await get('/preview/series/901')).status, 400)
+  assert.equal((await fetch(`${baseUrl}/preview/movie/901`)).status, 401)
 })
 
 test('the collection page ticks only the films that are missing', async () => {
