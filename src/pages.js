@@ -420,8 +420,8 @@ function selectField(name, label, options, current) {
   </label>`
 }
 
-function toggleList(name, options, selected) {
-  return `<div class="toggle-list">${options
+function toggleList(name, options, selected, scroll = false) {
+  return `<div class="toggle-list${scroll ? ' toggle-scroll' : ''}">${options
     .map((option) =>
       toggleField(name, option.id, option.name, selected.some((id) => String(id) === String(option.id)))
     )
@@ -498,7 +498,7 @@ function filterRail({
           'Networks',
           filters.networks.length,
           filters.networks.length > 0,
-          toggleList('network', networks, filters.networks)
+          toggleList('network', networks, filters.networks, true)
         )
 
   // The broadcast window: only series have an air date to filter on.

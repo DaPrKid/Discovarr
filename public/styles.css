@@ -1803,6 +1803,12 @@ code {
   margin-top: 12px;
 }
 
+.toggle-list.toggle-scroll {
+  max-height: 264px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .toggle {
   position: relative;
   display: inline-flex;
