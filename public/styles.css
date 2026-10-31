@@ -899,6 +899,54 @@ input[type='checkbox'] {
   background: rgba(6, 8, 12, 0.72);
 }
 
+/* The request dialog stays small: a title, the seasons to pick, the profile. */
+.request-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialog-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.request-dialog .panel {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+.request-dialog .season-rows {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.request-profile select {
+  width: 100%;
+}
+
+.profile-readout {
+  display: grid;
+  gap: 2px;
+}
+
+.profile-readout strong {
+  font-weight: 600;
+}
+
+.action-open {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
 .dialog h2,
 .dialog p {
   margin-top: 0;

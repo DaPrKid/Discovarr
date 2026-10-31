@@ -453,24 +453,33 @@ function filterRail({
   typeSwitch = false,
   clearHref,
 }) {
+  const isTv = mediaType === MediaType.TV
+  // Series are filtered by the date they first aired and films by their release
+  // date, so the year boxes move into their own group for television.
   const advancedCount = [
-    filters.from,
-    filters.to,
+    isTv ? '' : filters.from,
+    isTv ? '' : filters.to,
     filters.rating,
     filters.votes,
     filters.language,
     filters.sort !== 'popular' ? '1' : '',
   ].filter(Boolean).length
 
-  const advanced = `<div class="rail-advanced">
-    <div class="rail-field">
-      <span>Released between</span>
+  const yearField = (label, fromLabel, toLabel) => `<div class="rail-field">
+      <span>${escapeHtml(label)}</span>
       <div class="rail-years">
-        <input type="number" name="from" min="1900" max="2100" step="1" placeholder="From" aria-label="Released from year" value="${filters.from ?? ''}" />
+        <input type="number" name="from" min="1900" max="2100" step="1" placeholder="From" aria-label="${escapeHtml(
+          fromLabel
+        )}" value="${filters.from ?? ''}" />
         <span class="muted small">–</span>
-        <input type="number" name="to" min="1900" max="2100" step="1" placeholder="To" aria-label="Released up to year" value="${filters.to ?? ''}" />
+        <input type="number" name="to" min="1900" max="2100" step="1" placeholder="To" aria-label="${escapeHtml(
+          toLabel
+        )}" value="${filters.to ?? ''}" />
       </div>
-    </div>
+    </div>`
+
+  const advanced = `<div class="rail-advanced">
+    ${isTv ? '' : yearField('Released between', 'Released from year', 'Released up to year')}
     ${selectField('rating', 'Minimum rating', RATINGS, filters.rating ?? '')}
     ${selectField('votes', 'Minimum votes', VOTES, filters.votes ?? '')}
     ${selectField('lang', 'Original language', LANGUAGES, filters.language)}
@@ -491,6 +500,16 @@ function filterRail({
           filters.networks.length > 0,
           toggleList('network', networks, filters.networks)
         )
+
+  // The broadcast window: only series have an air date to filter on.
+  const airedGroup = isTv
+    ? railGroup(
+        'Aired on TV',
+        filters.from || filters.to ? '1' : '',
+        true,
+        yearField('First aired between', 'First aired from year', 'First aired up to year')
+      )
+    : ''
 
   const typeRow = typeSwitch
     ? `<div class="rail-types" role="group" aria-label="Media type">
@@ -517,6 +536,7 @@ function filterRail({
       )
     )}
     ${brandGroup}
+    ${airedGroup}
     ${railGroup('Advanced', advancedCount, advancedCount > 0, advanced)}
     <button class="btn btn-sm rail-apply" type="submit">Apply filters</button>
     <p class="muted small">Toggles apply straight away; year and number fields with the button.</p>
@@ -1037,9 +1057,12 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
   const blocked = !isAvailable && (requestedHere || inService)
   const pickable = isTv && !isAvailable && !blocked
 
+  // The request dialog always says which profile the download will use: a menu
+  // when there is a choice, a readout when the service has only one.
+  const fallbackProfile = profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null
   const profilePicker =
     profiles.length > 1
-      ? `<label>Profile
+      ? `<label class="request-profile">Quality profile
           <select name="profile">
             ${profiles
               .map(
@@ -1051,7 +1074,15 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
               .join('')}
           </select>
         </label>`
-      : ''
+      : `<div class="request-profile profile-readout">
+          <span class="muted small">Quality profile</span>
+          <strong>${escapeHtml(fallbackProfile?.name ?? 'Default')}</strong>
+          ${
+            fallbackProfile?.profileName
+              ? `<span class="muted small">${escapeHtml(fallbackProfile.profileName)}</span>`
+              : ''
+          }
+        </div>`
 
   const seasonRows = isTv
     ? listedSeasons
@@ -1111,20 +1142,39 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
     </div>`
   } else {
     const formAction = media ? `/media/${media.id}/request` : '/media/import'
-    action = `<form method="post" action="${formAction}" class="stack">
-      ${
-        media
-          ? `<input type="hidden" name="returnTo" value="/media/${media.id}" />`
-          : `<input type="hidden" name="tmdbId" value="${escapeHtml(entry.tmdbId)}" />
-             <input type="hidden" name="mediaType" value="${escapeHtml(entry.mediaType)}" />
-             <input type="hidden" name="returnTo" value="/" />`
-      }
-      ${isTv ? '<input type="hidden" name="seasonsSubmitted" value="1" />' : ''}
-      ${seasonsBlock}
-      ${profilePicker}
-      <button class="btn" type="submit">Request ${isTv ? 'seasons' : 'movie'}</button>
+    // The configuration lives in a small dialog: seasons and quality profile are
+    // only worth looking at once the request is actually being set up.
+    action = `<div class="action-open">
+      <button class="btn" type="button" data-dialog-open="request-dialog">Request ${isTv ? 'series' : 'movie'}</button>
       ${quotaLine}
-    </form>`
+    </div>
+    <dialog class="dialog request-dialog" id="request-dialog">
+      <form method="post" action="${formAction}" class="stack">
+        ${
+          media
+            ? `<input type="hidden" name="returnTo" value="/media/${media.id}" />`
+            : `<input type="hidden" name="tmdbId" value="${escapeHtml(entry.tmdbId)}" />
+               <input type="hidden" name="mediaType" value="${escapeHtml(entry.mediaType)}" />
+               <input type="hidden" name="returnTo" value="/" />`
+        }
+        ${isTv ? '<input type="hidden" name="seasonsSubmitted" value="1" />' : ''}
+        <div class="dialog-head">
+          <h2>Request ${escapeHtml(entry.title)}</h2>
+          <button class="icon-btn" type="button" data-dialog-close aria-label="Close">×</button>
+        </div>
+        <p class="muted small">${
+          isTv
+            ? 'Pick the seasons to monitor and the quality profile the download should use.'
+            : 'Pick the quality profile the download should use.'
+        }</p>
+        ${seasonsBlock}
+        ${profilePicker}
+        <div class="request-actions">
+          <button class="btn" type="submit">Request ${isTv ? 'selected seasons' : 'movie'}</button>
+          <button class="btn btn-ghost" type="button" data-dialog-close>Cancel</button>
+        </div>
+      </form>
+    </dialog>`
   }
 
   const meta = [

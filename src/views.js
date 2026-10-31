@@ -464,7 +464,7 @@ function requestAction(item, local, returnTo) {
     return '<span class="badge badge-available">Available</span>'
   }
 
-  if (local && local.myActiveRequests > 0) {
+  if (local && (local.activeRequests > 0 || local.myActiveRequests > 0)) {
     return '<span class="badge badge-pending">Requested</span>'
   }
 

@@ -314,13 +314,20 @@ export function listMedia({ type = 'all', query = '', userId = null } = {}) {
   return rows.map(mapMedia)
 }
 
+// Request counts travel with the row so a title that already has an active
+// request shows as requested on cards, not only on its own page.
+const MEDIA_WITH_REQUESTS = `SELECT m.*,
+  (SELECT COUNT(*) FROM requests r WHERE r.media_id = m.id AND r.status IN (1, 2)) AS active_requests,
+  (SELECT COUNT(*) FROM requests r WHERE r.media_id = m.id AND r.status IN (1, 2) AND r.user_id = ?) AS my_active_requests
+  FROM media m`
+
 export function getMedia(id) {
-  return mapMedia(db.prepare('SELECT * FROM media WHERE id = ?').get(Number(id)))
+  return mapMedia(db.prepare(`${MEDIA_WITH_REQUESTS} WHERE m.id = ?`).get(-1, Number(id)))
 }
 
 export function getMediaByTmdb(tmdbId, mediaType) {
   return mapMedia(
-    db.prepare('SELECT * FROM media WHERE tmdb_id = ? AND media_type = ?').get(Number(tmdbId), mediaType)
+    db.prepare(`${MEDIA_WITH_REQUESTS} WHERE m.tmdb_id = ? AND m.media_type = ?`).get(-1, Number(tmdbId), mediaType)
   )
 }
 
