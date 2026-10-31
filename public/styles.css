@@ -223,13 +223,48 @@ h2 {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   font-weight: 700;
   font-size: 1.05rem;
   letter-spacing: -0.01em;
+}
+
+.brand-name {
   background: linear-gradient(92deg, var(--brand-a), var(--brand-b));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+/*
+ * The mark inherits the theme instead of carrying its own palette: its gradient
+ * stops read --brand-a/--brand-b, so a new theme colours the icon for free.
+ */
+.mark {
+  width: 23px;
+  height: 23px;
+  flex: none;
+}
+
+.mark-ring,
+.mark-handle {
+  fill: none;
+  stroke-width: 5;
+}
+
+.mark-handle {
+  stroke-linecap: round;
+}
+
+.mark-disc {
+  fill: var(--brand-a);
+  fill-opacity: 0.16;
+}
+
+.mark-play {
+  fill: var(--text);
 }
 
 .nav {

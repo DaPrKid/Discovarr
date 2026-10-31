@@ -52,6 +52,26 @@ export function previewAttrs({ mediaType, tmdbId, title, meta = '', overview = '
 // Layout
 // ---------------------------------------------------------------------------
 
+/**
+ * The mark beside the wordmark. Drawn inline rather than shipped as a PNG so it
+ * can take the colour of whichever theme is active; the stops read the same
+ * --brand-a/--brand-b variables the wordmark is painted with.
+ */
+function mark() {
+  return `<svg class="mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="mark-tint" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="var(--brand-a)" />
+          <stop offset="1" stop-color="var(--brand-b)" />
+        </linearGradient>
+      </defs>
+      <path class="mark-handle" d="M40.5 40.5 L55 55" stroke="url(#mark-tint)" />
+      <circle class="mark-ring" cx="27" cy="27" r="17.5" stroke="url(#mark-tint)" />
+      <circle class="mark-disc" cx="27" cy="27" r="13.5" />
+      <path class="mark-play" d="M23 20.5 L34.5 27 L23 33.5 Z" />
+    </svg>`
+}
+
 function navigation({ user, active, appName, canManageSettings }) {
   const items = [
     ['discover', '/', 'Discover'],
@@ -66,7 +86,7 @@ function navigation({ user, active, appName, canManageSettings }) {
   const unread = user?.id ? countUnreadNotifications(user.id) : 0
 
   return `<header class="topbar">
-    <a class="brand" href="/">${escapeHtml(appName)}</a>
+    <a class="brand" href="/">${mark()}<span class="brand-name">${escapeHtml(appName)}</span></a>
     <nav class="nav">
       ${items
         .map(
@@ -104,22 +124,31 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(title)} · ${escapeHtml(appName)}</title>
     <link rel="stylesheet" href="/styles.css?v=${escapeHtml(version)}" />
+    <link rel="icon" type="image/png" href="/favicon-midnight.png" />
     <script>
       // The chosen look is stored per browser, so it is applied before the first
       // paint and never flashes the default theme.
       ;(function () {
         var root = document.documentElement
+        var themes = ['midnight', 'cinema', 'teal', 'forest', 'sapphire', 'crimson']
         try {
           var saved = localStorage.getItem('discovarr-theme')
-          var themes = ['midnight', 'cinema', 'teal', 'forest', 'sapphire', 'crimson']
           if (themes.indexOf(saved) !== -1) root.dataset.theme = saved
         } catch (error) {}
+        // Every theme has its own tab icon, drawn at 192px so the shape survives
+        // the 16px a browser actually renders it at.
+        var icon = document.querySelector('link[rel=icon]')
+        function paintIcon(theme) {
+          if (icon && themes.indexOf(theme) !== -1) icon.href = '/favicon-' + theme + '.png'
+        }
+        paintIcon(root.dataset.theme)
         document.addEventListener('DOMContentLoaded', function () {
           var picker = document.querySelector('[data-theme-picker]')
           if (!picker) return
           picker.value = root.dataset.theme
           picker.addEventListener('change', function () {
             root.dataset.theme = picker.value
+            paintIcon(picker.value)
             try { localStorage.setItem('discovarr-theme', picker.value) } catch (error) {}
           })
         })
@@ -130,7 +159,7 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
     ${
       user
         ? navigation({ user, active, appName, canManageSettings })
-        : `<header class="topbar"><span class="brand">${escapeHtml(appName)}</span></header>`
+        : `<header class="topbar"><span class="brand">${mark()}<span class="brand-name">${escapeHtml(appName)}</span></span></header>`
     }
     <main class="page">${body}</main>
     <div class="hover-card" id="hover-card" hidden></div>
