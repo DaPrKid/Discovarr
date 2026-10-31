@@ -1,6 +1,6 @@
 {
   "name": "discovarr",
-  "version": "0.17.2",
+  "version": "0.17.3",
   "private": true,
   "description": "Media request and discovery manager, packaged as a Docker image",
   "type": "module",
