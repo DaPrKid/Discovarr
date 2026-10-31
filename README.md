@@ -57,6 +57,26 @@ Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
 `sha-<commit>`. The login is stored for the Docker daemon, so Unraid's Docker
 page and its update checks use it too once the credential exists.
 
+### Updating
+
+The tag is written into the `docker run` command, so a release is a new
+container rather than a restart: pull the tag, remove the old container, and
+start the new one against the same `/data`. Release notes quote this block
+verbatim with the version swapped, which is why the port, PUID/PGID and volume
+appear here as on the first install.
+
+```bash
+docker pull ghcr.io/daprkid/discovarr:0.17.0
+docker stop discovarr && docker rm discovarr
+docker run -d --name discovarr --restart unless-stopped \
+  -p 5057:5057 -e PUID=99 -e PGID=100 \
+  -v /mnt/user/appdata/discovarr:/data \
+  ghcr.io/daprkid/discovarr:0.17.0
+```
+
+Nothing in `/data` is touched between versions; if a release ever needs a
+migration, the release notes say so before this block.
+
 ### First run
 
 The image ships no accounts. On first start every page redirects to `/setup`,
