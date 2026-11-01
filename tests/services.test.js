@@ -120,6 +120,37 @@ before(async () => {
       return res.end(JSON.stringify(body))
     }
 
+    // A Sonarr dispatch: remember what the app asked Sonarr to add.
+    if (req.method === 'POST' && req.url === '/api/v3/series') {
+      let raw = ''
+      req.on('data', (chunk) => {
+        raw += chunk
+      })
+      req.on('end', () => {
+        arr.lastSeries = JSON.parse(raw || '{}')
+        res.writeHead(201, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ id: 12, ...arr.lastSeries }))
+      })
+      return
+    }
+
+    // Sonarr answers its own lookup with id 0 until the series is added, which
+    // is how the app tells "not there yet" from "already in the library".
+    if (req.url.startsWith('/api/v3/series/lookup?')) {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      return res.end(
+        JSON.stringify([
+          {
+            id: 0,
+            tvdbId: 81189,
+            title: 'Seeded Show',
+            titleSlug: 'seeded-show',
+            seasons: [1, 2, 3].map((seasonNumber) => ({ seasonNumber, monitored: true })),
+          },
+        ])
+      )
+    }
+
     const body = ARR_ROUTES[req.url]
     res.writeHead(body ? 200 : 404, { 'content-type': 'application/json' })
     res.end(JSON.stringify(body ?? {}))
@@ -581,4 +612,71 @@ test('a film Radarr already holds is adopted instead of failing the request', as
   assert.ok(request, 'the request should exist')
   assert.equal(request.status, MediaRequestStatus.APPROVED)
   assert.match(String(request.note ?? ''), /Already in Radarr/)
+})
+
+test('a series request leaves Sonarr monitoring the seasons to download', async () => {
+  const tested = await (
+    await postForm('/settings/test/sonarr', {
+      appName: 'Discovarr',
+      settingsSection: 'integrations',
+      settingsTab: 'integrations',
+      sonarrEnabled: 'on',
+      sonarrUrl: arr.url,
+      sonarrApiKey: API_KEY,
+    })
+  ).text()
+  assert.match(tested, /Sonarr 5\.2\.6 is reachable/)
+
+  const catalog = await (await fetch(`${baseUrl}/api/v1/media`, { headers: { cookie: adminCookie } })).json()
+  const series = (catalog.results ?? []).find(
+    (item) => item.mediaType === 'tv' && item.status !== MediaStatus.AVAILABLE && !item.activeRequests
+  )
+  assert.ok(series, 'the seeded catalog should hold a series that is not available yet')
+
+  const detail = await (
+    await fetch(`${baseUrl}/api/v1/media/${series.id}`, { headers: { cookie: adminCookie } })
+  ).json()
+  const seasonNumbers = (detail.seasons ?? []).map((season) => season.seasonNumber)
+  assert.ok(seasonNumbers.length > 0, 'the seeded series should list its seasons')
+
+  const picked = seasonNumbers[0]
+  arr.lastSeries = null
+  const sent = await postForm(`/media/${series.id}/request`, {
+    seasonsSubmitted: '1',
+    season: String(picked),
+    returnTo: `/media/${series.id}`,
+  })
+  assert.equal(sent.status, 303)
+
+  const body = arr.lastSeries
+  assert.ok(body, 'Sonarr should have been asked to add the series')
+  // Regression: "none" told Sonarr to unmonitor the show and every episode, so
+  // the series sat at 0/0 with nothing searching. "skip" keeps the flags below.
+  assert.equal(body.addOptions?.monitor, 'skip')
+  assert.equal(body.addOptions?.searchForMissingEpisodes, true)
+  assert.equal(body.monitored, true)
+  assert.deepEqual(
+    body.seasons.filter((season) => season.monitored).map((season) => season.seasonNumber),
+    [picked]
+  )
+
+  // The whole show, which is what the card dialog asks for by default.
+  const list = await (await fetch(`${baseUrl}/api/v1/request?take=20`, { headers: { cookie: adminCookie } })).json()
+  const filed = (list.results ?? []).find((entry) => entry.media?.id === series.id)
+  assert.ok(filed, 'the season request should be listed')
+  await fetch(`${baseUrl}/api/v1/request/${filed.id}`, { method: 'DELETE', headers: { cookie: adminCookie } })
+
+  arr.lastSeries = null
+  const whole = await postForm(`/media/${series.id}/request`, {
+    allSeasons: 'on',
+    returnTo: `/media/${series.id}`,
+  })
+  assert.equal(whole.status, 303)
+
+  const monitored = arr.lastSeries.seasons
+    .filter((season) => season.monitored)
+    .map((season) => season.seasonNumber)
+  // The stub lists seasons 1-3; every season the request covers is monitored.
+  assert.deepEqual(monitored, [1, 2, 3].filter((number) => seasonNumbers.includes(number)))
+  assert.ok(monitored.length > 0, 'a whole-show request must monitor something')
 })

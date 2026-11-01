@@ -353,10 +353,13 @@ export async function dispatchToService(media, request) {
     }
   }
 
-  const requestedSeasons = request?.seasons ?? []
+  const requestedSeasons = (request?.seasons ?? []).map(Number)
+  // A request without a season list (the card dialog) asks for the whole show,
+  // so every season is monitored; specials stay out unless they were picked.
+  const wholeShow = requestedSeasons.length === 0
   const seasons = (candidate.seasons ?? []).map((season) => ({
     seasonNumber: season.seasonNumber,
-    monitored: requestedSeasons.includes(season.seasonNumber),
+    monitored: wholeShow ? season.seasonNumber > 0 : requestedSeasons.includes(season.seasonNumber),
   }))
 
   const created = await arrRequest(kind, '/series', {
@@ -371,7 +374,10 @@ export async function dispatchToService(media, request) {
       qualityProfileId: profile.profileId,
       seasonFolder: true,
       monitored: true,
-      addOptions: { monitor: 'none', searchForMissingEpisodes: true },
+      // "none" tells Sonarr to unmonitor the show and every episode it just
+      // imported, which left series added from here stuck at 0/0 with nothing
+      // downloading. "skip" leaves the season flags above exactly as sent.
+      addOptions: { monitor: 'skip', searchForMissingEpisodes: true },
     },
   })
 
