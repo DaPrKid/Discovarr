@@ -327,6 +327,8 @@ created with `umask 002` so the group can write them.
 | `COOKIE_SAMESITE` | `lax` | `lax`, `strict` or `none`; `none` needs HTTPS and suits embedded previews |
 | `LOGIN_RATE_LIMIT` | `8` | Failed logins allowed per window |
 | `LOGIN_RATE_WINDOW_MINUTES` | `15` | Rate-limit window |
+| `TRUST_PROXY` | `false` | Count rate-limited requests by the client in `X-Forwarded-For`. Only enable it when a reverse proxy you control sits in front |
+| `FRAME_ANCESTORS` | `'self'` | CSP `frame-ancestors` source list. Set a parent origin to embed Discovarr in another page |
 | `PUID` | `99` | UID the app runs as inside the container (Unraid `nobody`) |
 | `PGID` | `100` | GID the app runs as (Unraid `users`) |
 | `TMDB_API_KEY` | unset | Fallback when no key is saved in settings |

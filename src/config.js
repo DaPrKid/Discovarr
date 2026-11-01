@@ -36,6 +36,13 @@ export const config = {
   plexDiscoverBase: (process.env.PLEX_DISCOVER_BASE ?? 'https://discover.provider.plex.tv').replace(/\/+$/, ''),
   loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? 8),
   loginRateWindowMs: Number(process.env.LOGIN_RATE_WINDOW_MINUTES ?? 15) * 60 * 1000,
+  // Only believe X-Forwarded-For when a proxy of ours sets it. Otherwise any
+  // client can invent an address and take a fresh budget for every guess.
+  trustProxy: bool(process.env.TRUST_PROXY, false),
+  // Framed by nothing but the app itself by default; a reverse proxy that
+  // embeds Discovarr sets its own origin here.
+  frameAncestors:
+    String(process.env.FRAME_ANCESTORS ?? "'self'").replace(/[\r\n]/g, ' ').trim() || "'self'",
 }
 
 export const sessionTtlMs = config.sessionTtlHours * 60 * 60 * 1000

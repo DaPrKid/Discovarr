@@ -831,34 +831,38 @@ export function saveSettings(entries) {
 // Sessions
 // ---------------------------------------------------------------------------
 
-export function insertSession(token, userId, expiresAt) {
+// Every function below takes the SHA-256 digest of the cookie token, never the
+// token itself: the raw value only ever exists in the browser's cookie jar.
+export function insertSession(tokenHash, userId, expiresAt) {
   db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').run(
-    token,
+    tokenHash,
     Number(userId),
     timestamp(),
     expiresAt
   )
 }
 
-export function sessionUser(token) {
+export function sessionUser(tokenHash) {
   const row = db
     .prepare(
       `SELECT u.* FROM sessions s
       JOIN users u ON u.id = s.user_id
       WHERE s.token = ? AND s.expires_at > ?`
     )
-    .get(String(token), timestamp())
+    .get(String(tokenHash), timestamp())
 
   return mapUser(row)
 }
 
-export function deleteSession(token) {
-  db.prepare('DELETE FROM sessions WHERE token = ?').run(String(token))
+export function deleteSession(tokenHash) {
+  db.prepare('DELETE FROM sessions WHERE token = ?').run(String(tokenHash))
 }
 
-export function deleteOtherSessions(userId, keepToken) {
+export function deleteOtherSessions(userId, keepTokenHash) {
   return Number(
-    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(Number(userId), String(keepToken)).changes
+    db
+      .prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')
+      .run(Number(userId), String(keepTokenHash)).changes
   )
 }
 

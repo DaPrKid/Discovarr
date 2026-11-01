@@ -1,3 +1,5 @@
+import { config } from './config.js'
+
 export class HttpError extends Error {
   constructor(status, message) {
     super(message)
@@ -6,6 +8,38 @@ export class HttpError extends Error {
 }
 
 const MAX_BODY_BYTES = 1024 * 1024
+
+// Inline scripts and style attributes are part of the app's own markup, so those
+// two keep 'unsafe-inline'; everything that matters more is locked down: no
+// external script sources, no plugins, no <base> rewriting, and a configurable
+// frame-ancestors for embeddings behind a reverse proxy.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "form-action 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  `frame-ancestors ${config.frameAncestors}`,
+].join('; ')
+
+function isHttps(req) {
+  const forwarded = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase()
+  return config.cookieSecure || forwarded === 'https'
+}
+
+/** Applied to every response, static files included. */
+export function applySecurityHeaders(req, res) {
+  res.setHeader('content-security-policy', CONTENT_SECURITY_POLICY)
+  res.setHeader('x-content-type-options', 'nosniff')
+  res.setHeader('referrer-policy', 'no-referrer')
+  res.setHeader('x-permitted-cross-domain-policies', 'none')
+  // X-Frame-Options cannot express a list, so it is only sent for the default.
+  if (config.frameAncestors === "'self'") res.setHeader('x-frame-options', 'SAMEORIGIN')
+  if (isHttps(req)) res.setHeader('strict-transport-security', 'max-age=15552000')
+}
 
 // ---------------------------------------------------------------------------
 // Request/response helpers
@@ -160,6 +194,8 @@ export function createRouter({ fallback = null, onError = null } = {}) {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
     const pathSegments = url.pathname.split('/').filter(Boolean)
     const method = String(req.method ?? 'GET').toUpperCase()
+
+    applySecurityHeaders(req, res)
 
     try {
       if (!['GET', 'HEAD'].includes(method) && !isSameOrigin(req)) {

@@ -1,3 +1,5 @@
+import { config } from './config.js'
+
 export function createRateLimiter({ windowMs, max }) {
   const buckets = new Map()
 
@@ -35,9 +37,22 @@ export function createRateLimiter({ windowMs, max }) {
   }
 }
 
-export function clientKey(req) {
-  const forwarded = String(req.headers['x-forwarded-for'] ?? '')
-    .split(',')[0]
-    .trim()
-  return forwarded || req.socket?.remoteAddress || 'unknown'
+function normalizeAddress(value) {
+  const address = String(value ?? '').trim()
+  // An IPv4-mapped IPv6 address is the same client as its IPv4 form.
+  return address.startsWith('::ffff:') ? address.slice(7) : address
+}
+
+/**
+ * What a request is counted against. X-Forwarded-For is only believed when
+ * TRUST_PROXY is on, because a directly exposed instance would otherwise let
+ * every client rotate the header and reset its own budget.
+ */
+export function clientKey(req, { trustProxy = config.trustProxy } = {}) {
+  if (trustProxy) {
+    const forwarded = normalizeAddress(String(req.headers['x-forwarded-for'] ?? '').split(',')[0])
+    if (forwarded) return forwarded
+  }
+
+  return normalizeAddress(req.socket?.remoteAddress) || 'unknown'
 }

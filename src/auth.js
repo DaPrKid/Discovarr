@@ -35,9 +35,17 @@ export function clearLoginAttempts(req) {
   loginLimiter.reset(clientKey(req))
 }
 
+/**
+ * The cookie carries the token; the database keeps only its digest, so a copy of
+ * the database (or a downloaded backup) cannot be replayed as a live session.
+ */
+export function hashSessionToken(token) {
+  return createHash('sha256').update(String(token)).digest('hex')
+}
+
 export function createSession(userId) {
   const token = randomBytes(32).toString('base64url')
-  insertSession(token, userId, new Date(Date.now() + sessionTtlMs).toISOString())
+  insertSession(hashSessionToken(token), userId, new Date(Date.now() + sessionTtlMs).toISOString())
   return token
 }
 
@@ -101,7 +109,7 @@ export function currentUser(req) {
 
   const token = sessionToken(req)
   if (token) {
-    const user = sessionUser(token)
+    const user = sessionUser(hashSessionToken(token))
     if (user) return user
   }
 
@@ -114,7 +122,7 @@ export function currentUser(req) {
 
 export function endSession(req) {
   const token = sessionToken(req)
-  if (token) deleteSession(token)
+  if (token) deleteSession(hashSessionToken(token))
 }
 
 export function requireUser(req) {
@@ -143,5 +151,5 @@ export function requireAdmin(req) {
 
 /** Revokes every other session after a password change. */
 export function revokeOtherSessions(userId, keepToken) {
-  return deleteOtherSessions(userId, keepToken)
+  return keepToken ? deleteOtherSessions(userId, hashSessionToken(keepToken)) : 0
 }
