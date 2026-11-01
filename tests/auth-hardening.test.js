@@ -241,6 +241,10 @@ test('every response carries a content security policy and framing control', asy
   assert.match(csp, /base-uri 'none'/)
   assert.match(csp, /form-action 'self'/)
   assert.match(csp, /frame-ancestors 'self'/)
+  // Scripts are allowed by nonce only; 'unsafe-inline' would let injected
+  // markup run, which is the whole point of the policy.
+  assert.match(csp, /script-src 'self' 'nonce-[^']+'/)
+  assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/)
   assert.equal(page.headers.get('x-frame-options'), 'SAMEORIGIN')
   assert.equal(page.headers.get('x-content-type-options'), 'nosniff')
   assert.equal(page.headers.get('referrer-policy'), 'no-referrer')
@@ -254,4 +258,52 @@ test('every response carries a content security policy and framing control', asy
   const api = await get('/api/v1/health')
   assert.equal(api.headers.get('x-content-type-options'), 'nosniff')
   assert.match(api.headers.get('content-security-policy'), /frame-ancestors 'self'/)
+})
+
+test('every inline script carries the response nonce, and the nonce is fresh', async () => {
+  const nonceOf = (response) => /'nonce-([^']+)'/.exec(response.headers.get('content-security-policy'))?.[1]
+
+  const first = await get('/login')
+  const firstNonce = nonceOf(first)
+  assert.ok(firstNonce, 'the policy must name a nonce')
+
+  const body = await first.text()
+  const stamped = [...body.matchAll(/<script nonce="([^"]*)"/g)].map((match) => match[1])
+  assert.equal(stamped.length, 2, 'both inline scripts are stamped')
+  assert.deepEqual(new Set(stamped), new Set([firstNonce]), 'the attribute matches the header')
+  assert.equal((body.match(/<script(?![^>]*nonce=)/g) ?? []).length, 0, 'no script is left unstamped')
+
+  const second = await get('/login')
+  assert.notEqual(nonceOf(second), firstNonce, 'a reused nonce would be guessable')
+})
+
+test('confirm prompts ride a data attribute instead of an inline handler', async () => {
+  const login = await postJson('/api/v1/auth/login', {
+    username: ADMIN.username,
+    password: ADMIN.password,
+  })
+  const cookie = sessionCookieOf(login)
+
+  // A second account is needed: an administrator never sees a delete button
+  // for their own row.
+  const created = await fetch(`${baseUrl}/settings/users`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+    body: new URLSearchParams({
+      username: 'second-user',
+      email: 'second@discovarr.local',
+      password: 'second-password',
+      role: 'user',
+    }),
+  })
+  assert.equal(created.status, 303)
+
+  const page = await get('/settings?tab=users', cookie)
+  assert.equal(page.status, 200)
+
+  const body = await page.text()
+  assert.match(body, /second-user/, 'the second account was created')
+  assert.match(body, /data-confirm="Delete this user\?/, 'the prompt moved onto a data attribute')
+  assert.doesNotMatch(body, /\son[a-z]+=/, 'a nonce policy silently disables inline handlers')
 })

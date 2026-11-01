@@ -2469,7 +2469,7 @@ function userRow(member, actor) {
         isSelf
           ? ''
           : `<button class="btn btn-sm btn-danger" type="submit" formaction="/settings/users/${member.id}/delete"
-              onclick="return confirm('Delete this user? Their requests, sessions and watchlist go with the account.')">Delete</button>`
+              data-confirm="Delete this user? Their requests, sessions and watchlist go with the account.">Delete</button>`
       }
     </div>
   </form>`

@@ -207,6 +207,14 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
     <script>
       // Profile dialogs and "where to watch" toggles: tiny, no dependencies.
       document.addEventListener('click', (event) => {
+        // Destructive buttons ask first through data-confirm: a nonce-based
+        // policy means an inline onclick attribute would never run at all.
+        const guarded = event.target.closest('[data-confirm]')
+        if (guarded && !window.confirm(guarded.dataset.confirm)) {
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
         const opener = event.target.closest('[data-dialog-open]')
         if (opener) {
           const dialog = document.getElementById(opener.dataset.dialogOpen)

@@ -561,7 +561,8 @@ test('the inline script parses as a browser script', async () => {
   // A stray escape once turned a regex into /^// and killed every dialog and
   // the live search in one go; parsing the rendered script catches that.
   const page = await (await fetch(`${baseUrl}/`, { headers: { cookie: adminCookie } })).text()
-  const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1])
+  // The tag carries a CSP nonce now, so the opening tag is matched with its attributes.
+  const scripts = [...page.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((match) => match[1])
   assert.ok(scripts.length > 0, 'the layout should inline its script')
   for (const script of scripts) assert.doesNotThrow(() => new Function(script))
 })

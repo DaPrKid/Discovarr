@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto'
+
 import { config } from './config.js'
 
 export class HttpError extends Error {
@@ -9,21 +11,32 @@ export class HttpError extends Error {
 
 const MAX_BODY_BYTES = 1024 * 1024
 
-// Inline scripts and style attributes are part of the app's own markup, so those
-// two keep 'unsafe-inline'; everything that matters more is locked down: no
-// external script sources, no plugins, no <base> rewriting, and a configurable
-// frame-ancestors for embeddings behind a reverse proxy.
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "base-uri 'none'",
-  "object-src 'none'",
-  "form-action 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
-  "connect-src 'self'",
-  `frame-ancestors ${config.frameAncestors}`,
-].join('; ')
+/**
+ * A fresh nonce per response. Every inline <script> the app renders is stamped
+ * with it in sendHtml, so the policy can leave 'unsafe-inline' out of
+ * script-src entirely: injected markup cannot guess the value, cannot run, and
+ * cannot smuggle an external file in either.
+ *
+ * Style keeps 'unsafe-inline' because the markup styles individual elements
+ * with style attributes (poster hues, backdrop art), which no nonce can cover.
+ */
+export function newScriptNonce() {
+  return randomBytes(16).toString('base64')
+}
+
+function contentSecurityPolicy(nonce) {
+  return [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "form-action 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    `frame-ancestors ${config.frameAncestors}`,
+  ].join('; ')
+}
 
 function isHttps(req) {
   const forwarded = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase()
@@ -32,7 +45,8 @@ function isHttps(req) {
 
 /** Applied to every response, static files included. */
 export function applySecurityHeaders(req, res) {
-  res.setHeader('content-security-policy', CONTENT_SECURITY_POLICY)
+  res.cspNonce = newScriptNonce()
+  res.setHeader('content-security-policy', contentSecurityPolicy(res.cspNonce))
   res.setHeader('x-content-type-options', 'nosniff')
   res.setHeader('referrer-policy', 'no-referrer')
   res.setHeader('x-permitted-cross-domain-policies', 'none')
@@ -77,7 +91,12 @@ export function sendJson(res, status, payload, headers = {}) {
 }
 
 export function sendHtml(res, status, html, headers = {}) {
-  const body = Buffer.from(html)
+  // The header and the markup are stamped in one place, so they cannot disagree
+  // and no future inline script can be forgotten.
+  const markup = res.cspNonce
+    ? html.replace(/<script(?![^>]*\bnonce=)(?=[\s>])/gi, `<script nonce="${res.cspNonce}"`)
+    : html
+  const body = Buffer.from(markup)
   res.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
     'content-length': body.length,
