@@ -3,9 +3,8 @@ name: Publish image
 # Publishes ghcr.io/<owner>/discovarr. A version tag (v0.3.0 -> 0.3.0, plus
 # latest) or a manual run (tagged main) builds and pushes the image.
 #
-# Nothing is published to a public registry: a package first pushed from this
-# private repository inherits its visibility and stays private, so only someone
-# who has run `docker login ghcr.io` with read:packages can pull it.
+# The package is public, like the repository: Unraid Community Apps installs it
+# without credentials, so an anonymous pull has to keep working.
 on:
   push:
     tags: ['v*']
@@ -63,29 +62,25 @@ jobs:
             echo "- \`$IMAGE:sha-$SHORT_SHA\`"
             if [ -n "$EXTRA_TAG" ]; then echo "- \`$IMAGE:$EXTRA_TAG\`"; fi
             echo
-            echo "Pull on the server with \`docker login ghcr.io\` first."
+            echo "Pull it anonymously, no login needed."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: The package stays private, so anonymous pulls are refused
+      - name: The package stays public, so anonymous pulls work
         run: |
           set -euo pipefail
-          # Log out so the next pull is anonymous. A private package must reject
-          # it; a public one would hand the image to anyone who guessed the name.
+          # Log out so the next pull is anonymous: Community Apps pulls the image
+          # with no credentials, so a package that went private would publish
+          # fine and then fail to install.
           docker logout ghcr.io
           for attempt in 1 2 3 4 5; do
             if docker pull "$IMAGE:$VERSION" > "$RUNNER_TEMP/pull.log" 2>&1; then
               cat "$RUNNER_TEMP/pull.log"
-              echo "FAIL: an anonymous pull succeeded, so the package is public"
-              exit 1
-            fi
-            if grep -Eqi 'unauthorized|denied' "$RUNNER_TEMP/pull.log"; then
-              cat "$RUNNER_TEMP/pull.log"
-              echo "OK: anonymous pull was refused on attempt $attempt"
+              echo "OK: anonymous pull succeeded on attempt $attempt"
               exit 0
             fi
             # A just-pushed package can take a moment to become visible.
             cat "$RUNNER_TEMP/pull.log"
             sleep 3
           done
-          echo "FAIL: anonymous pull did not report unauthorized/denied"
+          echo "FAIL: anonymous pull failed, so the package is not public"
           exit 1

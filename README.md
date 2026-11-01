@@ -37,25 +37,21 @@ npm start          # http://localhost:5057, database in ./data
 npm test           # end-to-end HTTP tests
 ```
 
-## Pulling the published image (private)
+## Pulling the published image
 
 Pushing a `v*` tag, or running the **Publish image** workflow by hand, builds and
 pushes `ghcr.io/daprkid/discovarr` to the GitHub Container Registry. The package
-inherits this repository's visibility, so it is **private**: an anonymous
-`docker pull` is refused, and the image is only usable by accounts you grant
-access to. Publishing uses the workflow's own `GITHUB_TOKEN`, so no personal
-token is needed for that side.
+is **public**, like this repository, so `docker pull` needs no login — which is
+also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-# once, on the machine that runs the container; classic PAT with read:packages
-echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
-
 docker pull ghcr.io/daprkid/discovarr:1.0.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
-`sha-<commit>`. The login is stored for the Docker daemon, so Unraid's Docker
-page and its update checks use it too once the credential exists.
+`sha-<commit>`. Every publish ends by pulling the tag it just pushed
+anonymously, so a package that quietly went private fails the build instead of
+the install.
 
 ### Updating
 
@@ -106,15 +102,9 @@ To submit, or to re-scan after changing the template, open
 <https://ca.unraid.net/submit/new>, sign in with Unraid, add
 `https://github.com/DaPrKid/Discovarr`, then run **Validate** and **Scan**.
 Community Apps only accepts a public repository, and the template's image has to
-pull without a login, so two switches must be on before a scan can pass:
-
-- the GitHub repository must be public
-- the `discovarr` package on GHCR must be public (package settings → change
-  visibility)
-
-Once the package is public, delete the "package stays private" step from
-`.github/workflows/publish.yml`: it fails the publish on purpose when an
-anonymous pull succeeds.
+pull without a login. Both hold here: the repository is public and the
+`discovarr` package on GHCR is public. The publish workflow re-checks the
+anonymous pull on every release, so the install cannot break silently.
 
 ## Features
 
