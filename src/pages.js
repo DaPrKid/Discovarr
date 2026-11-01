@@ -3,6 +3,8 @@ import { clearLoginAttempts, clearedSessionCookie, createSession, currentUser, e
 import { buildReleaseCalendar } from './ics.js'
 import { config } from './config.js'
 import {
+  TokenScope,
+  MIN_PASSWORD_LENGTH,
   ACTIVE_REQUEST_STATUSES,
   ALL_PERMISSIONS,
   MEDIA_STATUS_LABEL,
@@ -114,7 +116,13 @@ function appName() {
 }
 
 function safeReturn(value, fallback = '/') {
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : fallback
+  // A browser folds a backslash into a slash and drops control characters, so
+  // '/\evil.example' and '//evil.example' both leave the site even though they
+  // read like a path. Only a plain absolute path is handed back.
+  if (typeof value !== 'string') return fallback
+  if (value[0] !== '/' || value[1] === '/') return fallback
+  if (/[\\\u0000-\u001f\u007f]/.test(value)) return fallback
+  return value
 }
 
 function formatBytes(bytes) {
@@ -229,7 +237,7 @@ function setupPage({ appName, error, values = {}, plex = false }) {
       <form method="post" action="/setup" class="stack">
         <label>Email <input type="email" name="email" value="${escapeHtml(values.email ?? '')}" required autofocus /></label>
         <label>Username <input type="text" name="username" value="${escapeHtml(values.username ?? '')}" required minlength="3" maxlength="40" autocomplete="username" /></label>
-        <label>Password <input type="password" name="password" required minlength="6" autocomplete="new-password" /></label>
+        <label>Password <input type="password" name="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" /></label>
         <button class="btn" type="submit">Create administrator</button>
       </form>
       <p class="muted small">Sign in from then on with your username (or email) and password.</p>
@@ -2103,7 +2111,7 @@ function accountBody({ user, quota, notice, error }) {
     <form method="post" action="/account/password" class="stack panel">
       <h2 style="margin: 0">Change password</h2>
       <label>Current password <input type="password" name="currentPassword" required autocomplete="current-password" /></label>
-      <label>New password <input type="password" name="newPassword" required minlength="6" autocomplete="new-password" /></label>
+      <label>New password <input type="password" name="newPassword" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" /></label>
       <button class="btn btn-sm" type="submit">Update password</button>
       <p class="muted small">Changing your password signs out your other sessions.</p>
     </form>
@@ -2169,20 +2177,32 @@ function settingsTabs(tab) {
   </nav>`
 }
 
-function tokensPanel({ tokens, newToken }) {
+function tokensPanel({ tokens, newToken, newTokenScope = null }) {
   return `<section class="panel">
       <h2 style="margin: 0">Your API tokens</h2>
       <p class="muted small">For scripts and home automation: send <code>Authorization: Bearer &lt;token&gt;</code> to <code>/api/v1/…</code>. A token acts as your account, so treat it like a password.</p>
-      ${newToken ? `<p class="alert alert-ok">New token, shown once: <code>${escapeHtml(newToken)}</code></p>` : ''}
-      ${newToken ? `<p class="muted small">Calendar feed for your phone: <code>/calendar.ics?token=${escapeHtml(newToken)}</code></p>` : ''}
+      ${
+        newToken && newTokenScope !== TokenScope.CALENDAR
+          ? `<p class="alert alert-ok">New token, shown once: <code>${escapeHtml(newToken)}</code></p>`
+          : ''
+      }
+      ${
+        newToken && newTokenScope === TokenScope.CALENDAR
+          ? `<p class="alert alert-ok">New calendar link, shown once: <code>${escapeHtml(
+              `/calendar.ics?token=${newToken}`
+            )}</code></p>
+             <p class="muted small">This token can only read the feed, so a link that leaks into a log or a shared phone does not hand out your account.</p>`
+          : ''
+      }
       ${
         tokens.length
           ? `<table class="table">
-              <thead><tr><th>Name</th><th>Token</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Kind</th><th>Token</th><th>Created</th><th>Last used</th><th></th></tr></thead>
               <tbody>${tokens
                 .map(
                   (token) => `<tr>
                     <td>${escapeHtml(token.name)}</td>
+                    <td>${token.scope === TokenScope.CALENDAR ? 'Calendar' : 'API'}</td>
                     <td><code>${escapeHtml(token.prefix)}…</code></td>
                     <td>${escapeHtml(token.createdAt.slice(0, 10))}</td>
                     <td>${token.lastUsedAt ? escapeHtml(token.lastUsedAt.slice(0, 16).replace('T', ' ')) : 'never'}</td>
@@ -2196,6 +2216,13 @@ function tokensPanel({ tokens, newToken }) {
       <form method="post" action="/settings/tokens" class="row">
         <label>Name <input type="text" name="name" maxlength="60" placeholder="Home Assistant" /></label>
         <button class="btn btn-sm" type="submit">Create token</button>
+      </form>
+      <form method="post" action="/settings/tokens" class="row">
+        <input type="hidden" name="scope" value="${TokenScope.CALENDAR}" />
+        <div>
+          <button class="btn btn-sm btn-ghost" type="submit">Create calendar link</button>
+          <p class="muted small">A read-only feed for a phone or calendar app. It works only on <code>/calendar.ics</code>, so treat the link as a subscription, never as a password.</p>
+        </div>
       </form>
     </section>`
 }
@@ -2485,8 +2512,7 @@ function settingsBody({
   tokens = [],
   newToken = null,
   notice,
-  error,
-}) {
+  error, newTokenScope }) {
   const sync = syncState()
   const current = SETTINGS_TABS.some(([key]) => key === tab) ? tab : 'general'
 
@@ -2530,7 +2556,7 @@ function settingsBody({
       <div class="row-grid">
         <label>Username <input type="text" name="username" required minlength="3" maxlength="40" /></label>
         <label>Email <input type="email" name="email" required /></label>
-        <label>Password <input type="password" name="password" required minlength="6" /></label>
+        <label>Password <input type="password" name="password" required minlength="${MIN_PASSWORD_LENGTH}" /></label>
         <label>Role
           <select name="role">
             <option value="user">User</option>
@@ -2727,7 +2753,7 @@ function settingsBody({
           : current === 'tasks'
             ? tasks
             : current === 'tokens'
-              ? tokensPanel({ tokens, newToken })
+              ? tokensPanel({ tokens, newToken, newTokenScope })
               : current === 'general'
                 ? general
                 : integrations
@@ -3631,15 +3657,18 @@ export function registerPageRoutes(router) {
     })
   })
 
-  // Calendar apps cannot send headers or cookies, so the feed accepts a personal
-  // API token in the query string; the same URL therefore works in any client.
+  // Calendar apps cannot send headers or cookies, so the feed accepts a token in
+  // the query string, where it ends up in logs, history and shared phones. That
+  // is why it must be a calendar-scoped token: leaking one exposes this feed and
+  // nothing else, whereas an API token in the same place exposes the account.
+  // A header still works, for anything that can send one.
   router.get('/calendar.ics', async ({ req, res, url }) => {
     const token = url.searchParams.get('token')
-    const user = currentUser(req) ?? (token ? userForApiToken(token) : null)
+    const user = currentUser(req) ?? (token ? userForApiToken(token, { scope: TokenScope.CALENDAR }) : null)
 
     if (!user) {
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
-      return res.end('A personal API token is required: Account → API tokens.')
+      return res.end('A calendar token is required: Account → API tokens → Create calendar link.')
     }
 
     let items = []
@@ -3899,7 +3928,10 @@ export function registerPageRoutes(router) {
   router.post('/settings/tokens', async ({ req, res }) => {
     const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
     const body = await readBody(req)
-    const name = String(body.name ?? '').trim().slice(0, 60) || 'API token'
+    const scope = body.scope === TokenScope.CALENDAR ? TokenScope.CALENDAR : TokenScope.API
+    const name =
+      String(body.name ?? '').trim().slice(0, 60) ||
+      (scope === TokenScope.CALENDAR ? 'Calendar feed' : 'API token')
 
     const token = `dcv_${randomBytes(24).toString('base64url')}`
     store.createApiToken({
@@ -3907,12 +3939,13 @@ export function registerPageRoutes(router) {
       name,
       prefix: token.slice(0, 10),
       tokenHash: hashApiToken(token),
+      scope,
     })
     store.recordAudit(actor.id, 'account.token_created', name)
 
     // Shown once, on the response to the creation itself, so it never appears
     // in a redirect URL or a log line.
-    renderSettings(res, actor, { tab: 'tokens', newToken: token, notice: 'Token created' })
+    renderSettings(res, actor, { tab: 'tokens', newToken: token, newTokenScope: scope, notice: 'Token created' })
   })
 
   router.post('/settings/tokens/:id/delete', ({ req, res, params }) => {
@@ -3969,12 +4002,13 @@ export function registerPageRoutes(router) {
   })
 
   /** The settings page in one call, so POST handlers can answer without a redirect. */
-  async function renderSettings(res, actor, { tab, notice = null, error = null, tokens = null, newToken = null }) {
+  async function renderSettings(res, actor, { tab, notice = null, error = null, tokens = null, newToken = null, newTokenScope }) {
     render(res, 200, {
       title: 'Settings',
       user: actor,
       active: 'settings',
       body: settingsBody({
+        newTokenScope,
         user: actor,
         settings: store.getSettings(),
         users: store.listUsers(),

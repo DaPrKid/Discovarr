@@ -1,5 +1,6 @@
 import { hasPermission } from './auth.js'
 import {
+  MIN_PASSWORD_LENGTH,
   ACTIVE_REQUEST_STATUSES,
   ALL_PERMISSIONS,
   DEFAULT_USER_PERMISSIONS,
@@ -419,7 +420,9 @@ export function createUserByAdmin({ email, username, password, role, permissions
     throw new HttpError(400, 'Email, username and password are required')
   }
   if (!EMAIL_PATTERN.test(cleanEmail)) throw new HttpError(400, 'Enter a valid email address')
-  if (String(password).length < 6) throw new HttpError(400, 'Password must be at least 6 characters')
+  if (String(password).length < MIN_PASSWORD_LENGTH) {
+    throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`)
+  }
   if (store.findUserByEmail(cleanEmail)) throw new HttpError(409, 'That email is already registered')
   if (store.findUserByUsername(cleanName)) throw new HttpError(409, 'That username is taken')
 
@@ -451,7 +454,9 @@ export function createFirstAdmin({ email, username, password }) {
 
   if (!cleanEmail) throw new HttpError(400, 'Email is required')
   if (!EMAIL_PATTERN.test(cleanEmail)) throw new HttpError(400, 'Enter a valid email address')
-  if (String(password ?? '').length < 6) throw new HttpError(400, 'Password must be at least 6 characters')
+  if (String(password ?? '').length < MIN_PASSWORD_LENGTH) {
+    throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`)
+  }
   if (store.findUserByEmail(cleanEmail)) throw new HttpError(409, 'That email is already registered')
   if (store.findUserByUsername(cleanName)) throw new HttpError(409, 'That username is taken')
 
@@ -503,8 +508,8 @@ export function changePassword(user, currentPassword, newPassword, keepToken) {
   if (!verifyPassword(String(currentPassword ?? ''), user.passwordHash)) {
     throw new HttpError(401, 'Current password is incorrect')
   }
-  if (String(newPassword ?? '').length < 6) {
-    throw new HttpError(400, 'New password must be at least 6 characters')
+  if (String(newPassword ?? '').length < MIN_PASSWORD_LENGTH) {
+    throw new HttpError(400, `New password must be at least ${MIN_PASSWORD_LENGTH} characters`)
   }
 
   store.updateUserPassword(user.id, String(newPassword))

@@ -78,7 +78,8 @@ migration, the release notes say so before this block.
 The image ships no accounts. On first start every page redirects to `/setup`,
 where you create the administrator with an **email, username and password** —
 the first account is always the admin. Sign in afterwards with the username (or
-the email) and that password.
+the email) and that password. Passwords need at least 8 characters, checked by
+the server as well as the form.
 
 If you would rather have the account created at boot, set `ADMIN_PASSWORD` (plus
 optionally `ADMIN_EMAIL` and `ADMIN_USERNAME`) and the administrator is seeded
@@ -166,9 +167,11 @@ anonymous pull on every release, so the install cannot break silently.
   library and titles somebody has requested, so the grid is about this household
   rather than everything TMDB knows. Move between months with the arrows; today
   is outlined, and every entry links through to the full title page.
-- **Calendar feed** — Settings → API tokens also shows a `/calendar.ics?token=…`
-  URL to subscribe to from a phone or desktop calendar. It carries the next 120
-  days of releases plus your watchlist, and revoking the token stops it.
+- **Calendar feed** — Settings → API tokens → Create calendar link mints a
+  `/calendar.ics?token=…` URL for a phone or desktop calendar. The token is
+  scoped to that feed, so a link that leaks into a log or a shared device cannot
+  be replayed against the API, and revoking it stops the feed. It carries the
+  next 120 days of releases plus your watchlist.
 - **Hover previews** — hover or focus any title, poster or calendar entry and a
   card explains what it is about without leaving the page. The description is
   fetched once per title and remembered for the rest of the visit.
@@ -191,7 +194,8 @@ anonymous pull on every release, so the install cannot break silently.
 - **API tokens** — create a named token in Settings → API tokens and call `/api/v1/…` with
   `Authorization: Bearer <token>`. The token is shown once, stored only as a
   SHA-256 hash, records its last use, and can be revoked without touching your
-  password or sessions.
+  password or sessions. A feed link is its own token: it reads the calendar and
+  nothing else.
 - **Person pages** — every name in a title's cast opens that person's biography,
   dates and the full list of films and series they appear in.
 - **Genre shelves** — the genre pages lead with titles from the busiest
@@ -342,7 +346,9 @@ and is edited on the Settings page.
 
 Session cookie from `POST /api/v1/auth/login`, or a personal token from
 Account → API tokens sent as `Authorization: Bearer <token>`; `filter`/`page`/`take` where
-relevant. Admin-only endpoints require the matching permission.
+relevant. Admin-only endpoints require the matching permission. The iCalendar
+feed at `/calendar.ics` takes the same header, or its own calendar-scoped token
+as `?token=` for clients that cannot send one.
 
 | Method | Path | Notes |
 | --- | --- | --- |

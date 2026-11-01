@@ -334,7 +334,7 @@ test('an administrator can delete a user, but not their own account', async () =
   const created = await call('/settings/users', {
     method: 'POST',
     cookie: adminCookie,
-    body: { username: 'Temp', email: 'temp@discovarr.local', password: 'temp123', role: 'user' },
+    body: { username: 'Temp', email: 'temp@discovarr.local', password: 'temp1234', role: 'user' },
   })
   assert.equal(created.status, 303)
 

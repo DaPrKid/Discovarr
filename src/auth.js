@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { config, sessionTtlMs } from './config.js'
-import { Role } from './constants.js'
+import {
+  TokenScope, Role } from './constants.js'
 import {
   deleteOtherSessions,
   deleteSession,
@@ -86,12 +87,16 @@ export function hashApiToken(token) {
   return createHash('sha256').update(String(token)).digest('hex')
 }
 
-/** Resolves a plaintext personal token to its user, or null. */
-export function userForApiToken(token) {
+/**
+ * Resolves a plaintext personal token to its user, or null. The scope is part
+ * of the lookup, so a calendar feed token cannot authenticate the API and an
+ * account token cannot be used as a subscription link.
+ */
+export function userForApiToken(token, { scope = TokenScope.API } = {}) {
   if (!token) return null
 
   const record = findApiToken(hashApiToken(token))
-  if (!record) return null
+  if (!record || record.scope !== scope) return null
 
   touchApiToken(record.id)
   return findUserById(record.user_id)

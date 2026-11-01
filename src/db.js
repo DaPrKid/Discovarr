@@ -148,6 +148,7 @@ db.exec(`
     name TEXT NOT NULL,
     prefix TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL DEFAULT 'api',
     created_at TEXT NOT NULL,
     last_used_at TEXT
   );
@@ -163,6 +164,10 @@ db.exec(`
     PRIMARY KEY (user_id, tmdb_id, media_type)
   );
 `)
+
+// Tokens created before calendar feeds were scoped authenticate the API, so the
+// column starts at 'api' and older installs keep working unchanged.
+ensureColumn('api_tokens', 'scope', "TEXT NOT NULL DEFAULT 'api'")
 
 // Usernames identify an account on the sign-in form, so they are unique
 // regardless of case. Older databases may hold duplicates, which makes the
@@ -628,29 +633,34 @@ export function listFailedForRetry(now = timestamp(), limit = 20) {
 // ---------------------------------------------------------------------------
 
 /** Tokens are stored as a SHA-256 hash, so the database never holds a usable one. */
-export function createApiToken({ userId, name, prefix, tokenHash }) {
+export function createApiToken({ userId, name, prefix, tokenHash, scope = 'api' }) {
   const info = db
-    .prepare('INSERT INTO api_tokens (user_id, name, prefix, token_hash, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(Number(userId), name, prefix, tokenHash, timestamp())
+    .prepare(
+      'INSERT INTO api_tokens (user_id, name, prefix, token_hash, scope, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    )
+    .run(Number(userId), name, prefix, tokenHash, String(scope), timestamp())
 
   return Number(info.lastInsertRowid)
 }
 
 export function listApiTokens(userId) {
   return db
-    .prepare('SELECT id, name, prefix, created_at, last_used_at FROM api_tokens WHERE user_id = ? ORDER BY id DESC')
+    .prepare('SELECT id, name, prefix, scope, created_at, last_used_at FROM api_tokens WHERE user_id = ? ORDER BY id DESC')
     .all(Number(userId))
     .map((row) => ({
       id: row.id,
       name: row.name,
       prefix: row.prefix,
+      scope: row.scope,
       createdAt: row.created_at,
       lastUsedAt: row.last_used_at,
     }))
 }
 
 export function findApiToken(tokenHash) {
-  return db.prepare('SELECT id, user_id FROM api_tokens WHERE token_hash = ?').get(String(tokenHash)) ?? null
+  return (
+    db.prepare('SELECT id, user_id, scope FROM api_tokens WHERE token_hash = ?').get(String(tokenHash)) ?? null
+  )
 }
 
 export function touchApiToken(id) {

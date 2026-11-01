@@ -307,3 +307,56 @@ test('confirm prompts ride a data attribute instead of an inline handler', async
   assert.match(body, /data-confirm="Delete this user\?/, 'the prompt moved onto a data attribute')
   assert.doesNotMatch(body, /\son[a-z]+=/, 'a nonce policy silently disables inline handlers')
 })
+
+test('a password under the floor is refused and no account is created', async () => {
+  const login = await postJson('/api/v1/auth/login', {
+    username: ADMIN.username,
+    password: ADMIN.password,
+  })
+  const cookie = sessionCookieOf(login)
+
+  const short = await fetch(`${baseUrl}/settings/users`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+    body: new URLSearchParams({
+      username: 'shorty',
+      email: 'shorty@discovarr.local',
+      password: '1234567',
+      role: 'user',
+    }),
+  })
+  assert.equal(short.status, 303)
+
+  const message = decodeURIComponent(String(short.headers.get('location')).replace(/\+/g, ' '))
+  assert.match(message, /at least 8 characters/)
+
+  const users = await (await get('/settings?tab=users', cookie)).text()
+  assert.doesNotMatch(users, /shorty/, 'a rejected password must not leave a half-made account')
+})
+
+test('a return path cannot be bent into another host', async () => {
+  const login = await postJson('/api/v1/auth/login', {
+    username: ADMIN.username,
+    password: ADMIN.password,
+  })
+  const cookie = sessionCookieOf(login)
+
+  // Browsers treat a backslash as a slash, so '/\evil.example' reads like a
+  // local path but leaves the site. Each of these must fall back to the app.
+  for (const returnTo of ['/\\evil.example', '//evil.example', 'https://evil.example']) {
+    const response = await fetch(`${baseUrl}/watchlist/toggle`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
+      body: new URLSearchParams({ tmdbId: '0', mediaType: 'movie', returnTo }),
+    })
+
+    assert.equal(response.status, 303)
+    assert.match(
+      String(response.headers.get('location')),
+      /^\/watchlist(\?|$)/,
+      `returnTo ${returnTo} escaped the app`
+    )
+  }
+})

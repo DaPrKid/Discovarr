@@ -140,3 +140,13 @@ export const ACTIVE_REQUEST_STATUSES = Object.freeze([
   MediaRequestStatus.PENDING,
   MediaRequestStatus.APPROVED,
 ])
+
+// Long enough that a leaked hash is not worth a wordlist. NIST's floor.
+export const MIN_PASSWORD_LENGTH = 8
+
+// Calendar clients can only pass a credential in the URL, so a feed token is
+// scoped to /calendar.ics: a leaked subscription link is not an account key.
+export const TokenScope = Object.freeze({
+  API: 'api',
+  CALENDAR: 'calendar',
+})

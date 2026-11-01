@@ -280,11 +280,26 @@ test('the database can be downloaded as a real SQLite file', async () => {
   assert.ok(bytes.length > 4096, 'the snapshot looks empty')
 })
 
-test('the release calendar can be subscribed to with a token', async () => {
-  const created = await postForm('/settings/tokens', { name: 'Calendar' })
+test('the release calendar can be subscribed to with a scoped token', async () => {
+  // An account-wide token in a URL leaks API access through logs and history, so
+  // the feed only accepts a token minted for the feed itself.
+  const apiToken = await postForm('/settings/tokens', { name: 'Scripts' })
+  const apiHtml = await apiToken.text()
+  const api = /New token, shown once: <code>(dcv_[^<]+)<\/code>/.exec(apiHtml)?.[1]
+  assert.ok(api, 'no API token was issued')
+
+  const rejected = await fetch(`${baseUrl}/calendar.ics?token=${encodeURIComponent(api)}`)
+  assert.equal(rejected.status, 401, 'an API token must not authenticate the feed')
+
+  const created = await postForm('/settings/tokens', { name: 'Calendar', scope: 'calendar' })
   const html = await created.text()
-  const token = /New token, shown once: <code>(dcv_[^<]+)<\/code>/.exec(html)?.[1]
-  assert.ok(token, 'no token was issued for the feed')
+  const token = /calendar\.ics\?token=(dcv_[^<]+)/.exec(html)?.[1]
+  assert.ok(token, 'no calendar token was issued for the feed')
+
+  const viaApi = await fetch(`${baseUrl}/api/v1/auth/me`, {
+    headers: { authorization: `Bearer ${token}` },
+  })
+  assert.equal(viaApi.status, 401, 'a feed token must not authenticate the API')
 
   const feed = await fetch(`${baseUrl}/calendar.ics?token=${encodeURIComponent(token)}`)
   assert.equal(feed.status, 200)

@@ -123,7 +123,7 @@ test('a fresh install sends visitors to the setup page', async () => {
 test('setup rejects an invalid account before creating anything', async () => {
   const response = await postForm('/setup', { email: 'owner@example.com', username: 'owner', password: 'short' })
   assert.equal(response.status, 400)
-  assert.match(await response.text(), /at least 6 characters/)
+  assert.match(await response.text(), /at least 8 characters/)
 
   const health = await (await fetch(`${baseUrl}/api/v1/health`)).json()
   assert.equal(health.setupRequired, true)
