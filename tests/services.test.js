@@ -524,7 +524,7 @@ test('discover search suggests titles while typing', async () => {
   const page = await (await fetch(`${baseUrl}/`, { headers: { cookie: adminCookie } })).text()
   assert.match(page, /data-suggest="\/search\/suggest"/)
   // The stylesheet is versioned so a new build is never served from cache.
-  assert.match(page, /styles\.css\?v=\d+\.\d+\.\d+/)
+  assert.match(page, /styles\.css\?v=[0-9a-f]{10}/)
 
   const response = await fetch(`${baseUrl}/search/suggest?q=du`, { headers: { cookie: adminCookie } })
   assert.equal(response.status, 200)

@@ -9,6 +9,7 @@ import {
   REQUEST_STATUS_LABEL,
   Role,
 } from './constants.js'
+import { stylesVersion } from './assets.js'
 import { countUnreadNotifications, listNotifications } from './db.js'
 import { imageUrl } from './tmdb.js'
 
@@ -111,6 +112,23 @@ function notificationPanel(items) {
     </div>`
 }
 
+function tabIcon(path) {
+  return `<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`
+}
+
+/**
+ * Four destinations on the bottom bar, the rest under the account chip. Six
+ * items never fitted a phone: `.nav` was a row that could not wrap, and the two
+ * it clipped were Settings and Activity.
+ */
+const TABS = [
+  ['discover', '/', 'Discover', '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>'],
+  ['calendar', '/calendar', 'Calendar', '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>'],
+  ['watchlist', '/watchlist', 'Watchlist', '<path d="M6.5 3.5h11a1 1 0 0 1 1 1v16l-6.5-4.2L5.5 20.5v-16a1 1 0 0 1 1-1z"/>'],
+  ['requests', '/requests', 'Requests', '<path d="M3.5 12.5 6 5.5h12l2.5 7v5.5a1.5 1.5 0 0 1-1.5 1.5h-13a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M3.5 12.5h4.5l1 2.5h6l1-2.5h4.5"/>'],
+]
+
 function navigation({ user, active, appName, canManageSettings }) {
   const items = [
     ['discover', '/', 'Discover'],
@@ -125,13 +143,20 @@ function navigation({ user, active, appName, canManageSettings }) {
   const unread = user?.id ? countUnreadNotifications(user.id) : 0
   const recent = user?.id ? listNotifications(user.id, 6) : []
 
+  const tab = ([key, href, label, icon]) =>
+    `<a class="tab${active === key ? ' is-active' : ''}" href="${href}"${
+      active === key ? ' aria-current="page"' : ''
+    }>${tabIcon(icon)}<span class="tab-label">${label}</span></a>`
+
   return `<header class="topbar">
     <a class="brand" href="/">${mark()}<span class="brand-name">${escapeHtml(appName)}</span></a>
-    <nav class="nav">
+    <nav class="nav" aria-label="Sections">
       ${items
         .map(
           ([key, href, label]) =>
-            `<a class="${active === key ? 'is-active' : ''}" href="${href}">${label}</a>`
+            `<a class="${active === key ? 'is-active' : ''}" href="${href}"${
+              active === key ? ' aria-current="page"' : ''
+            }>${label}</a>`
         )
         .join('')}
     </nav>
@@ -142,10 +167,20 @@ function navigation({ user, active, appName, canManageSettings }) {
         </a>
         ${notificationPanel(recent)}
       </div>
-      <a class="chip" href="/account">${escapeHtml(user.username)}</a>
-      <form method="post" action="/logout"><button class="link" type="submit">Sign out</button></form>
+      <details class="menu" data-menu>
+        <summary class="chip" title="Your account">${escapeHtml(user.username)}</summary>
+        <div class="menu-body">
+          <a href="/account">Account</a>
+          <a href="/notifications">Notifications${unread ? ` <span class="menu-count">${unread > 99 ? '99+' : unread}</span>` : ''}</a>
+          <a href="/activity"${active === 'activity' ? ' aria-current="page"' : ''}>Activity</a>
+          ${canManageSettings ? `<a href="/settings"${active === 'settings' ? ' aria-current="page"' : ''}>Settings</a>` : ''}
+          <form method="post" action="/logout"><button class="link" type="submit">Sign out</button></form>
+        </div>
+      </details>
     </div>
-  </header>`
+  </header>
+  <nav class="tabbar" aria-label="Sections">${TABS.map(tab).join('')}</nav>`
+
 }
 
 export function layout({ appName = 'Discovarr', title = '', user = null, active = '', body = '', canManageSettings = false, version = APP_VERSION }) {
@@ -155,8 +190,14 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>${escapeHtml(title)} · ${escapeHtml(appName)}</title>
-    <link rel="stylesheet" href="/styles.css?v=${escapeHtml(version)}" />
+    <link rel="stylesheet" href="/styles.css?v=${escapeHtml(stylesVersion)}" />
     <link rel="icon" type="image/png" href="/favicon-midnight.png" />
+    <link rel="apple-touch-icon" id="apple-icon" href="/favicon-midnight.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" id="theme-color" content="#0c0e14" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="${escapeHtml(appName)}" />
     <script>
       // The chosen look is stored per browser, so it is applied before the first
       // paint and never flashes the default theme.
@@ -175,12 +216,32 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           try { stored = localStorage.getItem('discovarr-' + panel) } catch (error) {}
           var hide = stored === null ? window.innerWidth < 900 : stored === 'hidden'
           if (hide) root.dataset[panelFlags[panel]] = '1'
+          // With no saved choice the default follows the window, so a tablet
+          // rotated into portrait folds its sidebars away without a reload.
+          if (stored === null) {
+            window.matchMedia('(max-width: 900px)').addEventListener('change', function (event) {
+              if (event.matches) root.dataset[panelFlags[panel]] = '1'
+              else delete root.dataset[panelFlags[panel]]
+            })
+          }
         })
         // Every theme has its own tab icon, drawn at 192px so the shape survives
         // the 16px a browser actually renders it at.
         var icon = document.querySelector('link[rel=icon]')
+        var appleIcon = document.getElementById('apple-icon')
+        var themeMeta = document.getElementById('theme-color')
+        // The colours the CSS actually paints the window with, so the browser
+        // chrome and a phone's status bar match the app instead of sitting black.
+        var chrome = {
+          midnight: '#0c0e14', cinema: '#0d0a08', teal: '#07100f',
+          forest: '#0f1211', sapphire: '#060a15', crimson: '#0b0709'
+        }
         function paintIcon(theme) {
-          if (icon && themes.indexOf(theme) !== -1) icon.href = '/favicon-' + theme + '.png'
+          if (themes.indexOf(theme) === -1) return
+          var href = '/favicon-' + theme + '.png'
+          if (icon) icon.href = href
+          if (appleIcon) appleIcon.href = href
+          if (themeMeta && chrome[theme]) themeMeta.content = chrome[theme]
         }
         paintIcon(root.dataset.theme)
         document.addEventListener('DOMContentLoaded', function () {
@@ -263,6 +324,19 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
             })
           })
           dialog.showModal()
+        })
+      })()
+
+      // The account menu is a <details>, so it opens without script; closing it
+      // on an outside click and on Escape is what a menu is expected to do.
+      ;(function () {
+        var menu = document.querySelector('[data-menu]')
+        if (!menu) return
+        document.addEventListener('click', function (event) {
+          if (menu.open && !menu.contains(event.target)) menu.open = false
+        })
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape' && menu.open) menu.open = false
         })
       })()
 

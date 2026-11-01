@@ -172,6 +172,11 @@ anonymous pull on every release, so the install cannot break silently.
   scoped to that feed, so a link that leaks into a log or a shared device cannot
   be replayed against the API, and revoking it stops the feed. It carries the
   next 120 days of releases plus your watchlist.
+- **On a phone** — the four places you actually use sit on a bottom bar within
+  reach of a thumb, the rest are one tap away under your name, tables become
+  cards, and the calendar turns into a day-by-day list. Added to a home screen it
+  installs with its own icon and a matching status bar instead of opening as a
+  bookmark.
 - **Hover previews** — hover or focus any title, poster or calendar entry and a
   card explains what it is about without leaving the page. The description is
   fetched once per title and remembered for the rest of the visit.

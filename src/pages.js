@@ -1773,15 +1773,15 @@ function activityBody({ user, canManage, retry, queue, maxAttempts, notice, erro
   const exhausted = retry.filter((request) => (request.attempts ?? 0) >= maxAttempts)
 
   const requestRow = (request) => `<tr>
-      <td>${escapeHtml(request.media?.title ?? `Request #${request.id}`)}<span class="muted small"> · #${request.id}</span></td>
-      <td>${escapeHtml(request.requester?.username ?? '—')}</td>
-      <td>${request.attempts ?? 0}</td>
-      <td>${
+      <td data-label="Title">${escapeHtml(request.media?.title ?? `Request #${request.id}`)}<span class="muted small"> · #${request.id}</span></td>
+      <td data-label="Requested by">${escapeHtml(request.requester?.username ?? '—')}</td>
+      <td data-label="Attempts">${request.attempts ?? 0}</td>
+      <td data-label="Next attempt">${
         request.nextRetryAt
           ? escapeHtml(String(request.nextRetryAt).replace('T', ' ').slice(0, 16))
           : '<span class="muted">not scheduled</span>'
       }</td>
-      <td class="muted small">${escapeHtml(String(request.note ?? '').slice(0, 180) || '—')}</td>
+      <td class="muted small" data-label="Last error">${escapeHtml(String(request.note ?? '').slice(0, 180) || '—')}</td>
     </tr>`
 
   const requestTable = (rows, empty) =>
@@ -1803,10 +1803,10 @@ function activityBody({ user, canManage, retry, queue, maxAttempts, notice, erro
                 <tbody>${service.items
                   .map(
                     (item) => `<tr>
-                      <td>${escapeHtml(item.title)}</td>
-                      <td>${escapeHtml(String(item.status))}</td>
-                      <td>${item.progress === null ? '—' : `${item.progress}%`}</td>
-                      <td>${item.eta ? escapeHtml(String(item.eta).replace('T', ' ').slice(0, 16)) : '—'}</td>
+                      <td data-label="Title">${escapeHtml(item.title)}</td>
+                      <td data-label="Status">${escapeHtml(String(item.status))}</td>
+                      <td data-label="Progress">${item.progress === null ? '—' : `${item.progress}%`}</td>
+                      <td data-label="Finishes">${item.eta ? escapeHtml(String(item.eta).replace('T', ' ').slice(0, 16)) : '—'}</td>
                     </tr>`
                   )
                   .join('')}</tbody>
@@ -1905,6 +1905,13 @@ function calendarEntries(items, scope, month) {
   return entries.sort((left, right) => String(left.releaseDate).localeCompare(String(right.releaseDate)))
 }
 
+/** "Fri 6 Mar", for the phone agenda's day headings. */
+function agendaDayLabel(iso) {
+  const date = new Date(`${iso}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+}
+
 /** A month grid: one box per day, with what releases that day inside it. */
 function calendarBody({ items, month, notice, error }) {
   const byDay = new Map()
@@ -1944,6 +1951,22 @@ function calendarBody({ items, month, notice, error }) {
   const count = [...byDay.values()].reduce((total, entries) => total + entries.length, 0)
   const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
+  // The same month as a list, for phones. A seven-column grid gives each title
+  // about 45px; this keeps every entry full width and every tap thumb-sized.
+  const agendaDays = [...byDay.entries()].sort(([left], [right]) => left.localeCompare(right))
+  const agenda = agendaDays.length
+    ? `<ol class="cal-agenda">${agendaDays
+        .map(
+          ([iso, entries]) => `<li>
+              <h3 class="cal-agenda-day${iso === today ? ' is-today' : ''}"><time datetime="${iso}">${escapeHtml(
+                agendaDayLabel(iso)
+              )}</time></h3>
+              <div class="cal-items">${entries.map((item) => calendarChip(item)).join('')}</div>
+            </li>`
+        )
+        .join('')}</ol>`
+    : '<ol class="cal-agenda"><li class="cal-agenda-empty muted">Nothing releases this month, and nothing in your library or requests is due.</li></ol>'
+
   return `<div class="page-head">
       <div>
         <h1>Calendar</h1>
@@ -1963,7 +1986,8 @@ function calendarBody({ items, month, notice, error }) {
     <div class="cal-grid">
       ${weekdays.map((name) => `<div class="cal-weekday">${name}</div>`).join('')}
       ${cells.join('')}
-    </div>`
+    </div>
+    ${agenda}`
 }
 
 /** Local state of one collection part, for the collection page's tick boxes. */
@@ -2201,11 +2225,11 @@ function tokensPanel({ tokens, newToken, newTokenScope = null }) {
               <tbody>${tokens
                 .map(
                   (token) => `<tr>
-                    <td>${escapeHtml(token.name)}</td>
-                    <td>${token.scope === TokenScope.CALENDAR ? 'Calendar' : 'API'}</td>
-                    <td><code>${escapeHtml(token.prefix)}…</code></td>
-                    <td>${escapeHtml(token.createdAt.slice(0, 10))}</td>
-                    <td>${token.lastUsedAt ? escapeHtml(token.lastUsedAt.slice(0, 16).replace('T', ' ')) : 'never'}</td>
+                    <td data-label="Name">${escapeHtml(token.name)}</td>
+                    <td data-label="Kind">${token.scope === TokenScope.CALENDAR ? 'Calendar' : 'API'}</td>
+                    <td data-label="Token"><code>${escapeHtml(token.prefix)}…</code></td>
+                    <td data-label="Created">${escapeHtml(token.createdAt.slice(0, 10))}</td>
+                    <td data-label="Last used">${token.lastUsedAt ? escapeHtml(token.lastUsedAt.slice(0, 16).replace('T', ' ')) : 'never'}</td>
                     <td><form method="post" action="/settings/tokens/${token.id}/delete"><button class="btn btn-sm btn-danger" type="submit">Revoke</button></form></td>
                   </tr>`
                 )
@@ -2628,7 +2652,7 @@ function settingsBody({
               ? audit
                   .map(
                     (entry) =>
-                      `<tr><td>${escapeHtml(entry.createdAt.slice(0, 16).replace('T', ' '))}</td><td>${escapeHtml(entry.username)}</td><td>${escapeHtml(entry.action)}</td><td>${escapeHtml(entry.detail)}</td></tr>`
+                      `<tr><td data-label="When">${escapeHtml(entry.createdAt.slice(0, 16).replace('T', ' '))}</td><td data-label="Who">${escapeHtml(entry.username)}</td><td data-label="Action">${escapeHtml(entry.action)}</td><td data-label="Detail">${escapeHtml(entry.detail)}</td></tr>`
                   )
                   .join('')
               : '<tr><td colspan="4" class="muted">Nothing logged yet.</td></tr>'
@@ -3662,6 +3686,33 @@ export function registerPageRoutes(router) {
   // is why it must be a calendar-scoped token: leaking one exposes this feed and
   // nothing else, whereas an API token in the same place exposes the account.
   // A header still works, for anything that can send one.
+  // Installed to a home screen, the app should not open as a bookmark with a
+  // URL bar. No service worker: nothing is cached, so nothing can go stale.
+  router.get('/manifest.webmanifest', ({ res }) => {
+    const name = appName()
+    const manifest = {
+      name,
+      short_name: name.length > 12 ? name.slice(0, 12) : name,
+      description: 'Request films and series once, from one page.',
+      start_url: '/',
+      scope: '/',
+      display: 'standalone',
+      background_color: '#0c0e14',
+      theme_color: '#0c0e14',
+      icons: [
+        { src: '/favicon-midnight.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: '/favicon-midnight.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+      ],
+    }
+    const body = Buffer.from(JSON.stringify(manifest))
+    res.writeHead(200, {
+      'content-type': 'application/manifest+json; charset=utf-8',
+      'content-length': body.length,
+      'cache-control': 'no-cache',
+    })
+    res.end(body)
+  })
+
   router.get('/calendar.ics', async ({ req, res, url }) => {
     const token = url.searchParams.get('token')
     const user = currentUser(req) ?? (token ? userForApiToken(token, { scope: TokenScope.CALENDAR }) : null)
