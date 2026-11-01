@@ -607,6 +607,38 @@ export async function collectionDetails(id) {
   })
 }
 
+/**
+ * Whether one film belongs to a collection, for the "collections only" filter.
+ * The answer is cached with the rest of the browse payloads, so a page of
+ * results costs one round of lookups and nothing after that.
+ */
+export async function movieCollectionId(tmdbId) {
+  try {
+    return await cachedJson(`movie-collection:${Number(tmdbId)}`, async () => {
+      const raw = await tmdbGet(`/movie/${Number(tmdbId)}`, {})
+      return raw.belongs_to_collection?.id ? Number(raw.belongs_to_collection.id) : null
+    })
+  } catch {
+    return null
+  }
+}
+
+/** Keeps only the films that are part of a collection, in the order given. */
+export async function collectionTitles(items) {
+  const kept = []
+
+  // Small batches keep the request burst under TMDB's rate limit on a cold cache.
+  for (let index = 0; index < items.length; index += 6) {
+    const slice = items.slice(index, index + 6)
+    const flags = await Promise.all(slice.map((item) => movieCollectionId(item.tmdbId)))
+    slice.forEach((item, offset) => {
+      if (flags[offset]) kept.push(item)
+    })
+  }
+
+  return kept
+}
+
 /** Everything one person page needs: biography plus every credited title. */
 /**
  * The best YouTube trailer for a title, or null. A missing or broken video list

@@ -46,6 +46,7 @@ import {
   plexPinToken,
   plexProfiles,
   plexSwitchProfile,
+  plexWatchlist,
 } from './plexauth.js'
 import { clientKey, createRateLimiter } from './ratelimit.js'
 import {
@@ -58,6 +59,7 @@ import {
 } from './services.js'
 import {
   collectionDetails,
+  collectionTitles,
   CONTENT_TYPE_IDS,
   contentTypeOptions,
   discoverPage,
@@ -94,11 +96,11 @@ import {
   layout,
   mediaCard,
   pagination,
-  permissionList,
   poster,
   previewAttrs,
   requestCard,
   statusBadge,
+  themeSelect,
 } from './views.js'
 
 const loginLimiter = createRateLimiter({ windowMs: config.loginRateWindowMs, max: config.loginRateLimit })
@@ -370,6 +372,33 @@ function localUserForPlex(account) {
   return store.findUserById(created.id)
 }
 
+/**
+ * Copies the Plex profile's watchlist into the local one. Sign-in never waits
+ * for Plex's discovery host, and only titles that are not already saved are
+ * added, so signing in twice changes nothing.
+ */
+async function importPlexWatchlist(user, token) {
+  if (store.getSetting('plex.importWatchlist') !== 'true') return 0
+
+  try {
+    const items = await plexWatchlist(token)
+    let imported = 0
+
+    for (const item of items) {
+      if (store.isWatched(user.id, item.tmdbId, item.mediaType)) continue
+      store.toggleWatchlist(user.id, item)
+      imported += 1
+    }
+
+    if (imported) store.recordAudit(user.id, 'watchlist.plex_import', `${imported} title(s) from Plex`)
+    return imported
+  } catch (error) {
+    // A watchlist Plex will not share is not a reason to fail the sign-in.
+    console.warn(`[discovarr] Plex watchlist import failed: ${error.message}`)
+    return 0
+  }
+}
+
 async function finishPlexSignIn({ req, res, token, profile = null }) {
   let account = null
   try {
@@ -385,6 +414,10 @@ async function finishPlexSignIn({ req, res, token, profile = null }) {
   const user = localUserForPlex(account ?? { id: '', username: 'plex', email: '', title: 'Plex user' })
   const session = createSession(user.id)
   store.recordAudit(user.id, 'auth.plex_login', account?.username || user.username)
+
+  // The profile's token is only in hand right now, so this is the moment its
+  // watchlist can be copied over.
+  void importPlexWatchlist(user, token)
 
   redirect(res, '/', {
     'set-cookie': [
@@ -488,6 +521,8 @@ function filtersFromParams(params) {
     genres: parseIds(params.getAll('genre')),
     networks: parseIds(params.getAll('network')),
     studios: parseIds(params.getAll('studio')),
+    // A film-only switch: only titles that belong to a collection.
+    collections: params.get('collections') === '1',
     from: number('from', 1900, 2100),
     to: number('to', 1900, 2100),
     rating: number('rating', 0, 10),
@@ -503,6 +538,7 @@ function hasFilters(filters) {
     filters.genres.length ||
       filters.networks.length ||
       filters.studios.length ||
+      filters.collections ||
       filters.from ||
       filters.to ||
       filters.rating ||
@@ -518,6 +554,7 @@ function filterParams(filters) {
     genre: filters.genres.join(','),
     network: filters.networks.join('|'),
     studio: filters.studios.join('|'),
+    collections: filters.collections ? '1' : '',
     sort: filters.sort === 'popular' ? '' : filters.sort,
     from: filters.from ?? '',
     to: filters.to ?? '',
@@ -622,7 +659,7 @@ function toggleList(name, options, selected, scroll = false) {
 function railGroup(title, count, open, body) {
   if (!body) return ''
 
-  return `<details class="rail-group"${open ? ' open' : ''}>
+  return `<details class="rail-group" data-group="${escapeHtml(title)}"${open ? ' open' : ''}>
     <summary>${escapeHtml(title)}${count ? `<span class="rail-count">${escapeHtml(count)}</span>` : ''}</summary>
     ${body}
   </details>`
@@ -709,6 +746,17 @@ function filterRail({
       </div>`
     : ''
 
+  // TMDB has no collections for series, so the switch only appears for films.
+  const collectionRow =
+    mediaType === MediaType.MOVIE
+      ? `<div class="rail-collections">${toggleField(
+          'collections',
+          '1',
+          'Collections only',
+          Boolean(filters.collections)
+        )}</div>`
+      : ''
+
   return `<form class="filter-rail" method="get" action="${escapeHtml(action)}" data-filter-form>
     <div class="rail-head">
       <strong>Filters</strong>
@@ -718,6 +766,7 @@ function filterRail({
       </div>
     </div>
     ${typeRow}
+    ${collectionRow}
     ${railGroup('Type', filters.kinds.length, filters.kinds.length > 0, toggleList('kind', types, filters.kinds))}
     ${railGroup(
       'Genres',
@@ -817,12 +866,14 @@ function discoverBody({
         ? 'Trending on TMDB — request anything for the library.'
         : 'Local catalog (offline demo data).'
 
+  const narrowed = filtered && filters?.collections ? ' Only films that are part of a collection.' : ''
+
   return discoverLayout(
     '',
     `<div class="page-head">
       <div>
         <h1>${query ? `Results for “${escapeHtml(query)}”` : 'Discover'}</h1>
-        <p class="muted">${subtitle}</p>
+        <p class="muted">${escapeHtml(`${subtitle}${narrowed}`)}</p>
       </div>
       <form class="search" method="get" action="/" data-suggest="/search/suggest">
         ${type !== 'all' ? `<input type="hidden" name="type" value="${escapeHtml(type)}" />` : ''}
@@ -888,26 +939,29 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
     page,
     sort: filters.sort,
   })
+  // TMDB cannot filter on "is part of a collection", so the page is narrowed here.
+  const items = filters.collections && isMovie ? await collectionTitles(result.items) : result.items
+  const collectionNote = filters.collections && isMovie ? ' Only films that are part of a collection.' : ''
 
   const head = logo
     ? `<div class="brand-head">
         ${brandLogo(logo.name, logo.logoPath)}
         <div>
           <h1>${escapeHtml(title)}</h1>
-          <p class="muted">${escapeHtml(subtitle)}</p>
+          <p class="muted">${escapeHtml(`${subtitle}${collectionNote}`)}</p>
         </div>
       </div>`
     : `<div class="page-head">
         <div>
           <h1>${escapeHtml(title)}</h1>
-          <p class="muted">${escapeHtml(subtitle)}</p>
+          <p class="muted">${escapeHtml(`${subtitle}${collectionNote}`)}</p>
         </div>
       </div>`
 
   return discoverLayout(
     browse,
     `${head}
-    ${mediaGrid(result.items, { returnTo: browseHref(basePath, filterParams(filters)), plex })}
+    ${mediaGrid(items, { returnTo: browseHref(basePath, filterParams(filters)), plex })}
     ${pagination({ page: result.page, totalPages: result.totalPages, basePath, params: filterParams(filters) })}`,
     filterRail({
       action: basePath,
@@ -1160,7 +1214,7 @@ function collectionPanel(collection) {
 
   return `<aside class="collection-side panel">
     <h2 style="margin: 0">${escapeHtml(collection.name)}</h2>
-    <p class="muted small">${count} other film${count === 1 ? '' : 's'} · tick the ones you want</p>
+    <p class="muted small">${count} film${count === 1 ? '' : 's'} in this collection · tick any you are missing</p>
     <form method="post" action="/collection/${escapeHtml(String(collection.id))}/request" class="collection-form">
       <input type="hidden" name="returnTo" value="${escapeHtml(collection.returnTo ?? '/')}" />
       <label class="switch-row"><input type="checkbox" data-collection-all checked /> <span>Select all</span></label>
@@ -1169,11 +1223,17 @@ function collectionPanel(collection) {
           .map((part) => {
             const href = `/title/movie/${escapeHtml(String(part.tmdbId))}`
             const year = formatDate(part.releaseDate)
-            const state =
-              part.state === 'library' ? ' · In library' : part.state === 'requested' ? ' · Requested' : ''
-            return `<li class="collection-part">
+            const state = part.current
+              ? ' · This title'
+              : part.state === 'library'
+                ? ' · In library'
+                : part.state === 'requested'
+                  ? ' · Requested'
+                  : ''
+            const locked = Boolean(part.state) || Boolean(part.current)
+            return `<li class="collection-part${part.current ? ' is-current' : ''}">
               <input type="checkbox" name="tmdbId" value="${escapeHtml(String(part.tmdbId))}" ${
-                part.state ? 'disabled' : 'checked'
+                locked ? 'disabled' : 'checked'
               } data-collection-part />
               <a class="collection-poster" href="${href}">
                 ${
@@ -1242,7 +1302,9 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
         .join('')}</dl>`
     : ''
 
-  const isAvailable = media?.status === MediaStatus.AVAILABLE
+  // Plex already holds the file even when the local row has not caught up, so
+  // both count as "here" and neither offers a request again.
+  const isAvailable = media?.status === MediaStatus.AVAILABLE || Boolean(plex)
   // Discovarr knows about its own active requests; Radarr/Sonarr know about
   // titles added straight in the download manager. Either one blocks a second
   // request instead of silently filing a duplicate.
@@ -1432,7 +1494,7 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
           details
             ? `<p class="muted small">Metadata from TMDB.${
                 collection
-                  ? ` · <a href="/collection/${collection.id}">All ${collection.parts.length + 1} films in ${escapeHtml(
+                  ? ` · <a href="/collection/${collection.id}">All ${collection.parts.length} films in ${escapeHtml(
                       collection.name
                     )}</a>`
                   : ''
@@ -1453,9 +1515,13 @@ async function loadCollection(details, mediaType, currentTmdbId, returnTo) {
 
   try {
     const collection = await collectionDetails(details.collection.id)
-    const parts = collection.parts
-      .filter((part) => Number(part.tmdbId) !== Number(currentTmdbId))
-      .map((part) => ({ ...part, state: partState(part.tmdbId) }))
+    // The whole collection, so the panel reads as one set: the film on screen is
+    // marked rather than left out.
+    const parts = collection.parts.map((part) => ({
+      ...part,
+      current: Number(part.tmdbId) === Number(currentTmdbId),
+      state: partState(part.tmdbId),
+    }))
 
     return { ...collection, parts, returnTo }
   } catch {
@@ -1930,12 +1996,11 @@ function requestsBody({ user, result, filter, notice, error }) {
 // Account
 // ---------------------------------------------------------------------------
 
-function accountBody({ user, quota, notice, error, tokens = [], newToken = null }) {
+function accountBody({ user, quota, notice, error }) {
   return `<h1>Account</h1>
     ${alert({ notice, error })}
     <section class="panel">
       <p><strong>${escapeHtml(user.username)}</strong> <span class="muted">${escapeHtml(user.email)}</span></p>
-      <p class="muted small">Role: ${escapeHtml(user.role)} · ${permissionList(user.permissions, user.role)}</p>
       <p class="muted small">Monthly quotas: movies ${quota.movie.used}/${quota.movie.limit || '∞'} · series ${quota.tv.used}/${quota.tv.limit || '∞'}</p>
     </section>
 
@@ -1963,34 +2028,7 @@ function accountBody({ user, quota, notice, error, tokens = [], newToken = null 
       <button class="btn btn-sm" type="submit">Save notification preferences</button>
     </form>
 
-    <section class="panel">
-      <h2 style="margin: 0">API tokens</h2>
-      <p class="muted small">For scripts and home automation: send <code>Authorization: Bearer &lt;token&gt;</code> to <code>/api/v1/…</code>. A token acts as your account, so treat it like a password.</p>
-      ${newToken ? `<p class="alert alert-ok">New token, shown once: <code>${escapeHtml(newToken)}</code></p>` : ''}
-      ${newToken ? `<p class="muted small">Calendar feed for your phone: <code>/calendar.ics?token=${escapeHtml(newToken)}</code></p>` : ''}
-      ${
-        tokens.length
-          ? `<table class="table">
-              <thead><tr><th>Name</th><th>Token</th><th>Created</th><th>Last used</th><th></th></tr></thead>
-              <tbody>${tokens
-                .map(
-                  (token) => `<tr>
-                    <td>${escapeHtml(token.name)}</td>
-                    <td><code>${escapeHtml(token.prefix)}…</code></td>
-                    <td>${escapeHtml(token.createdAt.slice(0, 10))}</td>
-                    <td>${token.lastUsedAt ? escapeHtml(token.lastUsedAt.slice(0, 16).replace('T', ' ')) : 'never'}</td>
-                    <td><form method="post" action="/account/tokens/${token.id}/delete"><button class="btn btn-sm btn-danger" type="submit">Revoke</button></form></td>
-                  </tr>`
-                )
-                .join('')}</tbody>
-            </table>`
-          : '<p class="muted small">No tokens yet.</p>'
-      }
-      <form method="post" action="/account/tokens" class="row">
-        <label>Name <input type="text" name="name" maxlength="60" placeholder="Home Assistant" /></label>
-        <button class="btn btn-sm" type="submit">Create token</button>
-      </form>
-    </section>`
+`
 }
 
 // ---------------------------------------------------------------------------
@@ -1998,11 +2036,13 @@ function accountBody({ user, quota, notice, error, tokens = [], newToken = null 
 // ---------------------------------------------------------------------------
 
 const SETTINGS_TABS = Object.freeze([
+  ['general', 'General'],
   ['integrations', 'Integrations'],
   ['users', 'Users'],
   ['notifications', 'Notifications'],
-  ['logs', 'Logs'],
+  ['tokens', 'API tokens'],
   ['tasks', 'Tasks'],
+  ['logs', 'Logs'],
 ])
 
 const WATCH_REGIONS = [
@@ -2031,6 +2071,37 @@ function settingsTabs(tab) {
       ([key, label]) => `<a class="tab ${tab === key ? 'is-active' : ''}" href="/settings?tab=${key}">${label}</a>`
     ).join('')}
   </nav>`
+}
+
+function tokensPanel({ tokens, newToken }) {
+  return `<section class="panel">
+      <h2 style="margin: 0">Your API tokens</h2>
+      <p class="muted small">For scripts and home automation: send <code>Authorization: Bearer &lt;token&gt;</code> to <code>/api/v1/…</code>. A token acts as your account, so treat it like a password.</p>
+      ${newToken ? `<p class="alert alert-ok">New token, shown once: <code>${escapeHtml(newToken)}</code></p>` : ''}
+      ${newToken ? `<p class="muted small">Calendar feed for your phone: <code>/calendar.ics?token=${escapeHtml(newToken)}</code></p>` : ''}
+      ${
+        tokens.length
+          ? `<table class="table">
+              <thead><tr><th>Name</th><th>Token</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+              <tbody>${tokens
+                .map(
+                  (token) => `<tr>
+                    <td>${escapeHtml(token.name)}</td>
+                    <td><code>${escapeHtml(token.prefix)}…</code></td>
+                    <td>${escapeHtml(token.createdAt.slice(0, 10))}</td>
+                    <td>${token.lastUsedAt ? escapeHtml(token.lastUsedAt.slice(0, 16).replace('T', ' ')) : 'never'}</td>
+                    <td><form method="post" action="/settings/tokens/${token.id}/delete"><button class="btn btn-sm btn-danger" type="submit">Revoke</button></form></td>
+                  </tr>`
+                )
+                .join('')}</tbody>
+            </table>`
+          : '<p class="muted small">No tokens yet.</p>'
+      }
+      <form method="post" action="/settings/tokens" class="row">
+        <label>Name <input type="text" name="name" maxlength="60" placeholder="Home Assistant" /></label>
+        <button class="btn btn-sm" type="submit">Create token</button>
+      </form>
+    </section>`
 }
 
 function regionOptions(current) {
@@ -2251,6 +2322,11 @@ function plexPanel(settings) {
         <input type="checkbox" name="plexLogin" ${settings['plex.login'] === 'true' ? 'checked' : ''} />
         <span>Allow signing in with Plex</span>
       </label>
+      <input type="hidden" name="plexImportSubmitted" value="1" />
+      <label class="checkbox">
+        <input type="checkbox" name="plexImportWatchlist" ${settings['plex.importWatchlist'] === 'true' ? 'checked' : ''} />
+        <span>Copy a profile's Plex watchlist into its Discovarr watchlist when it signs in</span>
+      </label>
       <p class="muted small">A Plex account that has never used this instance gets its own Discovarr account the first time it
         signs in, and picks its Plex profile when the account has more than one. A profile with a Plex Home PIN has to
         enter that PIN before it signs in.</p>
@@ -2303,32 +2379,51 @@ function userRow(member, actor) {
   </form>`
 }
 
-function settingsBody({ user, settings, users, audit, options, tab, notice, error }) {
+function settingsBody({
+  user,
+  settings,
+  users,
+  audit,
+  options,
+  tab,
+  tokens = [],
+  newToken = null,
+  notice,
+  error,
+}) {
   const sync = syncState()
-  const current = SETTINGS_TABS.some(([key]) => key === tab) ? tab : 'integrations'
+  const current = SETTINGS_TABS.some(([key]) => key === tab) ? tab : 'general'
 
-  const generalPanel = `<fieldset class="panel">
-      <legend>General</legend>
-      <label>Application name <input type="text" name="appName" value="${escapeHtml(settings['app.name'])}" maxlength="60" /></label>
-      <label class="checkbox">
-        <input type="checkbox" name="autoApprove" ${settings['requests.autoApprove'] === 'true' ? 'checked' : ''} />
-        <span>Auto-approve new requests</span>
-      </label>
-      <label>TMDB API key
-        <input type="password" name="tmdbApiKey" value="${escapeHtml(settings['tmdb.apiKey'])}" autocomplete="off" placeholder="v3 key or v4 read token" />
-      </label>
-      <label>Where-to-watch region
-        <select name="tmdbRegion">${regionOptions(settings['tmdb.region'])}</select>
-      </label>
-    </fieldset>`
-
-  const integrations = `<form method="post" action="/settings" class="stack">
-      <input type="hidden" name="settingsSection" value="integrations" />
-      <input type="hidden" name="settingsTab" value="integrations" />
-      ${generalPanel}
+  const general = `<form method="post" action="/settings" class="stack">
+      <input type="hidden" name="settingsSection" value="general" />
+      <input type="hidden" name="settingsTab" value="general" />
+      <fieldset class="panel">
+        <legend>Application</legend>
+        <label>Application name <input type="text" name="appName" value="${escapeHtml(settings['app.name'])}" maxlength="60" /></label>
+        <label class="checkbox">
+          <input type="checkbox" name="autoApprove" ${settings['requests.autoApprove'] === 'true' ? 'checked' : ''} />
+          <span>Auto-approve new requests</span>
+        </label>
+      </fieldset>
+      <fieldset class="panel">
+        <legend>Metadata</legend>
+        <label>TMDB API key
+          <input type="password" name="tmdbApiKey" value="${escapeHtml(settings['tmdb.apiKey'])}" autocomplete="off" placeholder="v3 key or v4 read token" />
+        </label>
+        <label>Where-to-watch region
+          <select name="tmdbRegion">${regionOptions(settings['tmdb.region'])}</select>
+        </label>
+      </fieldset>
       <button class="btn" type="submit">Save general settings</button>
     </form>
-    ${servicePanel('radarr', 'Radarr', settings, options)}
+
+    <section class="panel">
+      <h2 style="margin: 0">Appearance</h2>
+      <p class="muted small">The theme is remembered in this browser, so everyone can keep their own. It applies straight away.</p>
+      ${themeSelect({ label: 'Theme' })}
+    </section>`
+
+  const integrations = `${servicePanel('radarr', 'Radarr', settings, options)}
     ${servicePanel('sonarr', 'Sonarr', settings, options)}
     ${plexPanel(settings)}`
 
@@ -2532,7 +2627,11 @@ function settingsBody({ user, settings, users, audit, options, tab, notice, erro
           ? logs
           : current === 'tasks'
             ? tasks
-            : integrations
+            : current === 'tokens'
+              ? tokensPanel({ tokens, newToken })
+              : current === 'general'
+                ? general
+                : integrations
 
   return `<h1>Settings</h1>
     ${alert({ notice, error })}
@@ -2633,15 +2732,17 @@ function settingsFromBody(body) {
     input.sonarr = serviceFromBody(body, 'sonarr')
   }
 
-  if (section === '' || section === 'integrations') {
+  const generalForm = section === '' || section === 'general' || section === 'integrations'
+
+  if (generalForm) {
     if (body.appName !== undefined) input.appName = body.appName
     if (body.tmdbApiKey !== undefined) input.tmdbApiKey = body.tmdbApiKey
     if (body.tmdbRegion !== undefined) input.tmdbRegion = body.tmdbRegion
   }
 
-  // Only the general form carries the policy checkbox; saving a service must
-  // not read an absent checkbox as "turn auto-approve off".
-  if (section === 'integrations' && body.appName !== undefined) {
+  // Only the general forms carry the policy checkbox; saving a service must not
+  // read an absent checkbox as "turn auto-approve off".
+  if (generalForm && body.appName !== undefined) {
     input.autoApprove = body.autoApprove !== undefined
   }
 
@@ -2655,6 +2756,9 @@ function settingsFromBody(body) {
     if (body.plexToken !== undefined) input.plex.token = body.plexToken
     if (body.plexEnabledSubmitted !== undefined) input.plex.enabled = body.plexEnabled !== undefined
     if (body.plexLoginSubmitted !== undefined) input.plex.login = body.plexLogin !== undefined
+    if (body.plexImportSubmitted !== undefined) {
+      input.plex.importWatchlist = body.plexImportWatchlist !== undefined
+    }
   }
 
   if (section === 'notifications') {
@@ -2933,7 +3037,11 @@ export function registerPageRoutes(router) {
         filtered = true
         currentPage = Math.min(result.page, result.totalPages)
         totalPages = result.totalPages
-        items = result.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
+        const found =
+          filters.collections && mediaType === MediaType.MOVIE
+            ? await collectionTitles(result.items)
+            : result.items
+        items = found.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
         rail = await discoverRail(mediaType, filters)
       } catch (tmdbError) {
         error = `TMDB unavailable: ${tmdbError.message}`
@@ -3677,52 +3785,39 @@ export function registerPageRoutes(router) {
       body: accountBody({
         user,
         quota: quotaSummary(user),
-        tokens: store.listApiTokens(user.id),
         notice: url.searchParams.get('notice'),
         error: url.searchParams.get('err'),
       }),
     })
   })
 
-  router.post('/account/tokens', async ({ req, res }) => {
-    const user = requireUser(req)
+  router.post('/settings/tokens', async ({ req, res }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
     const body = await readBody(req)
     const name = String(body.name ?? '').trim().slice(0, 60) || 'API token'
 
     const token = `dcv_${randomBytes(24).toString('base64url')}`
     store.createApiToken({
-      userId: user.id,
+      userId: actor.id,
       name,
       prefix: token.slice(0, 10),
       tokenHash: hashApiToken(token),
     })
-    store.recordAudit(user.id, 'account.token_created', name)
+    store.recordAudit(actor.id, 'account.token_created', name)
 
     // Shown once, on the response to the creation itself, so it never appears
     // in a redirect URL or a log line.
-    render(res, 200, {
-      title: 'Account',
-      user,
-      active: 'account',
-      body: accountBody({
-        user: store.findUserById(user.id),
-        quota: quotaSummary(user),
-        tokens: store.listApiTokens(user.id),
-        newToken: token,
-        notice: 'Token created',
-        error: null,
-      }),
-    })
+    renderSettings(res, actor, { tab: 'tokens', newToken: token, notice: 'Token created' })
   })
 
-  router.post('/account/tokens/:id/delete', ({ req, res, params }) => {
-    const user = requireUser(req)
-    const removed = store.deleteApiToken(Number(params.id), user.id)
-    store.recordAudit(user.id, 'account.token_revoked', String(params.id))
+  router.post('/settings/tokens/:id/delete', ({ req, res, params }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
+    const removed = store.deleteApiToken(Number(params.id), actor.id)
+    store.recordAudit(actor.id, 'account.token_revoked', String(params.id))
 
     redirect(
       res,
-      withMessage('/account', removed ? 'notice' : 'err', removed ? 'Token revoked' : 'Token not found')
+      withMessage('/settings?tab=tokens', removed ? 'notice' : 'err', removed ? 'Token revoked' : 'Token not found')
     )
   })
 
@@ -3768,6 +3863,27 @@ export function registerPageRoutes(router) {
     res.end(snapshot)
   })
 
+  /** The settings page in one call, so POST handlers can answer without a redirect. */
+  async function renderSettings(res, actor, { tab, notice = null, error = null, tokens = null, newToken = null }) {
+    render(res, 200, {
+      title: 'Settings',
+      user: actor,
+      active: 'settings',
+      body: settingsBody({
+        user: actor,
+        settings: store.getSettings(),
+        users: store.listUsers(),
+        audit: store.listAudit(30),
+        options: await loadOptionsForPage(),
+        tab,
+        tokens: tokens ?? store.listApiTokens(actor.id),
+        newToken,
+        notice,
+        error,
+      }),
+    })
+  }
+
   router.get('/settings', async ({ req, res, url }) => {
     const user = pageUser(req, res, '/settings')
     if (!user) return
@@ -3786,7 +3902,8 @@ export function registerPageRoutes(router) {
         users: store.listUsers(),
         audit: store.listAudit(30),
         options: await loadOptionsForPage(),
-        tab: url.searchParams.get('tab') ?? 'integrations',
+        tokens: store.listApiTokens(user.id),
+        tab: url.searchParams.get('tab') ?? 'general',
         notice: url.searchParams.get('notice'),
         error: url.searchParams.get('err'),
       }),
@@ -3802,9 +3919,7 @@ export function registerPageRoutes(router) {
       if (body.plexUrl !== undefined || body.plexToken !== undefined || body.plexEnabledSubmitted !== undefined) {
         forgetPlex()
       }
-      const tab = ['integrations', 'users', 'notifications', 'logs', 'tasks'].includes(body.settingsTab)
-        ? body.settingsTab
-        : 'integrations'
+      const tab = SETTINGS_TABS.some(([key]) => key === body.settingsTab) ? body.settingsTab : 'general'
       redirect(res, withMessage(`/settings?tab=${tab}`, 'notice', 'Settings saved'))
     } catch (error) {
       failure(res, '/settings', error)

@@ -715,6 +715,9 @@ export function updateSettings(input, actor) {
     if (plex.url !== undefined) entries['plex.url'] = String(plex.url ?? '').trim()
     if (plex.token !== undefined) entries['plex.token'] = String(plex.token ?? '').trim()
     if (plex.login !== undefined) entries['plex.login'] = plex.login ? 'true' : 'false'
+    if (plex.importWatchlist !== undefined) {
+      entries['plex.importWatchlist'] = plex.importWatchlist ? 'true' : 'false'
+    }
   }
 
   if (input.notifications) {

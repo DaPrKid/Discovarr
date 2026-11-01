@@ -218,7 +218,9 @@ test('the same click pulls root folders and quality profiles', async () => {
 })
 
 test('the settings page fills its dropdowns without another click', async () => {
-  const html = await (await fetch(`${baseUrl}/settings`, { headers: { cookie: adminCookie } })).text()
+  const html = await (
+    await fetch(`${baseUrl}/settings?tab=integrations`, { headers: { cookie: adminCookie } })
+  ).text()
 
   // The stored default is a bubble with edit and delete buttons, and the
   // dialogs offer the live quality profiles and root folders from Radarr.
@@ -333,9 +335,17 @@ test('the title page shows release date, facts and the seasons panel', async () 
 test('settings is split into tabs', async () => {
   const get = (tab) => fetch(`${baseUrl}/settings?tab=${tab}`, { headers: { cookie: adminCookie } }).then((r) => r.text())
 
+  const general = await get('general')
+  assert.match(general, /TMDB API key/)
+  assert.match(general, /data-theme-picker/)
+  assert.doesNotMatch(general, /Radarr profiles/)
+
   const integrations = await get('integrations')
-  assert.match(integrations, /TMDB API key/)
   assert.match(integrations, /Radarr profiles/)
+  assert.doesNotMatch(integrations, /TMDB API key/)
+
+  const tokens = await get('tokens')
+  assert.match(tokens, /Your API tokens/)
 
   const users = await get('users')
   assert.match(users, /Add a user/)

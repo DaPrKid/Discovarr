@@ -9,7 +9,7 @@ import {
   REQUEST_STATUS_LABEL,
   Role,
 } from './constants.js'
-import { countUnreadNotifications } from './db.js'
+import { countUnreadNotifications, listNotifications } from './db.js'
 import { imageUrl } from './tmdb.js'
 
 export function escapeHtml(value) {
@@ -72,6 +72,45 @@ function mark() {
     </svg>`
 }
 
+/**
+ * The appearance picker. It lives on the settings page now; the choice is
+ * remembered per browser, which is where a theme belongs.
+ */
+export function themeSelect({ label = 'Theme', className = 'rail-field' } = {}) {
+  return `<label class="${escapeHtml(className)}">${escapeHtml(label)}
+      <select data-theme-picker aria-label="${escapeHtml(label)}">
+        <option value="midnight">Midnight</option>
+        <option value="cinema">Cinema</option>
+        <option value="teal">Deep Teal</option>
+        <option value="forest">Enchanted Forest</option>
+        <option value="sapphire">Midnight Sapphire</option>
+        <option value="crimson">Imperial Crimson</option>
+      </select>
+    </label>`
+}
+
+/** The last few notifications, for the panel the bell opens. */
+function notificationPanel(items) {
+  const list = items.length
+    ? `<ul class="notif-list">${items
+        .map(
+          (item) => `<li class="notif-item${item.readAt ? '' : ' is-unread'}">
+            <a href="${escapeHtml(item.href || '/notifications')}">${escapeHtml(item.title)}</a>
+            <span class="muted small">${escapeHtml(item.createdAt.slice(0, 16).replace('T', ' '))}</span>
+          </li>`
+        )
+        .join('')}</ul>`
+    : '<p class="muted small notif-empty">Nothing yet. Approvals, declines and titles arriving show up here.</p>'
+
+  return `<div class="notif-pop" id="notif-pop" hidden>
+      <div class="notif-pop-head">
+        <strong>Notifications</strong>
+        <a class="inline-link small" href="/notifications">See all</a>
+      </div>
+      ${list}
+    </div>`
+}
+
 function navigation({ user, active, appName, canManageSettings }) {
   const items = [
     ['discover', '/', 'Discover'],
@@ -84,6 +123,7 @@ function navigation({ user, active, appName, canManageSettings }) {
   if (canManageSettings) items.push(['settings', '/settings', 'Settings'])
 
   const unread = user?.id ? countUnreadNotifications(user.id) : 0
+  const recent = user?.id ? listNotifications(user.id, 6) : []
 
   return `<header class="topbar">
     <a class="brand" href="/">${mark()}<span class="brand-name">${escapeHtml(appName)}</span></a>
@@ -96,21 +136,13 @@ function navigation({ user, active, appName, canManageSettings }) {
         .join('')}
     </nav>
     <div class="account">
-      <label class="theme-pick" title="Appearance">
-        <span class="sr-only">Appearance</span>
-        <select data-theme-picker aria-label="Appearance">
-          <option value="midnight">Midnight</option>
-          <option value="cinema">Cinema</option>
-          <option value="teal">Deep Teal</option>
-          <option value="forest">Enchanted Forest</option>
-          <option value="sapphire">Midnight Sapphire</option>
-          <option value="crimson">Imperial Crimson</option>
-        </select>
-      </label>
-      <a class="bell" href="/notifications" aria-label="Notifications${unread ? `, ${unread} unread` : ''}" title="Notifications">
-        <span aria-hidden="true">✉</span>${unread ? `<span class="bell-count">${unread > 99 ? '99+' : unread}</span>` : ''}
-      </a>
-      <a class="chip" href="/account">${escapeHtml(user.username)}<em>${escapeHtml(user.role)}</em></a>
+      <div class="notif">
+        <a class="bell" href="/notifications" data-notif-toggle aria-expanded="false" aria-controls="notif-pop" aria-label="Notifications${unread ? `, ${unread} unread` : ''}" title="Notifications">
+          <span aria-hidden="true">✉</span>${unread ? `<span class="bell-count">${unread > 99 ? '99+' : unread}</span>` : ''}
+        </a>
+        ${notificationPanel(recent)}
+      </div>
+      <a class="chip" href="/account">${escapeHtml(user.username)}</a>
       <form method="post" action="/logout"><button class="link" type="submit">Sign out</button></form>
     </div>
   </header>`
@@ -184,6 +216,36 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         const closer = event.target.closest('[data-dialog-close]')
         if (closer) closer.closest('dialog')?.close()
       })
+
+      // The bell opens a small panel over the page instead of leaving it, and
+      // the same button closes it again, so a glance never loses your place.
+      ;(function () {
+        var toggle = document.querySelector('[data-notif-toggle]')
+        var pop = document.getElementById('notif-pop')
+        if (!toggle || !pop) return
+        function close() {
+          pop.hidden = true
+          toggle.setAttribute('aria-expanded', 'false')
+        }
+        function open() {
+          pop.hidden = false
+          toggle.setAttribute('aria-expanded', 'true')
+        }
+        toggle.addEventListener('click', function (event) {
+          event.preventDefault()
+          if (pop.hidden) open()
+          else close()
+          return false
+        })
+        document.addEventListener('click', function (event) {
+          if (pop.hidden) return
+          if (pop.contains(event.target) || toggle.contains(event.target)) return
+          close()
+        })
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape') close()
+        })
+      })()
 
       // Sidebar toggles: the choice is remembered per browser, and a hidden
       // panel gives its column back to the poster grid.
@@ -394,6 +456,31 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           if (field.matches('input[type=checkbox], input[type=radio], select')) panel.requestSubmit()
         })
       })()
+
+      // Each filter group remembers whether it was open. Without this the page
+      // redraws the panel on every change and unticking the last network or
+      // studio folds the group you were working in.
+      ;(function () {
+        var rail = document.querySelector('form.filter-rail')
+        if (!rail) return
+        var key = 'discovarr-rail-groups'
+        var saved = {}
+        try {
+          saved = JSON.parse(localStorage.getItem(key) || '{}') || {}
+        } catch (error) {
+          saved = {}
+        }
+        rail.querySelectorAll('details.rail-group[data-group]').forEach(function (group) {
+          var name = group.dataset.group
+          if (typeof saved[name] === 'boolean') group.open = saved[name]
+          group.addEventListener('toggle', function () {
+            saved[name] = group.open
+            try {
+              localStorage.setItem(key, JSON.stringify(saved))
+            } catch (error) {}
+          })
+        })
+      })()
     
       // "All seasons" hides and disables the season boxes; without this script
       // the same fields still post, just with the list open.
@@ -569,8 +656,14 @@ export function poster(media, extraClass = '') {
   return `<div class="poster ${extraClass}" style="--hue:${hue}"><span>${escapeHtml(initials)}</span></div>`
 }
 
-function requestAction(item, local, returnTo) {
+function requestAction(item, local, returnTo, plex = null) {
   if (local && local.status === MediaStatus.AVAILABLE) {
+    return '<span class="badge badge-available">Available</span>'
+  }
+
+  // Already playable in Plex: offering Request again would file a duplicate
+  // for something the household can watch right now.
+  if (plex) {
     return '<span class="badge badge-available">Available</span>'
   }
 
@@ -628,7 +721,7 @@ export function mediaCard(item, { returnTo = '/', local = null, plex = null } = 
     <div class="media-body">
       <a class="media-title" href="${href}"${preview}>${title}</a>
       <p class="media-meta">${escapeHtml(meta)}${year ? ` · ${escapeHtml(year)}` : ''}</p>
-      <div class="media-actions">${requestAction(item, entry, returnTo)}${
+      <div class="media-actions">${requestAction(item, entry, returnTo, plex)}${
         plex
           ? `<a class="btn btn-sm btn-plex" href="${escapeHtml(plex.playUrl)}" target="_blank" rel="noreferrer noopener" title="Play ${title} on Plex" aria-label="Play ${title} on Plex">▶ Play</a>`
           : ''

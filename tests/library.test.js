@@ -234,7 +234,7 @@ test('a title page links to its trailer', async () => {
 })
 
 test('an API token authenticates the API and can be revoked', async () => {
-  const created = await postForm('/account/tokens', { name: 'Home Assistant' })
+  const created = await postForm('/settings/tokens', { name: 'Home Assistant' })
   assert.equal(created.status, 200)
 
   const html = await created.text()
@@ -246,10 +246,10 @@ test('an API token authenticates the API and can be revoked', async () => {
   assert.equal(me.status, 200)
   assert.equal((await me.json()).user.username, 'owner')
 
-  const id = /action="\/account\/tokens\/(\d+)\/delete"/.exec(html)?.[1]
+  const id = /action="\/settings\/tokens\/(\d+)\/delete"/.exec(html)?.[1]
   assert.ok(id, 'the token row has no revoke button')
 
-  const revoke = await postForm(`/account/tokens/${id}/delete`, {})
+  const revoke = await postForm(`/settings/tokens/${id}/delete`, {})
   assert.equal(revoke.status, 303)
 
   const after = await fetch(`${baseUrl}/api/v1/auth/me`, {
@@ -281,7 +281,7 @@ test('the database can be downloaded as a real SQLite file', async () => {
 })
 
 test('the release calendar can be subscribed to with a token', async () => {
-  const created = await postForm('/account/tokens', { name: 'Calendar' })
+  const created = await postForm('/settings/tokens', { name: 'Calendar' })
   const html = await created.text()
   const token = /New token, shown once: <code>(dcv_[^<]+)<\/code>/.exec(html)?.[1]
   assert.ok(token, 'no token was issued for the feed')

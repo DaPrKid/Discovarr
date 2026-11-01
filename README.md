@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.18.0
+docker pull ghcr.io/daprkid/discovarr:0.19.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -66,12 +66,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:0.18.0
+docker pull ghcr.io/daprkid/discovarr:0.19.0
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:0.18.0
+  ghcr.io/daprkid/discovarr:0.19.0
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -102,8 +102,9 @@ bootstrapping, which is only useful for demos.
   genres, runtime (or season and episode counts), description, top cast, and
   streaming, rental and purchase options for the configured region (JustWatch
   data via TMDB). Titles nobody has requested yet get a page too.
-- **Settings tabs** — Integrations, Users, Notifications, Logs and Tasks, so the
-  page stays readable as features grow. Signing in always opens Discover.
+- **Settings sections** — General, Integrations, Users, Notifications, API
+  tokens, Tasks and Logs each get their own tab, so the page stays readable as
+  features grow. Signing in always opens Discover.
 - **Browse** — a sidebar on Discover for Networks, Studios, Movie Genres, Series
   Genres and Recommendations (seeded by the titles you actually request).
 - **Search that answers while you type** — Discover suggests matches with
@@ -121,6 +122,9 @@ bootstrapping, which is only useful for demos.
 - **Type switches** — Anime, Animation, Documentary, Reality, Kids and Talk show
   sit beside the genres. Anime is matched through its TMDB keyword, so it stays
   distinct from Animation.
+- **Collections only** — a switch in the filter panel keeps just the films that
+  belong to a collection, for a franchises-only browse. Films that stand alone
+  are dropped before the page is drawn.
 - **Title pages with atmosphere** — a blurred still of the title itself tints the
   page background, and a cast member TMDB has no headshot for borrows a still
   from one of their own titles.
@@ -128,9 +132,11 @@ bootstrapping, which is only useful for demos.
   descriptions and air dates, and a request covers all seasons or only the ones
   you tick.
 - **Collections on the side** — a film that belongs to a series of films shows
-  the rest of them beside the page, with a tick box per film and a select-all.
-- **No duplicate requests** — a title already requested in Discovarr, or already
-  sitting in Radarr or Sonarr, shows a disabled "Already requested" button.
+  the whole collection beside the page, including the film you are on (marked,
+  never requestable), with a tick box per film still missing and a select-all.
+- **No duplicate requests** — a title already requested in Discovarr, already
+  sitting in Radarr or Sonarr, or already playable in Plex shows a disabled
+  "Already requested" button or an Available badge instead of a second request.
 - **Watchlist** — save any title for later from its page, whether or not it is
   in the catalog yet, then work through it from the Watchlist tab.
 - **Release calendar** — a real month grid, one box per day, with the films and
@@ -138,7 +144,7 @@ bootstrapping, which is only useful for demos.
   library and titles somebody has requested, so the grid is about this household
   rather than everything TMDB knows. Move between months with the arrows; today
   is outlined, and every entry links through to the full title page.
-- **Calendar feed** — Account → API tokens also shows a `/calendar.ics?token=…`
+- **Calendar feed** — Settings → API tokens also shows a `/calendar.ics?token=…`
   URL to subscribe to from a phone or desktop calendar. It carries the next 120
   days of releases plus your watchlist, and revoking the token stops it.
 - **Hover previews** — hover or focus any title, poster or calendar entry and a
@@ -146,8 +152,9 @@ bootstrapping, which is only useful for demos.
   fetched once per title and remembered for the rest of the visit.
 - **Six designs** — Midnight, Cinema (warm blacks and serif headings), Deep Teal,
   Enchanted Forest, Midnight Sapphire and Imperial Crimson. Each one repaints the
-  page itself, not just the accent colour, and the choice is remembered in the
-  browser so it never flashes the wrong theme on load.
+  page itself, not just the accent colour. The choice lives in Settings →
+  General and is remembered in the browser, so it never flashes the wrong theme
+  on load.
 - **Collection pages** — a film's collection opens as its own page listing every
   part, which are already in your library and which are still missing, with a
   tick box per film and one button for the rest.
@@ -159,7 +166,7 @@ bootstrapping, which is only useful for demos.
   (`VACUUM INTO`, so it is consistent while the app is running and needs no
   `-wal` files).
 - **Trailers** — a title page links to its YouTube trailer when TMDB has one.
-- **API tokens** — create a named token in Account and call `/api/v1/…` with
+- **API tokens** — create a named token in Settings → API tokens and call `/api/v1/…` with
   `Authorization: Bearer <token>`. The token is shown once, stored only as a
   SHA-256 hash, records its last use, and can be revoked without touching your
   password or sessions.
@@ -195,7 +202,10 @@ bootstrapping, which is only useful for demos.
 - **Plex** — point it at your Plex server and every card Plex can play is marked
   *Plex* with a **Play on Plex** button that opens the item in Plex Web. This
   checks the actual library, so a download that *arr reports but Plex lacks is
-  not advertised as watchable.
+  not advertised as watchable. With Plex sign-in enabled, a profile's own Plex
+  watchlist is copied into its Discovarr watchlist the first time it signs in;
+  Settings → Integrations turns that off, and only titles Plex matched to TMDB
+  can come across.
 - **Dispatch on approval** — approving adds the title to Radarr/Sonarr. Failures
   mark the request `failed` with the service's error, and can be retried.
 - **Library sync** — every N minutes (default 30) the app reads the Radarr/Sonarr
@@ -208,8 +218,9 @@ bootstrapping, which is only useful for demos.
   fields) for new requests, approvals/declines and titles becoming available,
   and now email over SMTP too: STARTTLS, implicit TLS or a plain relay on the
   same host, with a **Send me a test message** button in Settings.
-- **A bell in the header** — approvals, declines, titles becoming available and
-  a dispatch that finally gives up all land in `/notifications`, with an unread
+- **A bell in the header** — the bell opens a small panel with the latest
+  updates over whatever page you are on, and a second click closes it again
+  without navigating. Everything also lands in `/notifications`, with an unread
   count and a *mark all read* button.
 - **Per-user notification choices** — each account decides whether email is
   wanted and which events matter (approved, declined, available); the bell
@@ -268,7 +279,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.18.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.19.0
 ```
 
 If you prefer to run the process without root at all, start the container with

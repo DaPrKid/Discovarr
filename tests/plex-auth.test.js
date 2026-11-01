@@ -113,6 +113,17 @@ before(async () => {
       if (profile.protected && url.searchParams.get('pin') !== '1234') return json(401, { error: 'wrong pin' })
       return json(200, { authToken: `${profile.title.toLowerCase()}-token` })
     }
+    if (url.pathname === '/library/sections/watchlist/all') {
+      return json(200, {
+        MediaContainer: {
+          Metadata: [
+            { type: 'movie', title: 'Plex Saved Film', year: 2019, Guid: [{ id: 'tmdb://4242' }] },
+            { type: 'show', title: 'Plex Saved Show', year: 2021, Guid: [{ id: 'tmdb://4243' }] },
+            { type: 'movie', title: 'Not Matched', Guid: [{ id: 'imdb://tt0000001' }] },
+          ],
+        },
+      })
+    }
     if (url.pathname === '/api/v2/user') {
       if (token === 'sam-token') return json(200, { id: 77, username: 'sam', email: 'sam@example.com', title: 'Sam' })
       if (token === 'kids-token') return json(200, { id: 78, username: 'kids', email: 'kids@example.com', title: 'Kids' })
@@ -144,6 +155,7 @@ before(async () => {
       ADMIN_EMAIL: 'admin@discovarr.local',
       TMDB_API_KEY: '',
       PLEX_TV_BASE: stubUrl,
+      PLEX_DISCOVER_BASE: stubUrl,
     },
     stdio: 'ignore',
   })
@@ -264,4 +276,25 @@ test('a protected profile needs its own PIN before it signs in', async () => {
   const session = cookieValue(accepted, 'discovarr_session')
   const me = await (await fetch(`${baseUrl}/api/v1/auth/me`, { headers: { cookie: `discovarr_session=${session}` } })).json()
   assert.equal(me.user.username, 'kids')
+})
+
+test('a Plex watchlist is copied over when a profile signs in', async () => {
+  const { token } = await profilePickerCookie()
+  const chosen = await postForm('/auth/plex/profile', { uuid: 'sam-uuid' }, `discovarr_plex_token=${token}`)
+  const session = cookieValue(chosen, 'discovarr_session')
+  assert.ok(session)
+
+  // The import runs behind the sign-in, so the watchlist fills in a moment later.
+  const deadline = Date.now() + 5000
+  let html = ''
+  while (Date.now() < deadline) {
+    html = await (await get('/watchlist', `discovarr_session=${session}`)).text()
+    if (html.includes('Plex Saved Film')) break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+
+  assert.match(html, /Plex Saved Film/)
+  assert.match(html, /Plex Saved Show/)
+  // A title Plex never matched to TMDB cannot be imported.
+  assert.doesNotMatch(html, /Not Matched/)
 })

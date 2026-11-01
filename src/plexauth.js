@@ -30,7 +30,7 @@ function baseUrl() {
   return String(config.plexTvBase).replace(/\/+$/, '')
 }
 
-async function plexTv(path, { method = 'GET', token = '', form = null } = {}) {
+async function plexTv(path, { method = 'GET', token = '', form = null, base = baseUrl() } = {}) {
   const headers = {
     accept: 'application/json',
     'x-plex-product': PRODUCT,
@@ -41,7 +41,7 @@ async function plexTv(path, { method = 'GET', token = '', form = null } = {}) {
 
   let response
   try {
-    response = await fetch(`${baseUrl()}${path}`, {
+    response = await fetch(`${base}${path}`, {
       method,
       headers,
       body: form ? new URLSearchParams(form) : undefined,
@@ -130,6 +130,46 @@ export async function plexSwitchProfile(token, uuid, pin = '') {
   if (!switched) throw new Error('Plex did not return a token for that profile')
 
   return String(switched)
+}
+
+/**
+ * The watchlist of the profile that just signed in, read from Plex's discovery
+ * host with that profile's own token. Only titles Plex has matched to TMDB can
+ * be imported, because the rest of the app speaks TMDB ids.
+ */
+export async function plexWatchlist(token) {
+  const payload = await plexTv('/library/sections/watchlist/all', {
+    token,
+    base: String(config.plexDiscoverBase).replace(/\/+$/, ''),
+  })
+  const list = payload.MediaContainer?.Metadata ?? payload.Metadata ?? []
+
+  const entries = []
+  for (const entry of [].concat(list)) {
+    const guids = [
+      ...(Array.isArray(entry.Guid) ? entry.Guid.map((guid) => guid.id) : []),
+      entry.guid,
+    ].filter(Boolean)
+
+    const tmdb = guids
+      .map((guid) => String(guid).match(/(?:tmdb|themoviedb):\/\/(\d+)/i))
+      .find(Boolean)?.[1]
+    if (!tmdb) continue
+
+    const type = String(entry.type ?? '').toLowerCase()
+    const mediaType = type === 'show' ? 'tv' : type === 'movie' ? 'movie' : null
+    if (!mediaType) continue
+
+    const year = Number.parseInt(String(entry.year ?? ''), 10)
+    entries.push({
+      tmdbId: Number(tmdb),
+      mediaType,
+      title: String(entry.title ?? 'Untitled'),
+      releaseDate: Number.isFinite(year) ? `${year}-01-01` : null,
+    })
+  }
+
+  return entries
 }
 
 export async function plexAccount(token) {

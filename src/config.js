@@ -31,6 +31,9 @@ export const config = {
   tmdbBaseUrl: (process.env.TMDB_BASE_URL ?? 'https://api.themoviedb.org/3').replace(/\/+$/, ''),
   // Overridable so tests can stand in for plex.tv.
   plexTvBase: (process.env.PLEX_TV_BASE ?? 'https://plex.tv').replace(/\/+$/, ''),
+  // Plex keeps each account's watchlist on its discovery host, which is a
+  // different service from plex.tv. Overridable for the same reason.
+  plexDiscoverBase: (process.env.PLEX_DISCOVER_BASE ?? 'https://discover.provider.plex.tv').replace(/\/+$/, ''),
   loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? 8),
   loginRateWindowMs: Number(process.env.LOGIN_RATE_WINDOW_MINUTES ?? 15) * 60 * 1000,
 }

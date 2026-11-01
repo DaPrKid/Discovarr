@@ -2758,3 +2758,79 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
   gap: 8px;
   align-items: center;
 }
+
+/* --- Notification panel, collections filter and Settings sections (0.19.0) --- */
+
+/* The bell opens a panel over the page instead of navigating away. */
+.notif {
+  position: relative;
+  display: inline-flex;
+}
+
+.notif-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 40;
+  width: min(340px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 45%);
+}
+
+.notif-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.notif-list {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.notif-item {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.notif-item.is-unread {
+  box-shadow: inset 3px 0 0 var(--brand-a);
+}
+
+.notif-item a {
+  color: var(--text);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.notif-empty {
+  margin: 0;
+}
+
+/* The collections switch sits under the movie/series choice in the rail. */
+.rail-collections {
+  margin: 10px 0 4px;
+}
+
+/* The film on screen is part of its collection list, just not requestable. */
+.collection-part.is-current .collection-text a {
+  color: var(--muted);
+}
+
+/* Seven sections: wrap rather than scroll on a narrow window. */
+.settings-tabs {
+  flex-wrap: wrap;
+}
