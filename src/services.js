@@ -269,6 +269,20 @@ export async function serviceOptions(kind) {
   }
 }
 
+/**
+ * The record Radarr/Sonarr already holds for a TMDB id. The lookup endpoint
+ * answers with the library entry (an id above zero) when the service has the
+ * title, whether it was added here or straight in the *arr.
+ */
+async function existingEntry(kind, tmdbId) {
+  const path = kind === 'radarr' ? '/movie/lookup' : '/series/lookup'
+  const results = await arrRequest(kind, `${path}?term=${encodeURIComponent(`tmdb:${Number(tmdbId)}`)}`)
+  const match = (Array.isArray(results) ? results : []).find(
+    (entry) => Number(entry.tmdbId) === Number(tmdbId)
+  )
+  return match && Number(match.id) > 0 ? match : null
+}
+
 /** Adds a title to Radarr/Sonarr on approval, using the request's profile. */
 export async function dispatchToService(media, request) {
   const kind = media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr'
@@ -290,30 +304,54 @@ export async function dispatchToService(media, request) {
   if (!rootFolder) throw new Error(`${LABELS[kind]} profile "${profile.name}" has no root folder`)
 
   if (media.mediaType === MediaType.MOVIE) {
-    const created = await arrRequest(kind, '/movie', {
-      method: 'POST',
-      body: {
-        tmdbId: media.tmdbId,
-        title: media.title,
-        year: media.releaseDate ? Number(media.releaseDate.slice(0, 4)) : undefined,
-        qualityProfileId: profile.profileId,
-        rootFolderPath: rootFolder,
-        monitored: true,
-        minimumAvailability: 'released',
-        addOptions: { searchForMovie: true },
-      },
-    })
+    try {
+      const created = await arrRequest(kind, '/movie', {
+        method: 'POST',
+        body: {
+          tmdbId: media.tmdbId,
+          title: media.title,
+          year: media.releaseDate ? Number(media.releaseDate.slice(0, 4)) : undefined,
+          qualityProfileId: profile.profileId,
+          rootFolderPath: rootFolder,
+          monitored: true,
+          minimumAvailability: 'released',
+          addOptions: { searchForMovie: true },
+        },
+      })
 
-    return {
-      dispatched: true,
-      externalId: created.id ?? null,
-      detail: `Added to Radarr with "${profile.name}" (id ${created.id ?? '?'})`,
+      return {
+        dispatched: true,
+        externalId: created.id ?? null,
+        detail: `Added to Radarr with "${profile.name}" (id ${created.id ?? '?'})`,
+      }
+    } catch (error) {
+      // Radarr refuses a film it already holds ("This movie has already been
+      // added"). That is the outcome the request wanted, so its record is
+      // adopted rather than the request being marked failed and retried.
+      const existing = await existingEntry(kind, media.tmdbId).catch(() => null)
+      if (!existing) throw error
+
+      return {
+        dispatched: true,
+        externalId: existing.id ?? null,
+        detail: `Already in Radarr (id ${existing.id})`,
+      }
     }
   }
 
   const lookup = await arrRequest(kind, `/series/lookup?term=${encodeURIComponent(`tmdb:${media.tmdbId}`)}`)
   const candidate = Array.isArray(lookup) ? lookup[0] : null
   if (!candidate) throw new Error(`Sonarr could not find TMDB id ${media.tmdbId}`)
+
+  // A series Sonarr already monitors answers its own lookup with an id, so the
+  // request settles on that record instead of trying to add it twice.
+  if (Number(candidate.id) > 0) {
+    return {
+      dispatched: true,
+      externalId: candidate.id,
+      detail: `Already in Sonarr (id ${candidate.id})`,
+    }
+  }
 
   const requestedSeasons = request?.seasons ?? []
   const seasons = (candidate.seasons ?? []).map((season) => ({

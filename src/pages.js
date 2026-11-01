@@ -617,6 +617,36 @@ function plexFor(plex, mediaType, tmdbId) {
 }
 
 /** A poster grid, with each title linked to its local record when it exists. */
+/** How many pages of results the collections view reads to fill its grid. */
+const COLLECTION_SCAN_PAGES = 3
+
+/**
+ * The sets behind a filtered browse. One page of films holds two or three
+ * franchises, which left the grid nearly empty; the scan reads a few pages of
+ * results and groups every film, so the collections view fills the page the way
+ * the film grid does.
+ */
+async function scanCollections({ mediaType, filters, first = [], totalPages = 1 }) {
+  const films = [...first]
+  const last = Math.min(COLLECTION_SCAN_PAGES, Math.max(1, Number(totalPages) || 1))
+
+  for (let page = 2; page <= last; page += 1) {
+    try {
+      const more = await discoverPage(mediaType, discoverQuery(mediaType, filters, filters.sort), {
+        page,
+        sort: filters.sort,
+      })
+      if (!more.items.length) break
+      films.push(...more.items)
+    } catch {
+      // A later page failing still leaves a usable grid from the pages we have.
+      break
+    }
+  }
+
+  return { films: films.length, collections: await collectionsFor(films) }
+}
+
 function mediaGrid(items, { returnTo = '/', plex = {} } = {}) {
   if (!items.length) return '<p class="empty">Nothing found.</p>'
 
@@ -911,16 +941,20 @@ function discoverBody({
     ${alert({ error })}
     ${query || filtered ? '' : `<div class="tabs">${tabLinks}</div>`}
     ${grid}
-    ${pagination({
-      page,
-      totalPages,
-      basePath: '/',
-      params: {
-        type: type === 'all' ? '' : type,
-        q: query,
-        ...(filtered && filters ? filterParams(filters) : {}),
-      },
-    })}`,
+    ${
+      filters?.collections
+        ? ''
+        : pagination({
+            page,
+            totalPages,
+            basePath: '/',
+            params: {
+              type: type === 'all' ? '' : type,
+              q: query,
+              ...(filtered && filters ? filterParams(filters) : {}),
+            },
+          })
+    }`,
     rail
   )
 }
@@ -962,16 +996,28 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
   const brand = brandIds.length === 1 ? brands.find((entry) => String(entry.id) === String(brandIds[0])) : null
   const logo = brand ? await (isMovie ? studioWithLogo : networkWithLogo)(brand) : null
 
+  const collectionMode = filters.collections && isMovie
   const result = await discoverPage(mediaType, discoverQuery(mediaType, filters, filters.sort), {
-    page,
+    // The collections view fills its grid from several result pages, so it has
+    // no pager of its own rather than reading the same films twice.
+    page: collectionMode ? 1 : page,
     sort: filters.sort,
   })
-  // TMDB cannot filter on collections, so the page is built here: the films the
+  // TMDB cannot filter on collections, so the grid is built here: the films the
   // filters returned, grouped into the collections they belong to.
-  const collectionMode = filters.collections && isMovie
-  const collections = collectionMode ? await collectionsFor(result.items) : []
+  const scanned = collectionMode
+    ? await scanCollections({
+        mediaType,
+        filters,
+        first: result.items,
+        totalPages: result.totalPages,
+      })
+    : null
+  const collections = scanned?.collections ?? []
   const items = collectionMode ? [] : result.items
-  const collectionNote = collectionMode ? ' Only collections that match these filters.' : ''
+  const collectionNote = collectionMode
+    ? ` Only collections that match these filters, grouped from the top ${scanned.films} matches.`
+    : ''
 
   const head = logo
     ? `<div class="brand-head">
@@ -998,7 +1044,16 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
     browse,
     `${head}
     ${grid}
-    ${pagination({ page: result.page, totalPages: result.totalPages, basePath, params: filterParams(filters) })}`,
+    ${
+      collectionMode
+        ? ''
+        : pagination({
+            page: result.page,
+            totalPages: result.totalPages,
+            basePath,
+            params: filterParams(filters),
+          })
+    }`,
     filterRail({
       action: basePath,
       mediaType,
@@ -1428,8 +1483,12 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
       .filter(Boolean)
       .join(' · ')
 
+    // "Already requested" would be a lie when the title is only in Radarr or
+    // Sonarr and no request of ours is open.
+    const doneLabel = requestedHere ? 'Already requested' : `Already in ${isTv ? 'Sonarr' : 'Radarr'}`
+
     action = `<div class="action-done">
-      <button class="btn" type="button" disabled>Already requested</button>
+      <button class="btn" type="button" disabled>${doneLabel}</button>
       <p class="muted small">${escapeHtml(where)}</p>
     </div>`
   } else {
@@ -3067,17 +3126,27 @@ export function registerPageRoutes(router) {
 
     if (configured && !query && hasFilters(filters)) {
       try {
+        const collectionMode = filters.collections && mediaType === MediaType.MOVIE
         const result = await discoverPage(mediaType, discoverQuery(mediaType, filters, filters.sort), {
-          page,
+          page: collectionMode ? 1 : page,
           sort: filters.sort,
         })
         source = 'tmdb'
         filtered = true
         currentPage = Math.min(result.page, result.totalPages)
         totalPages = result.totalPages
-        // The switch shows the collections themselves, not one card per film.
-        collections =
-          filters.collections && mediaType === MediaType.MOVIE ? await collectionsFor(result.items) : null
+        // The switch shows the collections themselves, filled from the first
+        // pages of results, not one card per film.
+        collections = collectionMode
+          ? (
+              await scanCollections({
+                mediaType,
+                filters,
+                first: result.items,
+                totalPages: result.totalPages,
+              })
+            ).collections
+          : null
         items = collections
           ? []
           : result.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))

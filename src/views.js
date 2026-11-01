@@ -733,9 +733,18 @@ export function requestAction(item, local, returnTo, plex = null) {
     return '<span class="badge badge-available">Available</span>'
   }
 
-  if (local && (local.activeRequests > 0 || local.myActiveRequests > 0)) {
-    return '<span class="badge badge-pending">Requested</span>'
-  }
+  // A title the download manager already holds is on its way even when the
+  // request that put it there has been closed or failed, so the card says so
+  // instead of offering a request the *arr would refuse.
+  const queued =
+    local &&
+    (local.activeRequests > 0 ||
+      local.myActiveRequests > 0 ||
+      local.status === MediaStatus.PENDING ||
+      local.status === MediaStatus.PROCESSING ||
+      local.status === MediaStatus.PARTIALLY_AVAILABLE)
+
+  if (queued) return '<span class="badge badge-pending">Requested</span>'
 
   const action = local ? `/media/${local.id}/request` : '/media/import'
   const tmdbId = local?.tmdbId ?? item?.tmdbId ?? ''

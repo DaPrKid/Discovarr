@@ -494,15 +494,18 @@ test('the collections switch shows the collections themselves', async () => {
   assert.match(studios, /name="collections" value="1"/)
   assert.doesNotMatch(studios, /name="collections" value="1" checked/)
 
-  // Six of the twelve stub films belong to a set, so the page becomes six cards,
-  // each pointing at its collection page rather than at one film.
+  // Half the stub films belong to a set, and the view reads both result pages so
+  // the grid fills up: twelve collections rather than the six on one page.
   const narrowed = await (await page('/studios?collections=1')).text()
   assert.match(narrowed, /name="collections" value="1" checked/)
   assert.match(narrowed, /Only collections that match these filters/)
-  assert.equal((narrowed.match(/class="media-card collection-card"/g) ?? []).length, 6)
-  assert.equal((narrowed.match(/class="media-card/g) ?? []).length, 6)
+  assert.match(narrowed, /grouped from the top 24 matches/)
+  assert.equal((narrowed.match(/class="media-card collection-card"/g) ?? []).length, 12)
+  assert.equal((narrowed.match(/class="media-card/g) ?? []).length, 12)
   assert.match(narrowed, /href="\/collection\/19\d\d"/)
   assert.match(narrowed, /2 films/)
+  // The collections view has no pager of its own: it already scanned the pages.
+  assert.doesNotMatch(narrowed, /Page \d+ of/)
 
   // Collections are a film idea, so series pages do not offer the switch.
   const networks = await (await page('/networks?collections=1')).text()

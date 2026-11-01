@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { MediaRequestStatus, MediaStatus } from '../src/constants.js'
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -86,10 +87,37 @@ before(async () => {
       })
       req.on('end', () => {
         arr.lastMovie = JSON.parse(raw || '{}')
+
+        // What Radarr really answers for a film it already holds.
+        if (arr.movieExists) {
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(
+            JSON.stringify([
+              {
+                propertyName: 'TmdbId',
+                errorMessage: 'This movie has already been added',
+                attemptedValue: arr.lastMovie.tmdbId,
+                errorCode: 'MovieExistsValidator',
+              },
+            ])
+          )
+          return
+        }
+
         res.writeHead(201, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ id: 77 }))
       })
       return
+    }
+
+    // A lookup answers with a library entry (id above zero) for a film Radarr
+    // already has, which is how the app adopts instead of failing.
+    if (req.url.startsWith('/api/v3/movie/lookup?')) {
+      const term = new URL(req.url, 'http://arr').searchParams.get('term') ?? ''
+      const tmdbId = Number(term.replace(/^tmdb:/, ''))
+      const body = Number(tmdbId) === Number(arr.adoptTmdbId) ? [{ id: 91, title: 'Held Film', tmdbId }] : []
+      res.writeHead(200, { 'content-type': 'application/json' })
+      return res.end(JSON.stringify(body))
     }
 
     const body = ARR_ROUTES[req.url]
@@ -526,4 +554,31 @@ test('auto-approval is a permission on the user, not a global switch', async () 
     await fetch(`${baseUrl}/settings?tab=general`, { headers: { cookie: adminCookie } })
   ).text()
   assert.doesNotMatch(general, /name="autoApprove"/)
+})
+
+test('a film Radarr already holds is adopted instead of failing the request', async () => {
+  const catalog = await (await fetch(`${baseUrl}/api/v1/media`, { headers: { cookie: adminCookie } })).json()
+  const film = (catalog.results ?? []).find(
+    (item) =>
+      item.mediaType === 'movie' &&
+      item.status !== MediaStatus.AVAILABLE &&
+      !item.activeRequests
+  )
+  assert.ok(film, 'the seeded catalog should hold a film that is not available yet')
+
+  arr.movieExists = true
+  arr.adoptTmdbId = film.tmdbId
+  try {
+    const sent = await postForm(`/media/${film.id}/request`, { returnTo: `/media/${film.id}` })
+    assert.equal(sent.status, 303)
+  } finally {
+    arr.movieExists = false
+    arr.adoptTmdbId = null
+  }
+
+  const list = await (await fetch(`${baseUrl}/api/v1/request?take=20`, { headers: { cookie: adminCookie } })).json()
+  const request = (list.results ?? []).find((entry) => entry.media?.id === film.id)
+  assert.ok(request, 'the request should exist')
+  assert.equal(request.status, MediaRequestStatus.APPROVED)
+  assert.match(String(request.note ?? ''), /Already in Radarr/)
 })
