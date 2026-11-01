@@ -359,7 +359,10 @@ function browseHref(basePath, params = {}) {
 
 function browseNav(browse) {
   return `<aside class="browse-nav">
-    <p class="browse-heading">Browse</p>
+    <div class="browse-head">
+      <p class="browse-heading">Browse</p>
+      <button class="panel-hide" type="button" data-panel="nav" aria-pressed="true" aria-label="Hide menu" title="Hide menu">&#8249;</button>
+    </div>
     <a class="browse-link ${browse ? '' : 'is-active'}" href="/">Discover</a>
     ${BROWSE_LINKS.map(
       ([key, href, label]) =>
@@ -369,14 +372,15 @@ function browseNav(browse) {
 }
 
 function discoverLayout(browse, body, rail = '') {
-  // The panels are worth keeping, but not always on screen: these chips fold
-  // either sidebar away and hand its width to the grid.
-  const bar = `<div class="discover-bar">
-      <button class="panel-toggle" type="button" data-panel="nav" aria-pressed="true">Menu</button>
-      ${rail ? '<button class="panel-toggle" type="button" data-panel="rail" aria-pressed="true">Filters</button>' : ''}
+  // Each sidebar hides itself from a button in its own header. These two only
+  // appear while a panel is folded away, so there is always a way back without
+  // a strip of controls taking up room above the grid.
+  const restore = `<div class="panel-restore">
+      <button class="panel-toggle" type="button" data-panel="nav" aria-pressed="false" aria-label="Show menu" title="Show menu">&#9776; Menu</button>
+      ${rail ? '<button class="panel-toggle" type="button" data-panel="rail" aria-pressed="false" aria-label="Show filters" title="Show filters">Filters</button>' : ''}
     </div>`
 
-  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${bar}${body}</div>${rail}</div>`
+  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${restore}${body}</div>${rail}</div>`
 }
 
 function plexFor(plex, mediaType, tmdbId) {
@@ -387,7 +391,7 @@ function plexFor(plex, mediaType, tmdbId) {
 function mediaGrid(items, { returnTo = '/', plex = {} } = {}) {
   if (!items.length) return '<p class="empty">Nothing found.</p>'
 
-  return `<div class="grid">${items
+  return `<div class="grid" data-fill>${items
     .map((item) => {
       const local = store.getMediaByTmdb(item.tmdbId, item.mediaType)
       return mediaCard(item, { returnTo, local, plex: plexFor(plex, item.mediaType, item.tmdbId) })
@@ -528,7 +532,10 @@ function filterRail({
   return `<form class="filter-rail" method="get" action="${escapeHtml(action)}" data-filter-form>
     <div class="rail-head">
       <strong>Filters</strong>
-      <a class="rail-clear" href="${escapeHtml(clearHref ?? action)}">Clear all</a>
+      <div class="rail-head-actions">
+        <a class="rail-clear" href="${escapeHtml(clearHref ?? action)}">Clear all</a>
+        <button class="panel-hide" type="button" data-panel="rail" aria-pressed="true" aria-label="Hide filters" title="Hide filters">&#8250;</button>
+      </div>
     </div>
     ${typeRow}
     ${railGroup('Type', filters.kinds.length, filters.kinds.length > 0, toggleList('kind', types, filters.kinds))}
@@ -611,7 +618,7 @@ function discoverBody({
     .join('')
 
   const grid = items.length
-    ? `<div class="grid">${items
+    ? `<div class="grid" data-fill>${items
         .map(({ item, local }) =>
           mediaCard(item, {
             returnTo: '/',

@@ -210,6 +210,77 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         })
       })()
 
+      // A last row that stops short of the edge reads as a broken grid, so the
+      // grid borrows just enough titles from the next page to finish the row it
+      // is on. It reuses the server's own card markup, and asks for nothing when
+      // the row already ends flush or there is no next page.
+      ;(function () {
+        var grid = document.querySelector('.grid[data-fill]')
+        if (!grid) return
+        var next = document.querySelector('.pager a[rel=next]')
+        if (!next) return
+
+        var base = grid.children.length
+        var pool = null
+        var requested = false
+        var appended = []
+
+        function columns() {
+          var first = grid.firstElementChild
+          if (!first) return 0
+          var top = Math.round(first.getBoundingClientRect().top)
+          var count = 0
+          for (var node = first; node; node = node.nextElementSibling) {
+            if (Math.round(node.getBoundingClientRect().top) !== top) break
+            count++
+          }
+          return count
+        }
+
+        function wanted() {
+          var cols = columns()
+          if (cols < 2) return 0
+          return (cols - (base % cols)) % cols
+        }
+
+        function trim(keep) {
+          while (appended.length > keep) appended.pop().remove()
+        }
+
+        function extend(keep) {
+          while (appended.length < keep && pool && pool[appended.length]) {
+            var card = pool[appended.length].cloneNode(true)
+            card.setAttribute('data-filler', '')
+            grid.appendChild(card)
+            appended.push(card)
+          }
+        }
+
+        function fill() {
+          var keep = wanted()
+          if (appended.length > keep) return trim(keep)
+          if (appended.length === keep) return
+          if (pool) return extend(keep)
+          if (requested) return
+          requested = true
+          fetch(next.href, { credentials: 'same-origin' })
+            .then(function (response) { return response.ok ? response.text() : '' })
+            .then(function (html) {
+              var doc = new DOMParser().parseFromString(html, 'text/html')
+              pool = Array.prototype.slice.call(doc.querySelectorAll('.grid > .media-card'))
+              fill()
+            })
+            .catch(function () { pool = [] })
+        }
+
+        fill()
+        var timer = null
+        window.addEventListener('resize', function () {
+          clearTimeout(timer)
+          timer = setTimeout(fill, 150)
+        })
+      })()
+
       // Discover search suggests titles as you type. Leaving the field and
       // pressing the button still runs the plain GET form, so nothing depends
       // on this script or on the suggestion endpoint being reachable.
@@ -620,17 +691,17 @@ export function requestCard(request, { canManage = false, bulk = false } = {}) {
 export function pagination({ page, totalPages, basePath, params = {} }) {
   if (totalPages <= 1) return ''
 
-  const link = (target, label, className = 'tab') => {
+  const link = (target, label, className = 'tab', rel = '') => {
     const search = new URLSearchParams()
     for (const [key, value] of Object.entries(params)) if (value) search.set(key, String(value))
     search.set('page', String(target))
-    return `<a class="${className}" href="${basePath}?${search}">${label}</a>`
+    return `<a class="${className}"${rel ? ` rel="${rel}"` : ''} href="${basePath}?${search}">${label}</a>`
   }
 
   return `<nav class="pager">
-    ${page > 1 ? link(page - 1, '← Previous') : '<span class="tab is-disabled">← Previous</span>'}
+    ${page > 1 ? link(page - 1, '← Previous', 'tab', 'prev') : '<span class="tab is-disabled">← Previous</span>'}
     <span class="muted small">Page ${page} of ${totalPages}</span>
-    ${page < totalPages ? link(page + 1, 'Next →') : '<span class="tab is-disabled">Next →</span>'}
+    ${page < totalPages ? link(page + 1, 'Next →', 'tab', 'next') : '<span class="tab is-disabled">Next →</span>'}
   </nav>`
 }
 

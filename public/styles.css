@@ -2589,10 +2589,73 @@ html[data-hide-rail] .discover > .filter-rail {
   }
 }
 
+/* The restore buttons only exist while their panel is folded away, so the
+   strip above the grid is empty - and takes no room - the rest of the time. */
+.panel-restore {
+  display: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+html[data-hide-nav] .panel-restore,
+html[data-hide-rail] .panel-restore {
+  display: flex;
+}
+
+.panel-restore > [data-panel] {
+  display: none;
+}
+
+html[data-hide-nav] .panel-restore > [data-panel='nav'],
+html[data-hide-rail] .panel-restore > [data-panel='rail'] {
+  display: inline-flex;
+}
+
+/* The hide buttons live in the sidebar headers, not out on the page. */
+.panel-hide {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.panel-hide:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.browse-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.browse-head .browse-heading {
+  margin: 4px 0 10px 12px;
+}
+
+.rail-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 @media (max-width: 760px) {
-  .discover-bar {
-    margin-bottom: 12px;
-  }
 
   .panel-toggle {
     padding: 7px 14px;
