@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.17.5'
+export const APP_VERSION = '0.17.6'
 
 // Lifecycle values mirror the enums Seerr uses, so the API and database stay
 // familiar to anyone coming from that codebase.
@@ -106,6 +106,9 @@ export const SETTING_DEFAULTS = Object.freeze({
   'plex.enabled': 'false',
   'plex.url': '',
   'plex.token': '',
+  // Signing in with a Plex account, and the id plex.tv knows this install by.
+  'plex.login': 'true',
+  'plex.clientId': '',
 
   'sync.intervalMinutes': '30',
 

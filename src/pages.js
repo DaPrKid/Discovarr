@@ -35,8 +35,17 @@ import {
   updateUserByAdmin,
 } from './core.js'
 import * as store from './db.js'
-import { HttpError, readBody, redirect, sendHtml, sendJson } from './http.js'
+import { HttpError, parseCookies, readBody, redirect, sendHtml, sendJson } from './http.js'
 import { verifyPassword } from './passwords.js'
+import {
+  createPlexPin,
+  plexAccount,
+  plexAuthUrl,
+  plexLoginEnabled,
+  plexPinToken,
+  plexProfiles,
+  plexSwitchProfile,
+} from './plexauth.js'
 import { clientKey, createRateLimiter } from './ratelimit.js'
 import {
   forgetServiceOptions,
@@ -179,7 +188,7 @@ function userPermissions(user) {
 // Auth pages
 // ---------------------------------------------------------------------------
 
-function loginPage({ error, notice }) {
+function loginPage({ error, notice, plex = false }) {
   return layout({
     appName: appName(),
     title: 'Sign in',
@@ -192,11 +201,12 @@ function loginPage({ error, notice }) {
         <label>Password <input type="password" name="password" required autocomplete="current-password" /></label>
         <button class="btn" type="submit">Sign in</button>
       </form>
+      ${plex ? plexButton('Continue with Plex') : ''}
     </section>`,
   })
 }
 
-function setupPage({ appName, error, values = {} }) {
+function setupPage({ appName, error, values = {}, plex = false }) {
   return layout({
     appName,
     title: 'Create your account',
@@ -211,7 +221,165 @@ function setupPage({ appName, error, values = {} }) {
         <button class="btn" type="submit">Create administrator</button>
       </form>
       <p class="muted small">Sign in from then on with your username (or email) and password.</p>
+      ${plex ? plexButton('Create my account with Plex') : ''}
     </section>`,
+  })
+}
+
+
+// ---------------------------------------------------------------------------
+// Signing in with Plex
+// ---------------------------------------------------------------------------
+
+const PLEX_PIN_COOKIE = 'discovarr_plex_pin'
+const PLEX_TOKEN_COOKIE = 'discovarr_plex_token'
+const PLEX_COOKIE_PATH = '/auth/plex'
+const PLEX_COOKIE_MAX_AGE = 600
+
+function shortLivedCookie(name, value, req, maxAge = PLEX_COOKIE_MAX_AGE) {
+  const forwarded = String(req?.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase()
+  const secure = config.cookieSecure || forwarded === 'https'
+
+  return [
+    `${name}=${encodeURIComponent(value)}`,
+    `Path=${PLEX_COOKIE_PATH}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAge}`,
+    ...(secure ? ['Secure'] : []),
+  ].join('; ')
+}
+
+function clearShortCookie(name) {
+  return `${name}=; Path=${PLEX_COOKIE_PATH}; HttpOnly; SameSite=Lax; Max-Age=0`
+}
+
+/** The public origin the browser used, so Plex can send it back here. */
+function requestOrigin(req) {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim()
+  const proto = forwardedProto || (config.cookieSecure ? 'https' : 'http')
+  const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '127.0.0.1')
+    .split(',')[0]
+    .trim()
+
+  return `${proto}://${host}`
+}
+
+function plexButton(label) {
+  return `<div class="auth-alt">
+    <p class="muted small">or use the Plex account your library is shared with</p>
+    <a class="btn btn-plex" href="/auth/plex">${escapeHtml(label)}</a>
+  </div>`
+}
+
+function initialsOf(text) {
+  const parts = String(text ?? '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return 'P'
+  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('')
+}
+
+function plexProfilePage({ profiles }) {
+  return layout({
+    appName: appName(),
+    title: 'Choose a profile',
+    body: `<section class="auth auth-wide">
+      <h1>Who's watching?</h1>
+      <p class="muted">This Plex account has more than one profile. Pick the one this Discovarr account belongs to.</p>
+      <form method="post" action="/auth/plex/profile">
+        <div class="plex-profiles">
+          ${profiles
+            .map(
+              (profile) => `<button class="plex-profile" type="submit" name="uuid" value="${escapeHtml(
+                profile.uuid
+              )}">
+            <span class="plex-avatar" aria-hidden="true">${escapeHtml(initialsOf(profile.title))}</span>
+            <span class="plex-profile-name">${escapeHtml(profile.title)}</span>
+            ${profile.admin ? '<span class="muted small">owner</span>' : ''}
+          </button>`
+            )
+            .join('')}
+        </div>
+      </form>
+    </section>`,
+  })
+}
+
+function uniqueUsername(base) {
+  const clean =
+    String(base ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '')
+      .replace(/^[._-]+/, '') || 'plex'
+  const trimmed = clean.slice(0, 30)
+  if (!store.findUserByUsername(trimmed)) return trimmed
+
+  for (let suffix = 2; suffix < 100; suffix += 1) {
+    const candidate = `${trimmed.slice(0, 27)}-${suffix}`
+    if (!store.findUserByUsername(candidate)) return candidate
+  }
+
+  return `plex-${randomBytes(4).toString('hex')}`
+}
+
+/** The local account behind a Plex profile, created on first sign-in. */
+function localUserForPlex(account) {
+  const plexId = String(account.id ?? '').trim()
+
+  if (plexId) {
+    const linked = store.findUserByPlexId(plexId)
+    if (linked) return linked
+  }
+
+  const email = String(account.email ?? '').trim().toLowerCase()
+  if (email) {
+    const existing = store.findUserByEmail(email)
+    // An administrator links a Plex account deliberately, never just because
+    // whoever owns that address on plex.tv signs in.
+    if (existing && existing.role !== Role.ADMIN) {
+      store.linkUserPlex(existing.id, plexId)
+      return store.findUserById(existing.id)
+    }
+  }
+
+  const firstAccount = store.countUsers() === 0
+  const address =
+    email && !store.findUserByEmail(email) ? email : `${plexId || randomBytes(6).toString('hex')}@plex.local`
+
+  const created = store.createUser({
+    email: address,
+    username: uniqueUsername(account.username || account.title || 'plex'),
+    // Plex is the only way in for this account, so the password is unknowable.
+    password: randomBytes(24).toString('base64url'),
+    role: firstAccount ? Role.ADMIN : Role.USER,
+    permissions: firstAccount ? ALL_PERMISSIONS : DEFAULT_USER_PERMISSIONS,
+  })
+
+  store.linkUserPlex(created.id, plexId)
+  return store.findUserById(created.id)
+}
+
+async function finishPlexSignIn({ req, res, token, profile = null }) {
+  let account = null
+  try {
+    account = await plexAccount(token)
+  } catch {
+    account = null
+  }
+
+  if (!account?.id && profile) {
+    account = { id: `home-${profile.uuid}`, username: profile.title, email: '', title: profile.title }
+  }
+
+  const user = localUserForPlex(account ?? { id: '', username: 'plex', email: '', title: 'Plex user' })
+  const session = createSession(user.id)
+  store.recordAudit(user.id, 'auth.plex_login', account?.username || user.username)
+
+  redirect(res, '/', {
+    'set-cookie': [
+      sessionCookie(session, req),
+      clearShortCookie(PLEX_PIN_COOKIE),
+      clearShortCookie(PLEX_TOKEN_COOKIE),
+    ],
   })
 }
 
@@ -2066,6 +2234,13 @@ function plexPanel(settings) {
       <label>Plex token
         <input type="password" name="plexToken" value="${escapeHtml(settings['plex.token'])}" autocomplete="off" />
       </label>
+      <input type="hidden" name="plexLoginSubmitted" value="1" />
+      <label class="checkbox">
+        <input type="checkbox" name="plexLogin" ${settings['plex.login'] === 'true' ? 'checked' : ''} />
+        <span>Allow signing in with Plex</span>
+      </label>
+      <p class="muted small">A Plex account that has never used this instance gets its own Discovarr account the first time it
+        signs in, and picks its Plex profile when the account has more than one.</p>
       <p class="muted small">Used to check that a title really is in Plex and to link cards straight to playback. The token is the
         <code>X-Plex-Token</code> value in any Plex item's <code>Get Info → View XML</code> link.</p>
       <div class="request-actions">
@@ -2458,6 +2633,7 @@ function settingsFromBody(body) {
     if (body.plexUrl !== undefined) input.plex.url = body.plexUrl
     if (body.plexToken !== undefined) input.plex.token = body.plexToken
     if (body.plexEnabledSubmitted !== undefined) input.plex.enabled = body.plexEnabled !== undefined
+    if (body.plexLoginSubmitted !== undefined) input.plex.login = body.plexLogin !== undefined
   }
 
   if (section === 'notifications') {
@@ -2510,7 +2686,16 @@ export function registerPageRoutes(router) {
   router.get('/setup', ({ req, res, url }) => {
     if (store.countUsers() > 0) return redirect(res, currentUser(req) ? '/' : '/login')
 
-    sendHtml(res, 200, setupPage({ appName: appName(), error: url.searchParams.get('err'), values: {} }))
+    sendHtml(
+      res,
+      200,
+      setupPage({
+        appName: appName(),
+        error: url.searchParams.get('err'),
+        values: {},
+        plex: plexLoginEnabled(),
+      })
+    )
   })
 
   router.post('/setup', async ({ req, res }) => {
@@ -2533,6 +2718,7 @@ export function registerPageRoutes(router) {
           appName: appName(),
           error: error.message,
           values: { email: body.email ?? '', username: body.username ?? '' },
+          plex: plexLoginEnabled(),
         })
       )
     }
@@ -2548,6 +2734,7 @@ export function registerPageRoutes(router) {
       loginPage({
         error: url.searchParams.get('err'),
         notice: url.searchParams.get('notice'),
+        plex: plexLoginEnabled(),
       })
     )
   })
@@ -2572,6 +2759,89 @@ export function registerPageRoutes(router) {
     const token = createSession(user.id)
     // Every successful sign-in opens Discover.
     redirect(res, '/', { 'set-cookie': sessionCookie(token, req) })
+  })
+
+  // Plex sign-in: plex.tv holds the pin, then returns the browser here. One
+  // profile signs straight in; several ask which one this account belongs to.
+  router.get('/auth/plex', async ({ req, res }) => {
+    if (!plexLoginEnabled()) {
+      return redirect(res, `/login?err=${encodeURIComponent('Signing in with Plex is turned off')}`)
+    }
+
+    try {
+      const pin = await createPlexPin()
+      const forwardUrl = `${requestOrigin(req)}/auth/plex/callback`
+
+      redirect(res, plexAuthUrl({ ...pin, forwardUrl }), {
+        'set-cookie': shortLivedCookie(PLEX_PIN_COOKIE, `${pin.id}:${pin.code}`, req),
+      })
+    } catch (error) {
+      redirect(res, `/login?err=${encodeURIComponent(error.message)}`)
+    }
+  })
+
+  router.get('/auth/plex/callback', async ({ req, res, url }) => {
+    const stored = String(parseCookies(req.headers.cookie)[PLEX_PIN_COOKIE] ?? '')
+    const [pinId, pinCode] = stored.split(':')
+
+    if (!pinId || !pinCode) {
+      return redirect(res, `/login?err=${encodeURIComponent('That Plex sign-in expired. Start again.')}`)
+    }
+
+    try {
+      let token = url.searchParams.get('authToken') ?? null
+      // Plex normally has the token already when it forwards the browser back;
+      // the poll covers an account that was slower to confirm.
+      for (let attempt = 0; attempt < 4 && !token; attempt += 1) {
+        token = await plexPinToken(pinId, pinCode)
+        if (!token) await new Promise((resolve) => setTimeout(resolve, 600))
+      }
+
+      if (!token) {
+        return redirect(
+          res,
+          `/login?err=${encodeURIComponent('Plex did not confirm the sign-in. Try again.')}`
+        )
+      }
+
+      const profiles = await plexProfiles(token)
+
+      if (profiles.length > 1) {
+        return sendHtml(res, 200, plexProfilePage({ profiles }), {
+          'set-cookie': shortLivedCookie(PLEX_TOKEN_COOKIE, token, req),
+        })
+      }
+
+      const profile = profiles[0] ?? null
+      const profileToken = profile ? await plexSwitchProfile(token, profile.uuid).catch(() => token) : token
+
+      await finishPlexSignIn({ req, res, token: profileToken, profile })
+    } catch (error) {
+      redirect(res, `/login?err=${encodeURIComponent(error.message)}`)
+    }
+  })
+
+  router.post('/auth/plex/profile', async ({ req, res }) => {
+    const token = String(parseCookies(req.headers.cookie)[PLEX_TOKEN_COOKIE] ?? '')
+    const body = await readBody(req)
+    const uuid = String(body.uuid ?? '')
+
+    if (!token) {
+      return redirect(res, `/login?err=${encodeURIComponent('That Plex sign-in expired. Start again.')}`)
+    }
+    if (!uuid) {
+      return redirect(res, `/login?err=${encodeURIComponent('Pick a Plex profile')}`)
+    }
+
+    try {
+      const profiles = await plexProfiles(token)
+      const profile = profiles.find((entry) => entry.uuid === uuid) ?? { uuid, title: 'Plex user' }
+      const profileToken = await plexSwitchProfile(token, uuid)
+
+      await finishPlexSignIn({ req, res, token: profileToken, profile })
+    } catch (error) {
+      redirect(res, `/login?err=${encodeURIComponent(error.message)}`)
+    }
   })
 
   router.post('/logout', ({ req, res }) => {

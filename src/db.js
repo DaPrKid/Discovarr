@@ -123,6 +123,9 @@ ensureColumn('requests', 'next_retry_at', 'TEXT')
 // the user cares about (1 approved, 2 declined, 4 available).
 ensureColumn('users', 'notify_email', 'INTEGER NOT NULL DEFAULT 0')
 ensureColumn('users', 'notify_events', 'INTEGER NOT NULL DEFAULT 7')
+// The plex.tv account a Plex sign-in is tied to, so later sign-ins reopen the
+// same Discovarr account instead of making another one.
+ensureColumn('users', 'plex_id', 'TEXT')
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS notifications (
@@ -166,6 +169,7 @@ db.exec(`
 // index impossible; that is logged rather than fatal.
 try {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users (username COLLATE NOCASE)')
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_plex ON users (plex_id)')
 } catch {
   console.warn('[discovarr] duplicate usernames exist, so the unique username index was skipped')
 }
@@ -188,6 +192,7 @@ function mapUser(row) {
     quotaTv: row.quota_tv ?? 0,
     notifyEmail: row.notify_email === 1,
     notifyEvents: row.notify_events ?? 7,
+    plexId: row.plex_id ?? null,
     createdAt: row.created_at,
     passwordHash: row.password_hash,
   }
@@ -219,6 +224,17 @@ export function findUserByLogin(identifier) {
 
 export function findUserById(id) {
   return mapUser(db.prepare('SELECT * FROM users WHERE id = ?').get(Number(id)))
+}
+
+export function findUserByPlexId(plexId) {
+  const value = String(plexId ?? '').trim()
+  if (!value) return null
+  return mapUser(db.prepare('SELECT * FROM users WHERE plex_id = ?').get(value))
+}
+
+export function linkUserPlex(id, plexId) {
+  db.prepare('UPDATE users SET plex_id = ? WHERE id = ?').run(String(plexId ?? ''), Number(id))
+  return findUserById(id)
 }
 
 export function listUsers() {

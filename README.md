@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.17.5
+docker pull ghcr.io/daprkid/discovarr:0.17.6
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -66,12 +66,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:0.17.5
+docker pull ghcr.io/daprkid/discovarr:0.17.6
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:0.17.5
+  ghcr.io/daprkid/discovarr:0.17.6
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -93,6 +93,7 @@ bootstrapping, which is only useful for demos.
 ## Features
 
 - **Discover** — TMDB trending and multi-search once an API key is set, with a
+- **Sign in with Plex.** A Plex account can create its Discovarr account on the sign-in page, and picks its profile when the Plex account holds more than one.
   cached local image proxy (`/img/<size>/<file>`). Without a key the app runs on
   a seeded offline catalog instead of failing.
 - **Title pages** — every card opens a page with the release date, rating,
@@ -263,7 +264,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.17.5
+  --restart unless-stopped ghcr.io/daprkid/discovarr:0.17.6
 ```
 
 If you prefer to run the process without root at all, start the container with

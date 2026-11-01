@@ -2661,3 +2661,67 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
     padding: 7px 14px;
   }
 }
+
+/* The filters chip belongs on the right: it reopens the panel that lives there. */
+.panel-restore > [data-panel='rail'] {
+  margin-left: auto;
+}
+
+/* Signing in with Plex. */
+.auth-alt {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.auth-alt .btn {
+  justify-content: center;
+}
+
+.auth-wide {
+  max-width: 560px;
+}
+
+.plex-profiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.plex-profile {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.plex-profile:hover,
+.plex-profile:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.plex-avatar {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.plex-profile-name {
+  font-weight: 600;
+}
