@@ -113,6 +113,8 @@ anonymous pull on every release, so the install cannot break silently.
   a seeded offline catalog instead of failing.
 - **Sign in with Plex.** A Plex account can create its Discovarr account on the
   sign-in page, and picks its profile when the Plex account holds more than one.
+  Off by default: any Plex account can complete that flow, so it is opt-in under
+  Settings → Integrations rather than open sign-up on a fresh install.
   A profile with a Plex Home PIN has to enter that PIN before it signs in.
 - **Title pages** — every card opens a page with the release date, rating,
   genres, runtime (or season and episode counts), description, top cast, and

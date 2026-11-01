@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { clearedSessionCookie, createSession, currentUser, endSession, hashApiToken, hasPermission, requirePermission, requireUser, sessionCookie, sessionToken, userForApiToken } from './auth.js'
+import { clearLoginAttempts, clearedSessionCookie, createSession, currentUser, endSession, hashApiToken, hasPermission, recordFailedLogin, requirePermission, requireUser, sessionCookie, sessionToken, userForApiToken } from './auth.js'
 import { buildReleaseCalendar } from './ics.js'
 import { config } from './config.js'
 import {
@@ -48,7 +48,6 @@ import {
   plexSwitchProfile,
   plexWatchlist,
 } from './plexauth.js'
-import { clientKey, createRateLimiter } from './ratelimit.js'
 import {
   forgetServiceOptions,
   loadServiceOptions,
@@ -105,8 +104,6 @@ import {
   statusBadge,
   themeSelect,
 } from './views.js'
-
-const loginLimiter = createRateLimiter({ windowMs: config.loginRateWindowMs, max: config.loginRateLimit })
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2962,11 +2959,10 @@ export function registerPageRoutes(router) {
 
   router.post('/login', async ({ req, res }) => {
     const body = await readBody(req)
-    const key = clientKey(req)
     const user = store.findUserByLogin(body.username ?? body.email ?? '')
 
     if (!user || !verifyPassword(String(body.password ?? ''), user.passwordHash)) {
-      const limit = loginLimiter.record(key)
+      const limit = recordFailedLogin(req)
 
       return redirect(
         res,
@@ -2976,7 +2972,7 @@ export function registerPageRoutes(router) {
       )
     }
 
-    loginLimiter.reset(key)
+    clearLoginAttempts(req)
     const token = createSession(user.id)
     // Every successful sign-in opens Discover.
     redirect(res, '/', { 'set-cookie': sessionCookie(token, req) })

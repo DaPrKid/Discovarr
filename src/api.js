@@ -1,8 +1,11 @@
 import {
+  clearLoginAttempts,
   clearedSessionCookie,
   createSession,
   currentUser,
+  endSession,
   hasPermission,
+  recordFailedLogin,
   requireAdmin,
   requirePermission,
   requireUser,
@@ -68,14 +71,30 @@ export function registerApiRoutes(router) {
     const user = store.findUserByLogin(body.username ?? body.email ?? '')
 
     if (!user || !verifyPassword(String(body.password ?? ''), user.passwordHash)) {
+      const limit = recordFailedLogin(req)
+
+      if (!limit.allowed) {
+        sendJson(
+          res,
+          429,
+          { error: `Too many attempts. Try again in ${limit.retryAfterSeconds}s.` },
+          { 'retry-after': String(limit.retryAfterSeconds) }
+        )
+        return
+      }
+
       throw new HttpError(401, 'Incorrect username or password')
     }
 
+    clearLoginAttempts(req)
     const token = createSession(user.id)
     sendJson(res, 200, { user: publicUser(user) }, { 'set-cookie': sessionCookie(token, req) })
   })
 
   router.post('/api/v1/auth/logout', ({ req, res }) => {
+    // Clearing the cookie is not enough: the token is also deleted, or a copy
+    // taken before signing out would keep working until it expired.
+    endSession(req)
     sendJson(res, 200, { ok: true }, { 'set-cookie': clearedSessionCookie() })
   })
 

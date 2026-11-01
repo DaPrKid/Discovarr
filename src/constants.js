@@ -106,7 +106,9 @@ export const SETTING_DEFAULTS = Object.freeze({
   'plex.url': '',
   'plex.token': '',
   // Signing in with a Plex account, and the id plex.tv knows this install by.
-  'plex.login': 'true',
+  // Off until an administrator turns it on: any Plex account completes that
+  // flow, so it is an open sign-up rather than a private door.
+  'plex.login': 'false',
   'plex.clientId': '',
   // Copy a Plex profile's watchlist into the local one the first time it signs in.
   'plex.importWatchlist': 'true',

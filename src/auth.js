@@ -12,8 +12,28 @@ import {
   touchApiToken,
 } from './db.js'
 import { HttpError, parseCookies } from './http.js'
+import { clientKey, createRateLimiter } from './ratelimit.js'
 
 export const SESSION_COOKIE = 'discovarr_session'
+
+/**
+ * One failure budget for every way in, keyed the same for all of them, so the
+ * JSON API cannot be used to buy extra guesses past the HTML form's limit.
+ */
+export const loginLimiter = createRateLimiter({
+  windowMs: config.loginRateWindowMs,
+  max: config.loginRateLimit,
+})
+
+/** Counts a failed sign-in and reports whether the caller is still allowed. */
+export function recordFailedLogin(req) {
+  return loginLimiter.record(clientKey(req))
+}
+
+/** Clears the failures for this client after a sign-in that succeeded. */
+export function clearLoginAttempts(req) {
+  loginLimiter.reset(clientKey(req))
+}
 
 export function createSession(userId) {
   const token = randomBytes(32).toString('base64url')

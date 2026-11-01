@@ -86,6 +86,27 @@ async function profilePickerCookie() {
   return { html: await callback.text(), token: cookieValue(callback, 'discovarr_plex_token') }
 }
 
+/**
+ * Plex sign-in is off by default, because any Plex account completes it. The
+ * suite turns it on the way an administrator would.
+ */
+async function enablePlexLogin() {
+  const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@discovarr.local', password: 'adminpass' }),
+  })
+  assert.equal(login.status, 200)
+
+  const session = cookieValue(login, 'discovarr_session')
+  const response = await postForm(
+    '/settings',
+    { settingsSection: 'integrations', plexUrl: '', plexLoginSubmitted: '1', plexLogin: '1' },
+    `discovarr_session=${session}`
+  )
+  assert.equal(response.status, 303)
+}
+
 before(async () => {
   stub = createHttpServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
@@ -161,6 +182,7 @@ before(async () => {
   })
 
   await waitForHealth()
+  await enablePlexLogin()
 })
 
 after(async () => {
