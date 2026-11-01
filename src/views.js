@@ -206,6 +206,9 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
             try {
               localStorage.setItem('discovarr-' + panel, hidden ? 'shown' : 'hidden')
             } catch (error) {}
+            // The grid changes width when a panel goes, so anything laid out
+            // against the old column count needs to know it moved.
+            document.dispatchEvent(new CustomEvent('discovarr:panels'))
           })
         })
       })()
@@ -275,10 +278,12 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
 
         fill()
         var timer = null
-        window.addEventListener('resize', function () {
+        function refill() {
           clearTimeout(timer)
           timer = setTimeout(fill, 150)
-        })
+        }
+        window.addEventListener('resize', refill)
+        document.addEventListener('discovarr:panels', refill)
       })()
 
       // Discover search suggests titles as you type. Leaving the field and
