@@ -51,7 +51,13 @@ async function plexTv(path, { method = 'GET', token = '', form = null } = {}) {
     throw new Error(`Plex could not be reached: ${error.message}`)
   }
 
-  if (!response.ok) throw new Error(`Plex responded with HTTP ${response.status}`)
+  if (!response.ok) {
+    // The status is kept so a wrong profile PIN can be told apart from an
+    // outage and answered on the picker instead of the sign-in page.
+    const error = new Error(`Plex responded with HTTP ${response.status}`)
+    error.status = response.status
+    throw error
+  }
   const text = await response.text()
   if (!text) return {}
 
@@ -105,16 +111,20 @@ export async function plexProfiles(token) {
       uuid: String(entry.uuid ?? entry.id ?? ''),
       title: String(entry.title ?? entry.username ?? 'Plex user'),
       admin: Boolean(entry.admin),
+      // A protected profile has a Plex Home PIN of its own.
+      protected:
+        entry.protected === true || entry.protected === 1 || entry.protected === '1' || entry.protected === 'true',
     }))
     .filter((entry) => entry.uuid)
 }
 
 /** Exchanges the account token for the token of one home user. */
-export async function plexSwitchProfile(token, uuid) {
-  const payload = await plexTv(`/api/v2/home/users/${encodeURIComponent(uuid)}/switch`, {
-    method: 'POST',
-    token,
-  })
+export async function plexSwitchProfile(token, uuid, pin = '') {
+  const query = pin ? `?pin=${encodeURIComponent(pin)}` : ''
+  const payload = await plexTv(
+    `/api/v2/home/users/${encodeURIComponent(uuid)}/switch${query}`,
+    { method: 'POST', token }
+  )
 
   const switched = payload.authToken ?? payload.authenticationToken
   if (!switched) throw new Error('Plex did not return a token for that profile')

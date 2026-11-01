@@ -13,6 +13,7 @@ const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const PROFILES = [
   { id: 1, uuid: 'owner-uuid', title: 'Owner', admin: true },
   { id: 2, uuid: 'sam-uuid', title: 'Sam', admin: false },
+  { id: 3, uuid: 'kids-uuid', title: 'Kids', admin: false, protected: true },
 ]
 
 let stub
@@ -107,10 +108,14 @@ before(async () => {
     const switching = /^\/api\/v2\/home\/users\/([^/]+)\/switch$/.exec(url.pathname)
     if (req.method === 'POST' && switching) {
       const profile = PROFILES.find((entry) => entry.uuid === switching[1])
-      return profile ? json(200, { authToken: `${profile.title.toLowerCase()}-token` }) : json(404, {})
+      if (!profile) return json(404, {})
+      // A protected home user answers only to its own PIN.
+      if (profile.protected && url.searchParams.get('pin') !== '1234') return json(401, { error: 'wrong pin' })
+      return json(200, { authToken: `${profile.title.toLowerCase()}-token` })
     }
     if (url.pathname === '/api/v2/user') {
       if (token === 'sam-token') return json(200, { id: 77, username: 'sam', email: 'sam@example.com', title: 'Sam' })
+      if (token === 'kids-token') return json(200, { id: 78, username: 'kids', email: 'kids@example.com', title: 'Kids' })
       if (token === 'owner-token') return json(200, { id: 70, username: 'owner', email: 'owner@example.com', title: 'Owner' })
       return json(401, { error: 'unknown token' })
     }
@@ -228,4 +233,35 @@ test('a profile choice without a Plex token is refused', async () => {
 
   assert.equal(response.status, 303)
   assert.match(response.headers.get('location'), /^\/login\?err=/)
+})
+
+test('a protected profile shows a PIN field', async () => {
+  const { html } = await profilePickerCookie()
+
+  assert.match(html, /name="pin-kids-uuid"/)
+  assert.match(html, /PIN for Kids/)
+  assert.match(html, /Sign in/)
+})
+
+test('a protected profile needs its own PIN before it signs in', async () => {
+  const { token } = await profilePickerCookie()
+  const cookie = `discovarr_plex_token=${token}`
+
+  const missing = await postForm('/auth/plex/profile', { uuid: 'kids-uuid' }, cookie)
+  assert.equal(missing.status, 200)
+  assert.match(await missing.text(), /Enter the 4-digit PIN for Kids/)
+
+  const wrong = await postForm('/auth/plex/profile', { uuid: 'kids-uuid', 'pin-kids-uuid': '0000' }, cookie)
+  assert.equal(wrong.status, 200)
+  const refused = await wrong.text()
+  assert.match(refused, /That PIN is not right for Kids/)
+  assert.match(refused, /name="pin-kids-uuid"/)
+
+  const accepted = await postForm('/auth/plex/profile', { uuid: 'kids-uuid', 'pin-kids-uuid': '1234' }, cookie)
+  assert.equal(accepted.status, 303)
+  assert.equal(accepted.headers.get('location'), '/')
+
+  const session = cookieValue(accepted, 'discovarr_session')
+  const me = await (await fetch(`${baseUrl}/api/v1/auth/me`, { headers: { cookie: `discovarr_session=${session}` } })).json()
+  assert.equal(me.user.username, 'kids')
 })

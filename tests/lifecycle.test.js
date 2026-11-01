@@ -315,3 +315,32 @@ test('repeated login failures are rate limited', async () => {
 
   assert.match(lastLocation, /Too%20many%20attempts/)
 })
+
+test('an administrator can delete a user, but not their own account', async () => {
+  const created = await call('/settings/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { username: 'Temp', email: 'temp@discovarr.local', password: 'temp123', role: 'user' },
+  })
+  assert.equal(created.status, 303)
+
+  const before = await call('/api/v1/users', { cookie: adminCookie })
+  const temp = before.json.results.find((user) => user.email === 'temp@discovarr.local')
+  assert.ok(temp, 'user was created')
+
+  const denied = await call(`/settings/users/${temp.id}/delete`, { method: 'POST', cookie: userCookie })
+  assert.equal(denied.status, 403)
+
+  const removed = await call(`/settings/users/${temp.id}/delete`, { method: 'POST', cookie: adminCookie })
+  assert.equal(removed.status, 303)
+  assert.match(removed.headers.get('location'), /notice=/)
+
+  const after = await call('/api/v1/users', { cookie: adminCookie })
+  assert.equal(after.json.results.some((user) => user.id === temp.id), false)
+
+  const me = await call('/api/v1/auth/me', { cookie: adminCookie })
+  const self = await call(`/settings/users/${me.json.user.id}/delete`, { method: 'POST', cookie: adminCookie })
+  assert.equal(self.status, 303)
+  assert.match(self.headers.get('location'), /err=/)
+  assert.ok((await call('/api/v1/users', { cookie: adminCookie })).json.results.some((user) => user.id === me.json.user.id))
+})

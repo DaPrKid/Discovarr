@@ -2725,3 +2725,36 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
 .plex-profile-name {
   font-weight: 600;
 }
+
+.plex-profile-locked {
+  cursor: default;
+}
+
+.plex-profile-locked:hover,
+.plex-profile-locked:focus-within {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.plex-profile-locked:focus-within {
+  border-color: var(--accent);
+}
+
+.plex-pin {
+  width: 88px;
+  padding: 6px 8px;
+  text-align: center;
+  font: inherit;
+  letter-spacing: 0.18em;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}

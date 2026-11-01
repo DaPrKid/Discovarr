@@ -485,6 +485,22 @@ export function updateUserByAdmin(id, input, actor) {
   return updated
 }
 
+/** Deletes an account, keeping the person doing it out of their own way. */
+export function deleteUserByAdmin(id, actor) {
+  const user = store.findUserById(id)
+  if (!user) throw new HttpError(404, 'User not found')
+  if (user.id === actor?.id) throw new HttpError(400, 'You cannot delete your own account')
+
+  const admins = store.listUsers().filter((member) => member.role === Role.ADMIN)
+  if (user.role === Role.ADMIN && admins.length <= 1) {
+    throw new HttpError(400, 'Keep at least one administrator')
+  }
+
+  store.deleteUser(user.id)
+  store.recordAudit(actor?.id ?? null, 'user.deleted', `${user.email} (${user.role})`)
+  return user
+}
+
 export function changePassword(user, currentPassword, newPassword, keepToken) {
   if (!verifyPassword(String(currentPassword ?? ''), user.passwordHash)) {
     throw new HttpError(401, 'Current password is incorrect')

@@ -20,6 +20,7 @@ import {
   createUserByAdmin,
   declineRequest,
   deleteRequest,
+  deleteUserByAdmin,
   editServiceProfile,
   getCatalog,
   getMediaDetail,
@@ -278,27 +279,38 @@ function initialsOf(text) {
   return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('')
 }
 
-function plexProfilePage({ profiles }) {
+function plexProfilePage({ profiles, error = '' }) {
+  const card = (profile) => {
+    const who = `<span class="plex-avatar" aria-hidden="true">${escapeHtml(initialsOf(profile.title))}</span>
+            <span class="plex-profile-name">${escapeHtml(profile.title)}</span>
+            ${profile.admin ? '<span class="muted small">owner</span>' : ''}`
+
+    // A profile with a Plex Home PIN keeps it, so nobody borrows the rights of
+    // whichever profile in the household happens to be unlocked.
+    if (profile.protected) {
+      return `<div class="plex-profile plex-profile-locked">
+            ${who}
+            <input class="plex-pin" type="password" name="pin-${escapeHtml(profile.uuid)}" inputmode="numeric"
+              autocomplete="off" maxlength="4" pattern="[0-9]*" placeholder="PIN"
+              aria-label="PIN for ${escapeHtml(profile.title)}" />
+            <button class="btn btn-sm" type="submit" name="uuid" value="${escapeHtml(profile.uuid)}">Sign in</button>
+          </div>`
+    }
+
+    return `<button class="plex-profile" type="submit" name="uuid" value="${escapeHtml(profile.uuid)}">
+            ${who}
+          </button>`
+  }
+
   return layout({
     appName: appName(),
     title: 'Choose a profile',
     body: `<section class="auth auth-wide">
       <h1>Who's watching?</h1>
-      <p class="muted">This Plex account has more than one profile. Pick the one this Discovarr account belongs to.</p>
+      <p class="muted">Pick the profile this Discovarr account belongs to. A profile with a PIN asks for it first.</p>
+      ${error ? `<p class="alert alert-err">${escapeHtml(error)}</p>` : ''}
       <form method="post" action="/auth/plex/profile">
-        <div class="plex-profiles">
-          ${profiles
-            .map(
-              (profile) => `<button class="plex-profile" type="submit" name="uuid" value="${escapeHtml(
-                profile.uuid
-              )}">
-            <span class="plex-avatar" aria-hidden="true">${escapeHtml(initialsOf(profile.title))}</span>
-            <span class="plex-profile-name">${escapeHtml(profile.title)}</span>
-            ${profile.admin ? '<span class="muted small">owner</span>' : ''}
-          </button>`
-            )
-            .join('')}
-        </div>
+        <div class="plex-profiles">${profiles.map(card).join('')}</div>
       </form>
     </section>`,
   })
@@ -2240,7 +2252,8 @@ function plexPanel(settings) {
         <span>Allow signing in with Plex</span>
       </label>
       <p class="muted small">A Plex account that has never used this instance gets its own Discovarr account the first time it
-        signs in, and picks its Plex profile when the account has more than one.</p>
+        signs in, and picks its Plex profile when the account has more than one. A profile with a Plex Home PIN has to
+        enter that PIN before it signs in.</p>
       <p class="muted small">Used to check that a title really is in Plex and to link cards straight to playback. The token is the
         <code>X-Plex-Token</code> value in any Plex item's <code>Get Info → View XML</code> link.</p>
       <div class="request-actions">
@@ -2278,7 +2291,15 @@ function userRow(member, actor) {
       <label>Movie quota <input type="number" name="quotaMovie" min="0" value="${member.quotaMovie}" /></label>
       <label>Series quota <input type="number" name="quotaTv" min="0" value="${member.quotaTv}" /></label>
     </div>
-    <button class="btn btn-sm" type="submit" ${isSelf ? 'disabled' : ''}>Save</button>
+    <div class="user-actions">
+      <button class="btn btn-sm" type="submit" ${isSelf ? 'disabled' : ''}>Save</button>
+      ${
+        isSelf
+          ? ''
+          : `<button class="btn btn-sm btn-danger" type="submit" formaction="/settings/users/${member.id}/delete"
+              onclick="return confirm('Delete this user? Their requests, sessions and watchlist go with the account.')">Delete</button>`
+      }
+    </div>
   </form>`
 }
 
@@ -2806,7 +2827,9 @@ export function registerPageRoutes(router) {
 
       const profiles = await plexProfiles(token)
 
-      if (profiles.length > 1) {
+      // A lone profile with a home PIN still gets the picker, because that PIN
+      // is the only thing standing between two people in a household.
+      if (profiles.length > 1 || profiles.some((entry) => entry.protected)) {
         return sendHtml(res, 200, plexProfilePage({ profiles }), {
           'set-cookie': shortLivedCookie(PLEX_TOKEN_COOKIE, token, req),
         })
@@ -2833,13 +2856,37 @@ export function registerPageRoutes(router) {
       return redirect(res, `/login?err=${encodeURIComponent('Pick a Plex profile')}`)
     }
 
+    let profile = { uuid, title: 'Plex user', protected: false }
     try {
       const profiles = await plexProfiles(token)
-      const profile = profiles.find((entry) => entry.uuid === uuid) ?? { uuid, title: 'Plex user' }
-      const profileToken = await plexSwitchProfile(token, uuid)
+      profile = profiles.find((entry) => entry.uuid === uuid) ?? profile
+
+      const pin = String(body[`pin-${uuid}`] ?? '').trim()
+      if (profile.protected && !/^\d{4}$/.test(pin)) {
+        return sendHtml(
+          res,
+          200,
+          plexProfilePage({ profiles, error: `Enter the 4-digit PIN for ${profile.title}` })
+        )
+      }
+
+      const profileToken = await plexSwitchProfile(token, uuid, profile.protected ? pin : '')
 
       await finishPlexSignIn({ req, res, token: profileToken, profile })
     } catch (error) {
+      // A wrong PIN deserves the picker again, not the sign-in page.
+      if (profile.protected && (error.status === 401 || error.status === 403)) {
+        try {
+          const profiles = await plexProfiles(token)
+          return sendHtml(
+            res,
+            200,
+            plexProfilePage({ profiles, error: `That PIN is not right for ${profile.title}` })
+          )
+        } catch {
+          // a Plex outage falls through to the sign-in page below
+        }
+      }
       redirect(res, `/login?err=${encodeURIComponent(error.message)}`)
     }
   })
@@ -4130,6 +4177,17 @@ export function registerPageRoutes(router) {
       redirect(res, withMessage('/settings?tab=users', 'notice', `Updated ${updated.username}`))
     } catch (error) {
       failure(res, '/settings', error)
+    }
+  })
+
+  router.post('/settings/users/:id/delete', async ({ req, res, params }) => {
+    const actor = requirePermission(req, Permission.MANAGE_USERS, 'You cannot manage users')
+
+    try {
+      const removed = deleteUserByAdmin(Number(params.id), actor)
+      redirect(res, withMessage('/settings?tab=users', 'notice', `Deleted ${removed.username}`))
+    } catch (error) {
+      failure(res, '/settings?tab=users', error)
     }
   })
 }

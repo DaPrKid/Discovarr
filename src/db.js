@@ -275,6 +275,11 @@ export function updateUserPassword(id, password) {
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), Number(id))
 }
 
+/** Removes an account. Sessions, requests, tokens and watchlist follow by cascade. */
+export function deleteUser(id) {
+  db.prepare('DELETE FROM users WHERE id = ?').run(Number(id))
+}
+
 // ---------------------------------------------------------------------------
 // Media
 // ---------------------------------------------------------------------------
