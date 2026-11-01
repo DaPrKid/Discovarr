@@ -593,6 +593,8 @@ export async function collectionDetails(id) {
       id: raw.id,
       name: raw.name ?? 'Collection',
       overview: raw.overview ?? '',
+      posterPath: raw.poster_path ?? null,
+      backdropPath: raw.backdrop_path ?? null,
       parts: (raw.parts ?? [])
         .filter((part) => part.id)
         .map((part) => ({
@@ -623,20 +625,31 @@ export async function movieCollectionId(tmdbId) {
   }
 }
 
-/** Keeps only the films that are part of a collection, in the order given. */
-export async function collectionTitles(items) {
-  const kept = []
+/**
+ * The collections a page of films belongs to, in the order the films appear.
+ * The filter shows the collections themselves, so a page of franchises reads as
+ * a wall of sets rather than one card per film.
+ */
+export async function collectionsFor(items) {
+  const ids = []
 
   // Small batches keep the request burst under TMDB's rate limit on a cold cache.
   for (let index = 0; index < items.length; index += 6) {
     const slice = items.slice(index, index + 6)
-    const flags = await Promise.all(slice.map((item) => movieCollectionId(item.tmdbId)))
-    slice.forEach((item, offset) => {
-      if (flags[offset]) kept.push(item)
-    })
+    const found = await Promise.all(slice.map((item) => movieCollectionId(item.tmdbId)))
+    for (const id of found) if (id && !ids.includes(id)) ids.push(id)
   }
 
-  return kept
+  const collections = []
+  for (const id of ids) {
+    try {
+      collections.push(await collectionDetails(id))
+    } catch {
+      // A collection TMDB will not describe is left out rather than failing the page.
+    }
+  }
+
+  return collections
 }
 
 /** Everything one person page needs: biography plus every credited title. */

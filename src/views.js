@@ -217,6 +217,47 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         if (closer) closer.closest('dialog')?.close()
       })
 
+      // A Request button on a card opens the same dialog the title page offers,
+      // so the quality profile is chosen rather than assumed. Without this
+      // script the form still posts, it just takes the default profile.
+      ;(function () {
+        var dialog = document.getElementById('card-request-dialog')
+        if (!dialog) return
+        var form = dialog.querySelector('[data-card-request-form]')
+        if (!form) return
+        var titleNode = dialog.querySelector('[data-card-request-title]')
+        var submitNode = dialog.querySelector('[data-card-request-submit]')
+
+        function setField(name, value) {
+          var field = form.querySelector('[name="' + name + '"]')
+          if (field) field.value = value
+        }
+
+        document.addEventListener('submit', function (event) {
+          var trigger = event.target.closest ? event.target.closest('form[data-request-card]') : null
+          if (!trigger) return
+          event.preventDefault()
+          var data = trigger.dataset
+          var isTv = data.mediaType === 'tv'
+          form.action = trigger.getAttribute('action') || '/media/import'
+          setField('returnTo', data.returnTo || '/')
+          setField('tmdbId', data.tmdbId || '')
+          setField('mediaType', data.mediaType || 'movie')
+          if (titleNode) titleNode.textContent = 'Request ' + (data.title || 'this title')
+          if (submitNode) submitNode.textContent = 'Request ' + (isTv ? 'series' : 'movie')
+          dialog.querySelectorAll('[data-card-request-profiles]').forEach(function (group) {
+            var active = group.dataset.cardRequestProfiles === (isTv ? 'tv' : 'movie')
+            group.hidden = !active
+            group.querySelectorAll('select').forEach(function (select) {
+              select.disabled = !active
+              if (active) select.name = 'profile'
+              else select.removeAttribute('name')
+            })
+          })
+          dialog.showModal()
+        })
+      })()
+
       // The bell opens a small panel over the page instead of leaving it, and
       // the same button closes it again, so a glance never loses your place.
       ;(function () {
@@ -498,6 +539,31 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         sync()
       })
 
+      // A backed-up settings file restores by picking the file, not by pasting
+      // its contents. The textarea stays for anyone without JavaScript.
+      ;(function () {
+        var form = document.querySelector('[data-restore-form]')
+        if (!form) return
+        var input = form.querySelector('[data-restore-file]')
+        var payload = form.querySelector('[data-restore-payload]')
+        var label = form.querySelector('[data-restore-name]')
+        if (!input || !payload) return
+        input.addEventListener('change', function () {
+          var file = input.files && input.files[0]
+          if (!file) {
+            if (label) label.hidden = true
+            return
+          }
+          file.text().then(function (text) {
+            payload.value = text
+            if (label) {
+              label.textContent = 'Loaded ' + file.name + ' · ' + Math.round(file.size / 1024) + ' KB'
+              label.hidden = false
+            }
+          }).catch(function () {})
+        })
+      })()
+
       // Episode lists load the first time a season is opened.
       document.querySelectorAll('details[data-episodes]').forEach(function (block) {
         block.addEventListener('toggle', function () {
@@ -656,7 +722,7 @@ export function poster(media, extraClass = '') {
   return `<div class="poster ${extraClass}" style="--hue:${hue}"><span>${escapeHtml(initials)}</span></div>`
 }
 
-function requestAction(item, local, returnTo, plex = null) {
+export function requestAction(item, local, returnTo, plex = null) {
   if (local && local.status === MediaStatus.AVAILABLE) {
     return '<span class="badge badge-available">Available</span>'
   }
@@ -671,20 +737,112 @@ function requestAction(item, local, returnTo, plex = null) {
     return '<span class="badge badge-pending">Requested</span>'
   }
 
-  if (local) {
-    return `<form method="post" action="/media/${local.id}/request">
-      <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
-      ${local.mediaType === MediaType.TV ? '<input type="hidden" name="allSeasons" value="1" />' : ''}
-      <button class="btn btn-sm" type="submit">Request</button>
-    </form>`
-  }
+  const action = local ? `/media/${local.id}/request` : '/media/import'
+  const tmdbId = local?.tmdbId ?? item?.tmdbId ?? ''
+  const mediaType = local?.mediaType ?? item?.mediaType ?? MediaType.MOVIE
+  const title = local?.title ?? item?.title ?? ''
 
-  return `<form method="post" action="/media/import">
-    <input type="hidden" name="tmdbId" value="${escapeHtml(item.tmdbId)}" />
-    <input type="hidden" name="mediaType" value="${escapeHtml(item.mediaType)}" />
+  // The hidden fields keep this a working request without JavaScript. With it,
+  // the layout script opens the same dialog the title page uses, so the quality
+  // profile is asked for instead of assumed.
+  return `<form method="post" action="${escapeHtml(action)}" data-request-card
+      data-return-to="${escapeHtml(returnTo)}" data-tmdb-id="${escapeHtml(tmdbId)}"
+      data-media-type="${escapeHtml(mediaType)}" data-title="${escapeHtml(title)}">
     <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
+    ${
+      local
+        ? ''
+        : `<input type="hidden" name="tmdbId" value="${escapeHtml(tmdbId)}" />
+           <input type="hidden" name="mediaType" value="${escapeHtml(mediaType)}" />`
+    }
     <button class="btn btn-sm" type="submit">Request</button>
   </form>`
+}
+
+/** A collection in the poster grid, for the collections filter. */
+export function collectionCard(collection) {
+  const parts = Array.isArray(collection.parts) ? collection.parts : []
+  const cover = collection.posterPath ?? parts.find((part) => part.posterPath)?.posterPath ?? null
+  const years = parts
+    .map((part) => String(part.releaseDate ?? '').slice(0, 4))
+    .filter(Boolean)
+    .sort()
+  const span = years.length > 1 ? `${years[0]}–${years[years.length - 1]}` : ''
+  const href = `/collection/${escapeHtml(String(collection.id))}`
+
+  return `<article class="media-card collection-card">
+    <a href="${href}" class="poster-link">${poster({
+      id: collection.id,
+      title: collection.name,
+      posterPath: cover,
+    })}<span class="collection-ribbon">Collection</span></a>
+    <div class="media-body">
+      <a class="media-title" href="${href}">${escapeHtml(collection.name)}</a>
+      <p class="media-meta">${parts.length} film${parts.length === 1 ? '' : 's'}${
+        span ? ` · ${escapeHtml(span)}` : ''
+      }</p>
+      <div class="media-actions"><a class="btn btn-sm btn-ghost" href="${href}">Open collection</a></div>
+    </div>
+  </article>`
+}
+
+/**
+ * The quality-profile picker inside the shared request dialog. The select only
+ * gets its name when the dialog decides which media type is being requested, so
+ * the two pickers never both submit.
+ */
+function profilePickerBlock(profiles) {
+  const list = Array.isArray(profiles) ? profiles : []
+
+  if (list.length === 0) {
+    return '<p class="muted small">No Radarr or Sonarr profile is set up for this yet, so the request waits for an administrator.</p>'
+  }
+
+  if (list.length === 1) {
+    return `<div class="request-profile profile-readout">
+      <span class="muted small">Quality profile</span>
+      <strong>${escapeHtml(list[0].name)}</strong>
+      ${list[0].profileName ? `<span class="muted small">${escapeHtml(list[0].profileName)}</span>` : ''}
+    </div>`
+  }
+
+  return `<label class="request-profile">Quality profile
+    <select data-profile-select>
+      ${list
+        .map(
+          (profile, index) =>
+            `<option value="${index}" ${profile.isDefault ? 'selected' : ''}>${escapeHtml(profile.name)}${
+              profile.isDefault ? ' (default)' : ''
+            }</option>`
+        )
+        .join('')}
+    </select>
+  </label>`
+}
+
+/**
+ * One request dialog for the whole page, so the Request button on any card asks
+ * the same questions as the title page instead of filing with a guessed profile.
+ */
+export function cardRequestDialog({ movieProfiles = [], tvProfiles = [] } = {}) {
+  return `<dialog class="dialog request-dialog" id="card-request-dialog">
+    <form method="post" action="/media/import" class="stack" data-card-request-form>
+      <input type="hidden" name="returnTo" value="/" />
+      <input type="hidden" name="tmdbId" value="" />
+      <input type="hidden" name="mediaType" value="movie" />
+      <div class="dialog-head">
+        <h2 data-card-request-title>Request</h2>
+        <button class="icon-btn" type="button" data-dialog-close aria-label="Close">×</button>
+      </div>
+      <p class="muted small" data-card-request-note>Pick the quality profile the download should use. A series request covers every season; open its page to pick single seasons.</p>
+      <div data-card-request-profiles="movie">${profilePickerBlock(movieProfiles)}</div>
+      <div data-card-request-profiles="tv" hidden>${profilePickerBlock(tvProfiles)}</div>
+      <div class="request-actions">
+        <button class="btn" type="submit" data-card-request-submit>Request</button>
+        <button class="btn btn-ghost" type="button" data-dialog-close>Cancel</button>
+      </div>
+    </form>
+  </dialog>`
 }
 
 export function mediaCard(item, { returnTo = '/', local = null, plex = null } = {}) {

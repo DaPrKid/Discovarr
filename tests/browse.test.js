@@ -164,6 +164,17 @@ before(async () => {
           { id: 889, title: 'Collection Film Two', release_date: '2021-06-01', poster_path: '/two.jpg', vote_average: 6.5 },
         ],
       }
+    } else if (/^\/3\/collection\/\d+$/.test(url.pathname)) {
+      const id = Number(url.pathname.split('/').pop())
+      body = {
+        id,
+        name: `Set ${id}`,
+        poster_path: `/set-${id}.jpg`,
+        parts: [
+          { id: id - 900, title: `Movie ${id - 900}`, release_date: '2023-03-03', vote_average: 7 },
+          { id: id - 902, title: `Movie ${id - 902}`, release_date: '2025-06-06', vote_average: 8 },
+        ],
+      }
     } else if (/^\/3\/movie\/\d+$/.test(url.pathname)) {
       // Every other film: even ids belong to a collection, odd ids stand alone.
       const id = Number(url.pathname.split('/').pop())
@@ -478,19 +489,30 @@ test('the title page styles carry the backdrop, seasons and collection panel', a
   assert.match(css, /\.collection-side \{/)
 })
 
-test('the collections switch keeps only films that belong to a collection', async () => {
+test('the collections switch shows the collections themselves', async () => {
   const studios = await (await page('/studios')).text()
   assert.match(studios, /name="collections" value="1"/)
-  assert.doesNotMatch(studios, /Collections only"[^>]*checked/)
+  assert.doesNotMatch(studios, /name="collections" value="1" checked/)
 
-  // Six of the twelve stub films are part of a set.
+  // Six of the twelve stub films belong to a set, so the page becomes six cards,
+  // each pointing at its collection page rather than at one film.
   const narrowed = await (await page('/studios?collections=1')).text()
   assert.match(narrowed, /name="collections" value="1" checked/)
-  assert.match(narrowed, /Only films that are part of a collection/)
-  assert.equal((narrowed.match(/class="media-card"/g) ?? []).length, 6)
+  assert.match(narrowed, /Only collections that match these filters/)
+  assert.equal((narrowed.match(/class="media-card collection-card"/g) ?? []).length, 6)
+  assert.equal((narrowed.match(/class="media-card/g) ?? []).length, 6)
+  assert.match(narrowed, /href="\/collection\/19\d\d"/)
+  assert.match(narrowed, /2 films/)
 
   // Collections are a film idea, so series pages do not offer the switch.
   const networks = await (await page('/networks?collections=1')).text()
   assert.doesNotMatch(networks, /name="collections"/)
   assert.equal((networks.match(/class="media-card"/g) ?? []).length, 12)
+})
+
+test('Discover shows collections too when the switch is on', async () => {
+  const html = await (await page('/?type=movie&collections=1')).text()
+  assert.match(html, /Only collections that match these filters|collections that match these filters/)
+  assert.match(html, /class="media-card collection-card"/)
+  assert.match(html, /href="\/collection\//)
 })

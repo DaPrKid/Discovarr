@@ -14,6 +14,7 @@ let smtp
 let dataDir
 let baseUrl
 let cookie
+let requesterCookie
 
 function freePort() {
   return new Promise((resolve) => {
@@ -48,14 +49,14 @@ async function waitFor(check, timeoutMs = 5000) {
   return false
 }
 
-function get(path) {
-  return fetch(`${baseUrl}${path}`, { headers: { cookie }, redirect: 'manual' })
+function get(path, using = cookie) {
+  return fetch(`${baseUrl}${path}`, { headers: { cookie: using }, redirect: 'manual' })
 }
 
-function postForm(path, fields) {
+function postForm(path, fields, using = cookie) {
   return fetch(`${baseUrl}${path}`, {
     method: 'POST',
-    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { cookie: using, 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(fields).toString(),
     redirect: 'manual',
   })
@@ -165,6 +166,28 @@ before(async () => {
 
   assert.equal(login.status, 200)
   cookie = String(login.headers.get('set-cookie') ?? '').split(';')[0]
+
+  // The administrator holds every permission, auto-approval included, so these
+  // tests file their requests from a plain account and approve them as the admin.
+  await fetch(`${baseUrl}/settings/users`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      username: 'requester',
+      email: 'requester@example.com',
+      password: 'requesterpass',
+      role: 'user',
+    }).toString(),
+    redirect: 'manual',
+  })
+
+  const requester = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'requester', password: 'requesterpass' }),
+  })
+  assert.equal(requester.status, 200)
+  requesterCookie = String(requester.headers.get('set-cookie') ?? '').split(';')[0]
 })
 
 after(() => {
@@ -184,7 +207,7 @@ test('the notifications page starts empty and the header carries a bell', async 
 })
 
 test('approving a request leaves the requester an in-app notification', async () => {
-  const request = await postForm('/media/1/request', { returnTo: '/' })
+  const request = await postForm('/media/1/request', { returnTo: '/' }, requesterCookie)
   assert.equal(request.status, 303)
 
   const pending = await pendingRequests()
@@ -193,19 +216,19 @@ test('approving a request leaves the requester an in-app notification', async ()
   const approve = await postForm(`/requests/${pending[0].id}/approve`, {})
   assert.equal(approve.status, 303)
 
-  const html = await (await get('/notifications')).text()
+  const html = await (await get('/notifications', requesterCookie)).text()
   assert.match(html, /was approved/)
   assert.match(html, /Open the title/)
   assert.match(html, /bell-count/)
   assert.match(html, /Mark all read/)
 
-  const read = await postForm('/notifications/read', {})
+  const read = await postForm('/notifications/read', {}, requesterCookie)
   assert.equal(read.status, 303)
-  assert.doesNotMatch(await (await get('/notifications')).text(), /Mark all read/)
+  assert.doesNotMatch(await (await get('/notifications', requesterCookie)).text(), /Mark all read/)
 })
 
 test('bulk approve handles the ticked requests in one post', async () => {
-  await postForm('/media/2/request', { returnTo: '/' })
+  await postForm('/media/2/request', { returnTo: '/' }, requesterCookie)
   const pending = await pendingRequests()
   assert.ok(pending.length >= 1)
 
@@ -272,12 +295,12 @@ test('saving SMTP settings and sending a test message uses the transport', async
 })
 
 test('a user who opts into email is mailed when their request is approved', async () => {
-  const prefs = await postForm('/account/notifications', { notifyEmail: 'on', events: '1' })
+  const prefs = await postForm('/account/notifications', { notifyEmail: 'on', events: '1' }, requesterCookie)
   assert.equal(prefs.status, 303)
 
   const before = smtp.messages.length
 
-  await postForm('/media/3/request', { returnTo: '/' })
+  await postForm('/media/3/request', { returnTo: '/' }, requesterCookie)
   const pending = await pendingRequests()
   assert.ok(pending.length >= 1)
   await postForm(`/requests/${pending[0].id}/approve`, {})
@@ -289,7 +312,7 @@ test('a user who opts into email is mailed when their request is approved', asyn
 
   const message = smtp.messages[smtp.messages.length - 1]
   assert.match(message, /Subject: Discovarr: .*was approved/)
-  assert.match(message, /To: <owner@example\.com>/)
+  assert.match(message, /To: <requester@example\.com>/)
 })
 
 test('a failing mail server reports the error instead of pretending to send', async () => {

@@ -2834,3 +2834,28 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
 .settings-tabs {
   flex-wrap: wrap;
 }
+
+/* --- Collections as cards, and restoring from a file (1.0) --- */
+
+.collection-card .poster-link {
+  position: relative;
+  display: block;
+}
+
+.collection-ribbon {
+  position: absolute;
+  left: 9px;
+  bottom: 9px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.file-pick input[type='file'] {
+  margin-top: 6px;
+}

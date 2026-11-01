@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.19.0'
+export const APP_VERSION = '1.0.0'
 
 // Lifecycle values mirror the enums Seerr uses, so the API and database stay
 // familiar to anyone coming from that codebase.
@@ -74,7 +74,6 @@ export const ALL_PERMISSIONS = Object.values(Permission).reduce((all, flag) => a
 // Every persisted setting must appear here: the store rejects unknown keys.
 export const SETTING_DEFAULTS = Object.freeze({
   'app.name': 'Discovarr',
-  'requests.autoApprove': 'false',
   // A failed dispatch is retried in the background this many times before the
   // request is left for an administrator with its error.
   'requests.maxAttempts': '3',

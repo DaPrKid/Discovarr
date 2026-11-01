@@ -149,12 +149,10 @@ export async function requestMedia({
     }
   }
 
-  // Admin implies every capability, but auto-approval is a policy choice. The
-  // role bypass must not leak in here, or every admin request skips review.
+  // Auto-approval is a permission set per account in Settings -> Users, so one
+  // trusted requester can skip review without the whole household doing so.
   const autoApprove =
-    store.getSetting('requests.autoApprove') === 'true' ||
-    (user.role !== Role.ADMIN &&
-      (Number(user.permissions ?? 0) & Permission.AUTO_APPROVE) === Permission.AUTO_APPROVE)
+    (Number(user.permissions ?? 0) & Permission.AUTO_APPROVE) === Permission.AUTO_APPROVE
 
   // The profile the requester picked, if it is one of the configured ones.
   const kind = media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr'
@@ -664,9 +662,6 @@ export function updateSettings(input, actor) {
   // its own form without clearing the others.
   if (input.appName !== undefined) {
     entries['app.name'] = String(input.appName ?? '').trim() || 'Discovarr'
-  }
-  if (input.autoApprove !== undefined) {
-    entries['requests.autoApprove'] = input.autoApprove ? 'true' : 'false'
   }
   if (input.tmdbApiKey !== undefined) {
     entries['tmdb.apiKey'] = String(input.tmdbApiKey ?? '').trim()

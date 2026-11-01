@@ -50,7 +50,7 @@ token is needed for that side.
 # once, on the machine that runs the container; classic PAT with read:packages
 echo "<token>" | docker login ghcr.io -u DaPrKid --password-stdin
 
-docker pull ghcr.io/daprkid/discovarr:0.19.0
+docker pull ghcr.io/daprkid/discovarr:1.0.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -66,12 +66,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:0.19.0
+docker pull ghcr.io/daprkid/discovarr:1.0.0
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:0.19.0
+  ghcr.io/daprkid/discovarr:1.0.0
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -122,9 +122,10 @@ bootstrapping, which is only useful for demos.
 - **Type switches** — Anime, Animation, Documentary, Reality, Kids and Talk show
   sit beside the genres. Anime is matched through its TMDB keyword, so it stays
   distinct from Animation.
-- **Collections only** — a switch in the filter panel keeps just the films that
-  belong to a collection, for a franchises-only browse. Films that stand alone
-  are dropped before the page is drawn.
+- **Collections, not just films** — a switch in the filter panel groups the
+  results into the collections they belong to, so a franchises-only browse reads
+  as a wall of sets. The other filters still apply: a collection appears when one
+  of its films matches.
 - **Title pages with atmosphere** — a blurred still of the title itself tints the
   page background, and a cast member TMDB has no headshot for borrows a still
   from one of their own titles.
@@ -137,6 +138,9 @@ bootstrapping, which is only useful for demos.
 - **No duplicate requests** — a title already requested in Discovarr, already
   sitting in Radarr or Sonarr, or already playable in Plex shows a disabled
   "Already requested" button or an Available badge instead of a second request.
+- **Request from anywhere** — the Request button on any card opens the same
+  dialog as the title page, so the quality profile is chosen rather than
+  assumed, and a watchlist entry can be requested without opening it first.
 - **Watchlist** — save any title for later from its page, whether or not it is
   in the catalog yet, then work through it from the Watchlist tab.
 - **Release calendar** — a real month grid, one box per day, with the films and
@@ -180,10 +184,10 @@ bootstrapping, which is only useful for demos.
   the cache is pruned on a schedule against a size and an age limit (500 MB and
   60 days by default), least recently used first. A **Prune cache** button in
   Settings → Tasks applies the limits immediately.
-- **Settings backup** — every setting downloads as one JSON file, secrets
-  blanked unless you ask for them, and pastes back in on another machine. Only
-  known keys are written, and a blank secret in the file never clears a key you
-  already have.
+- **Settings backup as a file** — every setting downloads as one JSON file,
+  secrets blanked unless you ask for them, and that same file is picked again to
+  restore it on another machine. Only known keys are written, and a blank secret
+  in the file never clears a key you already have.
 - **Diagnostics** — Settings → Tasks reports the database and write-ahead log
   size, artwork cache size, title, user and session counts, request counts by
   status, how each service is configured (never its credentials), and the last
@@ -213,7 +217,9 @@ bootstrapping, which is only useful for demos.
   about, and completes requests whose content arrived. Also runnable on demand.
 - **Quotas** — per-user monthly limits for movies and series, plus a granular
   permission bitmask (request movies/series, auto-approve, manage requests,
-  manage users, manage settings).
+  manage users, manage settings). Auto-approval is per account: tick
+  **Auto-approve own requests** for someone and their requests go straight to
+  Radarr or Sonarr, while everyone else keeps waiting for review.
 - **Notifications** — webhook (Discord-compatible `content`, plus structured
   fields) for new requests, approvals/declines and titles becoming available,
   and now email over SMTP too: STARTTLS, implicit TLS or a plain relay on the
@@ -279,7 +285,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:0.19.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.0.0
 ```
 
 If you prefer to run the process without root at all, start the container with

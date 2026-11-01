@@ -303,14 +303,9 @@ test('a named profile carries its own root folder and quality profile', async ()
   ).json()
   assert.equal(created.request.qualityProfileName, 'Kids HD')
 
-  const approved = await (
-    await fetch(`${baseUrl}/api/v1/request/${created.request.id}/approve`, {
-      method: 'POST',
-      headers: { cookie: adminCookie },
-    })
-  ).json()
-
-  assert.equal(approved.request.status, 2, approved.request.note ?? 'approval failed')
+  // Administrators hold every permission, so the request is approved as it is
+  // filed; the selected profile still decides the folder and quality.
+  assert.equal(created.request.status, 2, created.request.note ?? 'approval failed')
   assert.equal(arr.lastMovie.rootFolderPath, '/movies-kids')
   assert.equal(arr.lastMovie.qualityProfileId, 5)
 })
@@ -510,4 +505,25 @@ test('the inline script parses as a browser script', async () => {
   const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1])
   assert.ok(scripts.length > 0, 'the layout should inline its script')
   for (const script of scripts) assert.doesNotThrow(() => new Function(script))
+})
+
+test('settings download as a file and restore from one', async () => {
+  const html = await (
+    await fetch(`${baseUrl}/settings?tab=tasks`, { headers: { cookie: adminCookie } })
+  ).text()
+
+  assert.match(html, /href="\/settings\/export"/)
+  assert.match(html, /href="\/settings\/export\?secrets=1"/)
+  assert.match(html, /data-restore-file/)
+  assert.match(html, /accept="\.json,application\/json"/)
+})
+
+test('auto-approval is a permission on the user, not a global switch', async () => {
+  const users = await (await fetch(`${baseUrl}/settings?tab=users`, { headers: { cookie: adminCookie } })).text()
+  assert.match(users, /Auto-approve own requests/)
+
+  const general = await (
+    await fetch(`${baseUrl}/settings?tab=general`, { headers: { cookie: adminCookie } })
+  ).text()
+  assert.doesNotMatch(general, /name="autoApprove"/)
 })

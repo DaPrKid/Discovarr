@@ -59,7 +59,7 @@ import {
 } from './services.js'
 import {
   collectionDetails,
-  collectionTitles,
+  collectionsFor,
   CONTENT_TYPE_IDS,
   contentTypeOptions,
   discoverPage,
@@ -92,12 +92,15 @@ import { updateNotifications } from './core.js'
 import { APP_VERSION as BUILD_VERSION } from './constants.js'
 import {
   alert,
+  cardRequestDialog,
+  collectionCard,
   escapeHtml,
   layout,
   mediaCard,
   pagination,
   poster,
   previewAttrs,
+  requestAction,
   requestCard,
   statusBadge,
   themeSelect,
@@ -169,6 +172,15 @@ function pageUser(req, res) {
 }
 
 function render(res, status, { title, user = null, active = '', body }) {
+  // Every page carries the same request dialog, so a Request button never has
+  // to leave the page or fall back to a guessed quality profile.
+  const requestDialog = user
+    ? cardRequestDialog({
+        movieProfiles: hasPermission(user, Permission.REQUEST_MOVIE) ? serviceProfiles('radarr') : [],
+        tvProfiles: hasPermission(user, Permission.REQUEST_TV) ? serviceProfiles('sonarr') : [],
+      })
+    : ''
+
   sendHtml(
     res,
     status,
@@ -177,7 +189,7 @@ function render(res, status, { title, user = null, active = '', body }) {
       title,
       user,
       active,
-      body,
+      body: `${body}${requestDialog}`,
       canManageSettings: user ? hasPermission(user, Permission.MANAGE_SETTINGS) : false,
     })
   )
@@ -830,6 +842,7 @@ function discoverBody({
   rail = '',
   filtered = false,
   filters = null,
+  collections = null,
 }) {
   const tabs = [
     ['all', 'All'],
@@ -846,17 +859,31 @@ function discoverBody({
     })
     .join('')
 
-  const grid = items.length
-    ? `<div class="grid" data-fill>${items
-        .map(({ item, local }) =>
-          mediaCard(item, {
-            returnTo: '/',
-            local,
-            plex: plexFor(plex, item.mediaType, item.tmdbId),
-          })
-        )
-        .join('')}</div>`
-    : `<p class="empty">Nothing found. ${source === 'local' ? 'Add a TMDB API key in settings to search the full catalog.' : 'Try a wider filter.'}</p>`
+  // With the collections switch on the grid shows the sets, not the films.
+  const collectionGrid =
+    filters?.collections && Array.isArray(collections)
+      ? collections.length
+        ? `<div class="grid">${collections.map((collection) => collectionCard(collection)).join('')}</div>`
+        : '<p class="empty">No collections match these filters.</p>'
+      : null
+
+  const grid =
+    collectionGrid ??
+    (items.length
+      ? `<div class="grid" data-fill>${items
+          .map(({ item, local }) =>
+            mediaCard(item, {
+              returnTo: '/',
+              local,
+              plex: plexFor(plex, item.mediaType, item.tmdbId),
+            })
+          )
+          .join('')}</div>`
+      : `<p class="empty">Nothing found. ${
+          source === 'local'
+            ? 'Add a TMDB API key in settings to search the full catalog.'
+            : 'Try a wider filter.'
+        }</p>`)
 
   const subtitle = query
     ? 'Request anything you find for the library.'
@@ -866,7 +893,7 @@ function discoverBody({
         ? 'Trending on TMDB — request anything for the library.'
         : 'Local catalog (offline demo data).'
 
-  const narrowed = filtered && filters?.collections ? ' Only films that are part of a collection.' : ''
+  const narrowed = filtered && filters?.collections ? ' Only collections that match these filters.' : ''
 
   return discoverLayout(
     '',
@@ -939,9 +966,12 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
     page,
     sort: filters.sort,
   })
-  // TMDB cannot filter on "is part of a collection", so the page is narrowed here.
-  const items = filters.collections && isMovie ? await collectionTitles(result.items) : result.items
-  const collectionNote = filters.collections && isMovie ? ' Only films that are part of a collection.' : ''
+  // TMDB cannot filter on collections, so the page is built here: the films the
+  // filters returned, grouped into the collections they belong to.
+  const collectionMode = filters.collections && isMovie
+  const collections = collectionMode ? await collectionsFor(result.items) : []
+  const items = collectionMode ? [] : result.items
+  const collectionNote = collectionMode ? ' Only collections that match these filters.' : ''
 
   const head = logo
     ? `<div class="brand-head">
@@ -958,10 +988,16 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
         </div>
       </div>`
 
+  const grid = collectionMode
+    ? collections.length
+      ? `<div class="grid">${collections.map((collection) => collectionCard(collection)).join('')}</div>`
+      : '<p class="empty">No collections match these filters.</p>'
+    : mediaGrid(items, { returnTo: browseHref(basePath, filterParams(filters)), plex })
+
   return discoverLayout(
     browse,
     `${head}
-    ${mediaGrid(items, { returnTo: browseHref(basePath, filterParams(filters)), plex })}
+    ${grid}
     ${pagination({ page: result.page, totalPages: result.totalPages, basePath, params: filterParams(filters) })}`,
     filterRail({
       action: basePath,
@@ -1600,8 +1636,12 @@ function watchlistBody({ items, notice, error }) {
         <a class="media-title" href="${local ? `/media/${local.id}` : `/title/${item.mediaType}/${item.tmdbId}`}"${preview}>${escapeHtml(item.title)}</a>
         <p class="media-meta">${item.mediaType === 'tv' ? 'Series' : 'Movie'}${
           item.releaseDate ? ` · ${escapeHtml(item.releaseDate.slice(0, 4))}` : ''
-        }${local?.status === MediaStatus.AVAILABLE ? ' · <span class="badge badge-available">Available</span>' : ''}</p>
-        ${active.length ? '<p class="muted small">Requested</p>' : ''}
+        }</p>
+        <div class="media-actions">${requestAction(
+          item,
+          local ? { ...local, activeRequests: Math.max(local.activeRequests ?? 0, active.length) } : null,
+          '/watchlist'
+        )}</div>
       </div>
       <form method="post" action="/watchlist/toggle">
         <input type="hidden" name="tmdbId" value="${escapeHtml(item.tmdbId)}" />
@@ -2400,10 +2440,9 @@ function settingsBody({
       <fieldset class="panel">
         <legend>Application</legend>
         <label>Application name <input type="text" name="appName" value="${escapeHtml(settings['app.name'])}" maxlength="60" /></label>
-        <label class="checkbox">
-          <input type="checkbox" name="autoApprove" ${settings['requests.autoApprove'] === 'true' ? 'checked' : ''} />
-          <span>Auto-approve new requests</span>
-        </label>
+        <p class="muted small">Auto-approval is a per-account permission: tick
+          <strong>Auto-approve own requests</strong> for someone in the Users tab and their
+          requests go straight to Radarr or Sonarr instead of waiting for review.</p>
       </fieldset>
       <fieldset class="panel">
         <legend>Metadata</legend>
@@ -2561,13 +2600,17 @@ function settingsBody({
   const backupPanel = `<section class="panel">
       <h2 style="margin: 0">Backup and restore</h2>
       <p class="muted small">Every setting as one JSON file, so a move to another machine does not mean retyping keys.</p>
-      <p><a class="btn btn-sm" href="/settings/export">Download settings</a>
+      <p><a class="btn btn-sm" href="/settings/export">Download settings file</a>
         <a class="btn btn-sm btn-ghost" href="/settings/export?secrets=1">Download with secrets</a></p>
-      <form method="post" action="/settings/import" class="stack">
-        <label>Restore from JSON
-          <textarea name="payload" rows="6" placeholder="Paste the contents of discovarr-settings.json"></textarea>
+      <form method="post" action="/settings/import" class="stack" data-restore-form>
+        <label class="file-pick">Restore from a settings file
+          <input type="file" accept=".json,application/json" data-restore-file />
         </label>
-        <button class="btn btn-sm btn-ghost" type="submit">Import settings</button>
+        <p class="muted small" data-restore-name hidden></p>
+        <label>Or paste the JSON
+          <textarea name="payload" rows="6" data-restore-payload placeholder="Paste the contents of discovarr-settings.json"></textarea>
+        </label>
+        <button class="btn btn-sm btn-ghost" type="submit">Restore settings</button>
         <p class="muted small">Only known settings are written and unknown keys are ignored. Blank secrets are skipped, so a redacted file cannot wipe keys that are already saved.</p>
       </form>
     </section>`
@@ -2738,12 +2781,6 @@ function settingsFromBody(body) {
     if (body.appName !== undefined) input.appName = body.appName
     if (body.tmdbApiKey !== undefined) input.tmdbApiKey = body.tmdbApiKey
     if (body.tmdbRegion !== undefined) input.tmdbRegion = body.tmdbRegion
-  }
-
-  // Only the general forms carry the policy checkbox; saving a service must not
-  // read an absent checkbox as "turn auto-approve off".
-  if (generalForm && body.appName !== undefined) {
-    input.autoApprove = body.autoApprove !== undefined
   }
 
   if (
@@ -3023,6 +3060,7 @@ export function registerPageRoutes(router) {
     let currentPage = page
     let totalPages = 1
     let items = []
+    let collections = null
     let rail = ''
     let filtered = false
     let error = url.searchParams.get('err')
@@ -3037,11 +3075,12 @@ export function registerPageRoutes(router) {
         filtered = true
         currentPage = Math.min(result.page, result.totalPages)
         totalPages = result.totalPages
-        const found =
-          filters.collections && mediaType === MediaType.MOVIE
-            ? await collectionTitles(result.items)
-            : result.items
-        items = found.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
+        // The switch shows the collections themselves, not one card per film.
+        collections =
+          filters.collections && mediaType === MediaType.MOVIE ? await collectionsFor(result.items) : null
+        items = collections
+          ? []
+          : result.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
         rail = await discoverRail(mediaType, filters)
       } catch (tmdbError) {
         error = `TMDB unavailable: ${tmdbError.message}`
@@ -3099,6 +3138,7 @@ export function registerPageRoutes(router) {
         rail,
         filtered,
         filters,
+        collections,
       }),
     })
   })

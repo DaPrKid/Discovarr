@@ -141,9 +141,23 @@ test('a movie request is created, deduplicated and approved', async () => {
   const media = await call('/api/v1/media?type=movie', { cookie: adminCookie })
   const movie = media.json.results.find((item) => item.status !== 5)
 
-  const created = await call('/api/v1/request', {
+  // An administrator holds every permission, so their own requests are approved
+  // on the way in; the review flow needs an account without auto-approval.
+  await call('/settings/users', {
     method: 'POST',
     cookie: adminCookie,
+    body: {
+      username: 'Erin',
+      email: 'erin@discovarr.local',
+      password: 'erin12345',
+      role: 'user',
+    },
+  })
+  const cookie = await login('erin@discovarr.local', 'erin12345')
+
+  const created = await call('/api/v1/request', {
+    method: 'POST',
+    cookie,
     body: { mediaId: movie.id },
   })
   assert.equal(created.status, 201)
@@ -151,7 +165,7 @@ test('a movie request is created, deduplicated and approved', async () => {
 
   const duplicate = await call('/api/v1/request', {
     method: 'POST',
-    cookie: adminCookie,
+    cookie,
     body: { mediaId: movie.id },
   })
   assert.equal(duplicate.status, 409)
@@ -343,4 +357,51 @@ test('an administrator can delete a user, but not their own account', async () =
   assert.equal(self.status, 303)
   assert.match(self.headers.get('location'), /err=/)
   assert.ok((await call('/api/v1/users', { cookie: adminCookie })).json.results.some((user) => user.id === me.json.user.id))
+})
+
+test('the auto-approve permission skips review for that account only', async () => {
+  const created = await call('/settings/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: {
+      username: 'Dana',
+      email: 'dana@discovarr.local',
+      password: 'dana12345',
+      role: 'user',
+    },
+  })
+  assert.equal(created.status, 303)
+
+  const users = await call('/api/v1/users', { cookie: adminCookie })
+  const dana = users.json.results.find((user) => user.email === 'dana@discovarr.local')
+  assert.ok(dana, 'user was created')
+
+  // REQUEST_MOVIE (1) plus AUTO_APPROVE (4).
+  const patched = await call(`/api/v1/users/${dana.id}`, {
+    method: 'PATCH',
+    cookie: adminCookie,
+    body: { role: 'user', permissions: 5, quotaMovie: 0 },
+  })
+  assert.equal(patched.status, 200)
+
+  const cookie = await login('dana@discovarr.local', 'dana12345')
+  const movies = await call('/api/v1/media?type=movie', { cookie: adminCookie })
+  const open = movies.json.results.filter((item) => item.status !== 5)
+
+  const approved = await call('/api/v1/request', {
+    method: 'POST',
+    cookie,
+    body: { mediaId: open[open.length - 1].id },
+  })
+  assert.equal(approved.status, 201)
+  assert.equal(approved.json.request.status, 2, 'auto-approved without review')
+
+  // The same request from an account without the permission still waits.
+  const plain = await call('/api/v1/request', {
+    method: 'POST',
+    cookie: userCookie,
+    body: { mediaId: open[open.length - 2].id },
+  })
+  assert.equal(plain.status, 201)
+  assert.equal(plain.json.request.status, 1, 'still pending review')
 })

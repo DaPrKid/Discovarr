@@ -221,7 +221,6 @@ export function registerApiRoutes(router) {
     const settings = updateSettings(
       {
         appName: body.appName,
-        autoApprove: body.autoApprove === true || body.autoApprove === 'true',
         tmdbApiKey: body.tmdbApiKey,
         syncIntervalMinutes: body.syncIntervalMinutes,
         notifications: body.notifications ?? {},
