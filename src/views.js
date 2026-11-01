@@ -121,7 +121,7 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
 <html lang="en" data-theme="midnight">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>${escapeHtml(title)} · ${escapeHtml(appName)}</title>
     <link rel="stylesheet" href="/styles.css?v=${escapeHtml(version)}" />
     <link rel="icon" type="image/png" href="/favicon-midnight.png" />
@@ -135,6 +135,15 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           var saved = localStorage.getItem('discovarr-theme')
           if (themes.indexOf(saved) !== -1) root.dataset.theme = saved
         } catch (error) {}
+        // Hiding a sidebar is a per-browser choice, applied here so the grid
+        // never jumps on load. Phones start with both panels tucked away.
+        var panelFlags = { nav: 'hideNav', rail: 'hideRail' }
+        Object.keys(panelFlags).forEach(function (panel) {
+          var stored = null
+          try { stored = localStorage.getItem('discovarr-' + panel) } catch (error) {}
+          var hide = stored === null ? window.innerWidth < 900 : stored === 'hidden'
+          if (hide) root.dataset[panelFlags[panel]] = '1'
+        })
         // Every theme has its own tab icon, drawn at 192px so the shape survives
         // the 16px a browser actually renders it at.
         var icon = document.querySelector('link[rel=icon]')
@@ -175,6 +184,31 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         const closer = event.target.closest('[data-dialog-close]')
         if (closer) closer.closest('dialog')?.close()
       })
+
+      // Sidebar toggles: the choice is remembered per browser, and a hidden
+      // panel gives its column back to the poster grid.
+      ;(function () {
+        var root = document.documentElement
+        var panelFlags = { nav: 'hideNav', rail: 'hideRail' }
+        function apply(panel, hidden) {
+          if (hidden) root.dataset[panelFlags[panel]] = '1'
+          else delete root.dataset[panelFlags[panel]]
+          document.querySelectorAll('[data-panel="' + panel + '"]').forEach(function (button) {
+            button.setAttribute('aria-pressed', hidden ? 'false' : 'true')
+          })
+        }
+        document.querySelectorAll('[data-panel]').forEach(function (button) {
+          var panel = button.dataset.panel
+          apply(panel, root.dataset[panelFlags[panel]] === '1')
+          button.addEventListener('click', function () {
+            var hidden = root.dataset[panelFlags[panel]] === '1'
+            apply(panel, !hidden)
+            try {
+              localStorage.setItem('discovarr-' + panel, hidden ? 'shown' : 'hidden')
+            } catch (error) {}
+          })
+        })
+      })()
 
       // Discover search suggests titles as you type. Leaving the field and
       // pressing the button still runs the plain GET form, so nothing depends

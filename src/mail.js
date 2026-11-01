@@ -1,4 +1,4 @@
-import { connect as netConnect } from 'node:net'
+import { connect as netConnect, isIP } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 
 /**
@@ -89,9 +89,15 @@ function describe(socket) {
   }
 }
 
+// Node refuses to set a TLS servername to a bare address, and a relay reached by
+// IP has no name to verify anyway, so the option is left off in that case.
+function tlsTarget(host) {
+  return isIP(String(host)) ? {} : { servername: host }
+}
+
 function upgradeToTls(socket, host, timeoutMs, tlsOptions = {}) {
   return new Promise((resolve, reject) => {
-    const secure = tlsConnect({ socket, servername: host, ...tlsOptions }, () => {
+    const secure = tlsConnect({ socket, ...tlsTarget(host), ...tlsOptions }, () => {
       secure.setTimeout(timeoutMs)
       resolve(secure)
     })
@@ -147,7 +153,7 @@ export async function sendMail(
   const socket = await new Promise((resolve, reject) => {
     const connect = implicitTls ? tlsConnect : netConnect
     const options = implicitTls
-      ? { host, port: portNumber, servername: host, ...tlsOptions }
+      ? { host, port: portNumber, ...tlsTarget(host), ...tlsOptions }
       : { host, port: portNumber }
     const attempt = connect(options, () => resolve(attempt))
     attempt.setTimeout(timeoutMs, () => attempt.destroy(new Error('Connecting to the mail server timed out')))

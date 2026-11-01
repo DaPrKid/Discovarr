@@ -369,7 +369,14 @@ function browseNav(browse) {
 }
 
 function discoverLayout(browse, body, rail = '') {
-  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${body}</div>${rail}</div>`
+  // The panels are worth keeping, but not always on screen: these chips fold
+  // either sidebar away and hand its width to the grid.
+  const bar = `<div class="discover-bar">
+      <button class="panel-toggle" type="button" data-panel="nav" aria-pressed="true">Menu</button>
+      ${rail ? '<button class="panel-toggle" type="button" data-panel="rail" aria-pressed="true">Filters</button>' : ''}
+    </div>`
+
+  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${bar}${body}</div>${rail}</div>`
 }
 
 function plexFor(plex, mediaType, tmdbId) {

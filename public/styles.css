@@ -2494,3 +2494,107 @@ fieldset.plain {
 .cal-item.is-library {
   border-left: 2px solid var(--ok);
 }
+
+/* --- collapsible sidebars, phones and dual screens ---------------------- */
+
+.panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.panel-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.panel-toggle[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.38);
+}
+
+/* A hidden sidebar leaves the grid the whole window. */
+html[data-hide-nav] .discover > .browse-nav,
+html[data-hide-rail] .discover > .filter-rail {
+  display: none;
+}
+
+@media (min-width: 761px) {
+  html[data-hide-nav] .discover,
+  html[data-hide-nav] .discover.has-rail {
+    grid-template-columns: minmax(0, 1fr) clamp(200px, 20vw, 252px);
+  }
+
+  html[data-hide-rail] .discover,
+  html[data-hide-rail] .discover.has-rail {
+    grid-template-columns: clamp(200px, 20vw, 252px) minmax(0, 1fr);
+  }
+
+  html[data-hide-nav] .discover:not(.has-rail),
+  html[data-hide-nav][data-hide-rail] .discover,
+  html[data-hide-nav][data-hide-rail] .discover.has-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Phone notches and rounded corners must not clip the grid. */
+.page {
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+  padding-bottom: max(72px, env(safe-area-inset-bottom));
+}
+
+.page:has(> .discover) {
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+}
+
+/* A poster grid gets the window, the same as the browse pages do. */
+.page:has(.grid) {
+  max-width: none;
+}
+
+/* The rail scrolls with the visual viewport, so mobile URL bars cannot hide
+   the bottom of the filters. */
+.filter-rail {
+  max-height: calc(100vh - 100px);
+  max-height: calc(100dvh - 100px);
+}
+
+/* Foldables and dual-screen phones report two horizontal segments: stacking
+   keeps every card off the hinge and off either edge. */
+@media (horizontal-viewport-segments: 2) {
+  .discover,
+  .discover.has-rail {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .browse-nav,
+  .filter-rail {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .discover-bar {
+    margin-bottom: 12px;
+  }
+
+  .panel-toggle {
+    padding: 7px 14px;
+  }
+}
