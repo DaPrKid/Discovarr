@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<CommunityApplications>
+  <Profile>
+Discovarr is a media request and discovery manager for a self-hosted library: users browse a catalog, request movies or individual TV seasons, and approved requests are handed to Radarr and Sonarr for download. Statuses reconcile back from those services on a schedule, and titles already in the library are labelled instead of being requested twice.
+
+The repository holds the source (Node 24, zero runtime dependencies, SQLite), the Dockerfile that builds the image, and the Unraid template for the container.
+
+Support goes through [GitHub issues](https://github.com/DaPrKid/Discovarr/issues). Please include your Discovarr version, the container log from startup, and what you were doing in the app.
+  </Profile>
+  <Icon>https://raw.githubusercontent.com/DaPrKid/Discovarr/main/brand/discovarr-lens.png</Icon>
+  <WebPage>https://github.com/DaPrKid/Discovarr</WebPage>
+  <Photo>https://raw.githubusercontent.com/DaPrKid/Discovarr/main/brand/discovarr-mark.png</Photo>
+</CommunityApplications>

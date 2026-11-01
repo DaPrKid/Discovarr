@@ -90,6 +90,32 @@ into the empty database instead; `/setup` then redirects to `/login`.
 `SEED_DEMO_USER=true` additionally seeds `sam@discovarr.local` / `sam` while
 bootstrapping, which is only useful for demos.
 
+## Unraid
+
+The container ships with a Community Apps template:
+
+- `templates/discovarr.xml` — port `5057`, `/data` mapped to
+  `/mnt/user/appdata/discovarr`, `PUID`/`PGID` defaulting to `99:100`, and
+  optional `ADMIN_EMAIL`/`ADMIN_PASSWORD` for a hands-off first boot
+- `ca_profile.xml` — the repository profile shown on the maintainer page
+
+An Apps install is the same container as the `docker run` above, so updating it
+is the same pull, stop, remove and run with the new tag.
+
+To submit, or to re-scan after changing the template, open
+<https://ca.unraid.net/submit/new>, sign in with Unraid, add
+`https://github.com/DaPrKid/Discovarr`, then run **Validate** and **Scan**.
+Community Apps only accepts a public repository, and the template's image has to
+pull without a login, so two switches must be on before a scan can pass:
+
+- the GitHub repository must be public
+- the `discovarr` package on GHCR must be public (package settings → change
+  visibility)
+
+Once the package is public, delete the "package stays private" step from
+`.github/workflows/publish.yml`: it fails the publish on purpose when an
+anonymous pull succeeds.
+
 ## Features
 
 - **Discover** — TMDB trending and multi-search once an API key is set, with a
