@@ -195,6 +195,28 @@ test('cross-site mutations are blocked', async () => {
   assert.equal(status, 403)
 })
 
+test('a proxy that rewrites Host does not lock the sign-in form out', async () => {
+  // Behind a reverse proxy the browser's Origin is the public domain while the
+  // app sees an internal Host, and Safari before 16.4 sends no Sec-Fetch-Site,
+  // so the fallback comparison used to refuse the app's own sign-in form.
+  const { status } = await call('/login', {
+    method: 'POST',
+    body: { username: 'owner', password: 'definitely-wrong' },
+    headers: { origin: 'https://discovarr.example.com' },
+  })
+  assert.notEqual(status, 403, 'signing in must not be refused as cross-origin')
+})
+
+test('a same-site post is not treated as cross-site', async () => {
+  const { status } = await call('/api/v1/request', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { mediaId: 999999 },
+    headers: { 'sec-fetch-site': 'same-site', origin: 'https://discovarr.example.com' },
+  })
+  assert.notEqual(status, 403)
+})
+
 test('plain users cannot approve, manage users or change settings', async () => {
   const pending = await call('/api/v1/request?filter=pending', { cookie: adminCookie })
   const target = pending.json.results[0]

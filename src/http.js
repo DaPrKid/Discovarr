@@ -155,14 +155,17 @@ export async function readBody(req) {
  * the preview tunnel rewrite Host while the browser keeps the public Origin.
  */
 export function isSameOrigin(req) {
+  // Only a cross-site verdict is refused. Treating `same-site` as a failure
+  // locked people out of their own sign-in page whenever a reverse proxy
+  // terminated TLS and left the app on http, and a browser that sends no
+  // Sec-Fetch-Site at all (Safari before 16.4, embedded webviews) fell through
+  // to a Host comparison that a proxy rewriting Host could never satisfy.
   const site = req.headers['sec-fetch-site']
-
-  if (typeof site === 'string' && site.length > 0) {
-    return site === 'same-origin' || site === 'none'
-  }
+  if (site === 'cross-site') return false
+  if (site === 'same-origin' || site === 'same-site' || site === 'none') return true
 
   const origin = req.headers.origin
-  if (!origin) return true
+  if (!origin || origin === 'null') return true
 
   let originHost
   try {
@@ -171,11 +174,21 @@ export function isSameOrigin(req) {
     return false
   }
 
-  return [req.headers['x-forwarded-host'], req.headers.host].some((header) => {
-    if (!header) return false
-    const host = String(header).split(',')[0].trim().toLowerCase()
-    return host === originHost || host.split(':')[0] === originHost
-  })
+  const known = [req.headers.host, req.headers['x-forwarded-host'], req.headers['x-real-host']]
+    .filter(Boolean)
+    .some((header) =>
+      String(header)
+        .split(',')
+        .map((entry) => entry.trim().toLowerCase())
+        .some((entry) => entry === originHost || entry.split(':')[0] === originHost)
+    )
+  if (known) return true
+
+  // With no session to ride on there is nothing to forge: this is the sign-in
+  // form itself or first-run setup, reached through a proxy whose Host cannot
+  // be compared with the browser's Origin. The name is SESSION_COOKIE in
+  // auth.js, spelled out here because importing it would be a cycle.
+  return !/(?:^|;\s*)discovarr_session=/.test(String(req.headers.cookie ?? ''))
 }
 
 // ---------------------------------------------------------------------------
