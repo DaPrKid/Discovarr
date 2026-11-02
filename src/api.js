@@ -33,6 +33,7 @@ import * as store from './db.js'
 import { HttpError, readBody, sendJson } from './http.js'
 import { verifyPassword } from './passwords.js'
 import { serviceOptions, serviceSummary } from './services.js'
+import { deviceLabel, pushPublicKey, readSubscription, sendTestPush } from './push.js'
 import { searchTmdb, tmdbConfigured } from './tmdb.js'
 import { syncLibrary, syncState } from './sync.js'
 
@@ -250,6 +251,47 @@ export function registerApiRoutes(router) {
     )
 
     sendJson(res, 200, { settings })
+  })
+
+  router.get('/api/v1/push', ({ req, res }) => {
+    const user = requireUser(req)
+    sendJson(res, 200, {
+      publicKey: pushPublicKey(),
+      events: user.notifyEvents,
+      devices: store.listPushSubscriptions(user.id).map((device) => ({
+        id: device.id,
+        label: device.label,
+        createdAt: device.createdAt,
+        lastUsedAt: device.lastUsedAt,
+      })),
+    })
+  })
+
+  router.post('/api/v1/push/subscribe', async ({ req, res }) => {
+    const user = requireUser(req)
+    const subscription = readSubscription(await readBody(req))
+    if (!subscription) throw new HttpError(400, 'That is not a usable push subscription')
+
+    store.savePushSubscription({
+      userId: user.id,
+      ...subscription,
+      label: deviceLabel(req.headers['user-agent']),
+    })
+
+    sendJson(res, 200, { ok: true, devices: store.listPushSubscriptions(user.id).length })
+  })
+
+  router.post('/api/v1/push/unsubscribe', async ({ req, res }) => {
+    const user = requireUser(req)
+    const endpoint = String((await readBody(req)).endpoint ?? '')
+
+    store.deletePushSubscription({ endpoint, userId: user.id })
+    sendJson(res, 200, { ok: true, devices: store.listPushSubscriptions(user.id).length })
+  })
+
+  router.post('/api/v1/push/test', async ({ req, res }) => {
+    const user = requireUser(req)
+    sendJson(res, 200, await sendTestPush(user.id))
   })
 
   router.get('/api/v1/services/:kind/options', async ({ req, res, params }) => {

@@ -2827,6 +2827,33 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
   margin: 0;
 }
 
+/* --- push notifications -------------------------------------------------- */
+
+/* A hidden button is still laid out by .btn's display, so say it plainly. */
+.btn[hidden] {
+  display: none;
+}
+
+.push-card .row {
+  flex-wrap: wrap;
+}
+
+.push-devices {
+  color: var(--text);
+}
+
+[data-push-status] {
+  margin: 10px 0 0;
+}
+
+[data-push-status][data-kind='ok'] {
+  color: #7ee2a8;
+}
+
+[data-push-status][data-kind='error'] {
+  color: #ff9a9a;
+}
+
 /* The collections switch sits under the movie/series choice in the rail. */
 .rail-collections {
   margin: 10px 0 4px;

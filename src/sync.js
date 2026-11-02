@@ -1,5 +1,6 @@
 import { MediaRequestStatus, MediaStatus } from './constants.js'
 import * as store from './db.js'
+import { pushLater } from './push.js'
 import { fetchLibrary, serviceSummary } from './services.js'
 
 let running = false
@@ -76,6 +77,12 @@ function applyLibraryItem(item) {
         body: 'The library sync found it on disk.',
         href: `/media/${media.id}`,
       })
+
+      pushLater(request.userId, 'available', {
+        title: `${item.title} is now available`,
+        body: 'The library sync found it on disk.',
+        href: `/media/${media.id}`,
+      })
       completed += 1
     }
   }
@@ -88,6 +95,12 @@ function applyLibraryItem(item) {
       store.createNotification({
         userId: watcher.userId,
         kind: 'available',
+        title: `${item.title} is now available`,
+        body: 'It is on your watchlist and the library sync found it.',
+        href: `/media/${media.id}`,
+      })
+
+      pushLater(watcher.userId, 'available', {
         title: `${item.title} is now available`,
         body: 'It is on your watchlist and the library sync found it.',
         href: `/media/${media.id}`,

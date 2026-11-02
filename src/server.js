@@ -88,6 +88,24 @@ const router = createRouter({
   },
 })
 
+// Served from the root so its scope covers the whole app, and never cached: a
+// stale worker would keep an old notification handler around.
+router.get('/sw.js', async ({ res }) => {
+  try {
+    const file = await readFile(join(publicDir, 'sw.js'))
+    res.writeHead(200, {
+      'content-type': 'text/javascript; charset=utf-8',
+      'content-length': file.length,
+      'cache-control': 'no-cache',
+      'service-worker-allowed': '/',
+    })
+    res.end(file)
+  } catch {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('not found')
+  }
+})
+
 registerPageRoutes(router)
 registerApiRoutes(router)
 

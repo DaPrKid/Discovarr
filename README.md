@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.0.6
+docker pull ghcr.io/daprkid/discovarr:1.1.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,12 +62,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.0.6
+docker pull ghcr.io/daprkid/discovarr:1.1.0
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.0.6
+  ghcr.io/daprkid/discovarr:1.1.0
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -302,6 +302,26 @@ test connection**. The token is the `X-Plex-Token` value in any item's
 either the new Plex agent or the legacy one, and the deep link opens
 `app.plex.tv` on the right server and item.
 
+## Push notifications
+
+A phone or desktop browser can notify you when a request is approved, declined
+or arrives, even with the app closed. Turn it on in **Account → Push
+notifications**; the switch is per device, and which events arrive follows the
+checkboxes in the same panel.
+
+Nothing has to be installed or signed up for. The server creates its own VAPID
+key pair on first use, keeps it in the database, and encrypts every message to
+that browser's own key, so the push service only relays ciphertext. Devices the
+push service reports as gone are dropped automatically.
+
+Two things are required:
+
+- **HTTPS.** Browsers only allow notifications in a secure context, so reach
+  Discovarr through a reverse proxy with TLS instead of `http://192.168.x.x:5057`.
+  `http://localhost` is the exception.
+- **On iPhone**, add the app to the home screen first (iOS 16.4 or newer): Safari
+  only offers notifications to an installed app.
+
 ## Running as a specific user (Unraid, LinuxServer-style)
 
 The container starts as root, fixes ownership of `/data`, then runs the app as
@@ -312,7 +332,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.0.6
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.1.0
 ```
 
 If you prefer to run the process without root at all, start the container with

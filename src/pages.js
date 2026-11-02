@@ -2148,19 +2148,21 @@ function accountBody({ user, quota, notice, error }) {
 
     <form method="post" action="/account/notifications" class="stack panel">
       <h2 style="margin: 0">Notifications</h2>
-      <p class="muted small">The bell in the header always shows your own updates. Email is optional.</p>
+      <p class="muted small">The bell in the header always shows your own updates. Email and push are optional.</p>
       <label class="checkbox">
         <input type="checkbox" name="notifyEmail" ${user.notifyEmail ? 'checked' : ''} />
         <span>Also email me (needs SMTP configured by an administrator)</span>
       </label>
       <fieldset class="plain">
-        <legend class="muted small">Email me when</legend>
+        <legend class="muted small">Tell me when</legend>
         <label class="checkbox"><input type="checkbox" name="events" value="1" ${(user.notifyEvents ?? 0) & 1 ? 'checked' : ''} /> <span>My request is approved</span></label>
         <label class="checkbox"><input type="checkbox" name="events" value="2" ${(user.notifyEvents ?? 0) & 2 ? 'checked' : ''} /> <span>My request is declined</span></label>
         <label class="checkbox"><input type="checkbox" name="events" value="4" ${(user.notifyEvents ?? 0) & 4 ? 'checked' : ''} /> <span>A title I asked for becomes available</span></label>
       </fieldset>
       <button class="btn btn-sm" type="submit">Save notification preferences</button>
     </form>
+
+    ${pushCard(user, store.listPushSubscriptions(user.id))}
 
     <section class="panel">
       <h2 style="margin: 0">Appearance</h2>
@@ -2204,6 +2206,30 @@ const WATCH_REGIONS = [
   ['IN', 'India'],
   ['JP', 'Japan'],
 ]
+
+/**
+ * The push card, shared by the settings notifications tab and the account page.
+ * Push cannot be turned on from a plain form - the browser only prompts from a
+ * click inside a script - so the card carries buttons and a status line and the
+ * page script does the rest.
+ */
+function pushCard(user, devices = []) {
+  const labels = devices.length
+    ? `<span class="push-devices">${devices.map((device) => escapeHtml(device.label || 'This device')).join(' \u00b7 ')}</span>`
+    : '<span class="push-devices">No device is set up yet.</span>'
+
+  return `<section class="panel push-card" data-push-card>
+      <h2 style="margin: 0">Push notifications</h2>
+      <p class="muted small">Get a notification on this device when a request is approved, declined or arrives, even with the app closed. It follows the events you ticked above.</p>
+      <p class="muted small">Devices on your account: ${labels}</p>
+      <div class="row">
+        <button class="btn btn-sm" type="button" data-push-enable>Turn on for this device</button>
+        <button class="btn btn-sm btn-ghost" type="button" data-push-disable hidden>Turn off for this device</button>
+        <button class="btn btn-sm btn-ghost" type="button" data-push-test hidden>Send a test</button>
+      </div>
+      <p class="muted small" data-push-status>Push needs an HTTPS address; on an iPhone, add the app to the home screen first.</p>
+    </section>`
+}
 
 function settingsTabs(tab) {
   // Seven sections as a row of links is a wall of words on a phone. The phone
@@ -2615,7 +2641,8 @@ function settingsBody({
       <button class="btn btn-sm" type="submit">Create user</button>
     </form>`
 
-  const notifications = `<form method="post" action="/settings" class="stack">
+  const notifications = `${pushCard(user, store.listPushSubscriptions(user.id))}
+    <form method="post" action="/settings" class="stack">
       <input type="hidden" name="settingsSection" value="notifications" />
       <input type="hidden" name="settingsTab" value="notifications" />
       <fieldset class="panel">

@@ -493,6 +493,184 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         refresh()
       })()
 
+      // Push notifications. The permission prompt only opens from a click, so
+      // nothing is registered until the card asks for it, and a browser that is
+      // not on HTTPS says so instead of failing at the prompt.
+      ;(function () {
+        var card = document.querySelector('[data-push-card]')
+        if (!card) return
+
+        var status = card.querySelector('[data-push-status]')
+        var enable = card.querySelector('[data-push-enable]')
+        var disable = card.querySelector('[data-push-disable]')
+        var test = card.querySelector('[data-push-test]')
+
+        function say(text, kind) {
+          if (!status) return
+          status.textContent = text
+          status.dataset.kind = kind || ''
+        }
+
+        function show(subscribed) {
+          if (enable) enable.hidden = subscribed
+          if (disable) disable.hidden = !subscribed
+          if (test) test.hidden = !subscribed
+        }
+
+        function bytes(base64) {
+          var raw = atob(String(base64).replace(/-/g, '+').replace(/_/g, '/'))
+          var out = new Uint8Array(raw.length)
+          for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
+          return out
+        }
+
+        if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+          if (enable) enable.disabled = true
+          say('This browser cannot show push notifications.')
+          return
+        }
+
+        if (!window.isSecureContext) {
+          if (enable) enable.disabled = true
+          say('Notifications need an HTTPS address. Open Discovarr through your reverse proxy to turn them on.', 'error')
+          return
+        }
+
+        var registered = null
+
+        function worker() {
+          if (!registered) {
+            registered = navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function () {
+              return navigator.serviceWorker.ready
+            })
+          }
+          return registered
+        }
+
+        function subscribe() {
+          if (enable) enable.disabled = true
+          say('Asking the browser for permission…')
+
+          Notification.requestPermission()
+            .then(function (permission) {
+              if (permission !== 'granted') {
+                say('Permission was not granted, so this device stays quiet.', 'error')
+                return null
+              }
+              return Promise.all([
+                worker(),
+                fetch('/api/v1/push', { credentials: 'same-origin' }).then(function (response) {
+                  return response.json()
+                })
+              ])
+            })
+            .then(function (result) {
+              if (!result) return null
+              var ready = result[0]
+              var keys = result[1]
+              return ready.pushManager.getSubscription().then(function (subscription) {
+                if (subscription) return subscription
+                return ready.pushManager.subscribe({
+                  userVisibleOnly: true,
+                  applicationServerKey: bytes(keys.publicKey)
+                })
+              })
+            })
+            .then(function (subscription) {
+              if (!subscription) return null
+              return fetch('/api/v1/push/subscribe', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(subscription.toJSON())
+              }).then(function (response) {
+                if (!response.ok) throw new Error('the server did not accept the subscription')
+                show(true)
+                say('This device will notify you about your requests.', 'ok')
+              })
+            })
+            .catch(function (error) {
+              say('Could not turn notifications on: ' + error.message, 'error')
+            })
+            .then(function () {
+              if (enable) enable.disabled = false
+            })
+        }
+
+        function unsubscribe() {
+          if (disable) disable.disabled = true
+          worker()
+            .then(function (ready) {
+              return ready.pushManager.getSubscription()
+            })
+            .then(function (subscription) {
+              if (!subscription) return null
+              return fetch('/api/v1/push/unsubscribe', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ endpoint: subscription.endpoint })
+              }).then(function () {
+                return subscription.unsubscribe()
+              })
+            })
+            .then(function () {
+              show(false)
+              say('This device will no longer be notified.')
+            })
+            .catch(function (error) {
+              say('Could not turn notifications off: ' + error.message, 'error')
+            })
+            .then(function () {
+              if (disable) disable.disabled = false
+            })
+        }
+
+        function sendTest() {
+          if (test) test.disabled = true
+          say('Sending a test…')
+          fetch('/api/v1/push/test', { method: 'POST', credentials: 'same-origin' })
+            .then(function (response) {
+              return response.json()
+            })
+            .then(function (result) {
+              var sent = Number(result.sent) > 0
+              say(
+                sent
+                  ? 'Test sent. It should appear in a moment.'
+                  : 'Nothing was delivered — check that this device is still subscribed.',
+                sent ? 'ok' : 'error'
+              )
+            })
+            .catch(function (error) {
+              say('The test failed: ' + error.message, 'error')
+            })
+            .then(function () {
+              if (test) test.disabled = false
+            })
+        }
+
+        if (enable) enable.addEventListener('click', subscribe)
+        if (disable) disable.addEventListener('click', unsubscribe)
+        if (test) test.addEventListener('click', sendTest)
+
+        // A device that subscribed on an earlier visit shows the right buttons.
+        worker()
+          .then(function (ready) {
+            return ready.pushManager.getSubscription()
+          })
+          .then(function (subscription) {
+            show(Boolean(subscription))
+            // The card is rendered with the HTTPS hint, so say plainly where this
+            // device stands once the answer is known.
+            say(
+              subscription ? 'This device is subscribed.' : 'Notifications are off for this device.',
+              subscription ? 'ok' : ''
+            )
+          })
+          .catch(function () {})
+      })()
+
       // A last row that stops short of the edge reads as a broken grid, so the
       // grid borrows just enough titles from the next page to finish the row it
       // is on. It reuses the server's own card markup, and asks for nothing when

@@ -166,6 +166,31 @@ db.exec(`
     created_at TEXT NOT NULL,
     PRIMARY KEY (user_id, tmdb_id, media_type)
   );
+
+  /* One row per browser or installed app that asked for push. The endpoint is
+     the whole capability to reach that device, so it is treated as a secret. */
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    failures INTEGER NOT NULL DEFAULT 0
+  );
+
+  /* The VAPID key pair. Kept out of the settings table on purpose: that table
+     is rendered on the settings page and returned by the settings API. */
+  CREATE TABLE IF NOT EXISTS push_keys (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    public_key TEXT NOT NULL,
+    private_key TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions (user_id);
 `)
 
 // Tokens created before calendar feeds were scoped authenticate the API, so the
@@ -804,6 +829,84 @@ export function markNotificationsRead(userId, id = null) {
     db
       .prepare('UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL')
       .run(timestamp(), Number(id), Number(userId)).changes
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Web push
+// ---------------------------------------------------------------------------
+
+export function getPushKeys() {
+  const row = db.prepare('SELECT public_key, private_key FROM push_keys WHERE id = 1').get()
+  return row ? { publicKey: row.public_key, privateKey: row.private_key } : null
+}
+
+export function savePushKeys({ publicKey, privateKey }) {
+  db.prepare(
+    `INSERT INTO push_keys (id, public_key, private_key, created_at) VALUES (1, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET public_key = excluded.public_key, private_key = excluded.private_key`
+  ).run(String(publicKey), String(privateKey), timestamp())
+}
+
+export function savePushSubscription({ userId, endpoint, p256dh, auth, label = '' }) {
+  // A browser that re-subscribes gets the same endpoint, so the row is updated
+  // rather than duplicated, and a failure streak is cleared.
+  db.prepare(
+    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, label, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (endpoint) DO UPDATE SET
+       user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
+       label = excluded.label, failures = 0`
+  ).run(Number(userId), String(endpoint), String(p256dh), String(auth), String(label).slice(0, 80), timestamp())
+}
+
+export function listPushSubscriptions(userId = null) {
+  const rows =
+    userId === null
+      ? db.prepare('SELECT * FROM push_subscriptions ORDER BY id').all()
+      : db.prepare('SELECT * FROM push_subscriptions WHERE user_id = ? ORDER BY id').all(Number(userId))
+
+  return rows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    endpoint: row.endpoint,
+    p256dh: row.p256dh,
+    auth: row.auth,
+    label: row.label,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    failures: row.failures,
+  }))
+}
+
+export function deletePushSubscription({ id = null, endpoint = null, userId = null }) {
+  if (id !== null) {
+    return userId === null
+      ? Number(db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(Number(id)).changes)
+      : Number(
+          db.prepare('DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?').run(Number(id), Number(userId))
+            .changes
+        )
+  }
+
+  if (endpoint) {
+    return userId === null
+      ? Number(db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(String(endpoint)).changes)
+      : Number(
+          db
+            .prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
+            .run(String(endpoint), Number(userId)).changes
+        )
+  }
+
+  return 0
+}
+
+export function touchPushSubscription(id, { failed = false } = {}) {
+  db.prepare('UPDATE push_subscriptions SET last_used_at = ?, failures = ? WHERE id = ?').run(
+    timestamp(),
+    failed ? 1 : 0,
+    Number(id)
   )
 }
 

@@ -13,6 +13,7 @@ import {
 import * as store from './db.js'
 import { HttpError } from './http.js'
 import { notifyLater } from './notifications.js'
+import { pushLater } from './push.js'
 import { backoffDelayMs } from './sync.js'
 import { verifyPassword } from './passwords.js'
 import { dispatchToService, profileAt, resolveProfile, saveServiceProfiles, serviceProfiles } from './services.js'
@@ -227,6 +228,12 @@ async function approveAndDispatch(request, media, actor) {
       user: actor,
     })
 
+    pushLater(request.userId, 'approved', {
+      title: `${media.title} was approved`,
+      body: result.dispatched ? 'Sent to the download client.' : note,
+      href: `/media/${media.id}`,
+    })
+
     return store.getRequestById(request.id)
   } catch (error) {
     store.setRequestStatus(request.id, MediaRequestStatus.FAILED, `Dispatch failed: ${error.message}`)
@@ -253,6 +260,14 @@ async function approveAndDispatch(request, media, actor) {
     }
 
     notifyLater('approved', { message: `${media.title} failed to dispatch: ${error.message}`, media, user: actor })
+
+    if (exhausted) {
+      pushLater(request.userId, 'failed', {
+        title: `${media.title} could not be sent to ${media.mediaType === MediaType.MOVIE ? 'Radarr' : 'Sonarr'}`,
+        body: `Gave up after ${attempts} attempt(s).`,
+        href: `/media/${media.id}`,
+      })
+    }
 
     return store.getRequestById(request.id)
   }
@@ -321,6 +336,12 @@ export function declineRequest(id, actor) {
   store.recordAudit(actor?.id ?? null, 'request.declined', `#${request.id} ${request.media.title}`)
   notifyLater('declined', { message: `${request.media.title} was declined`, media: request.media, user: actor })
 
+  pushLater(request.userId, 'declined', {
+    title: `${request.media.title} was declined`,
+    body: 'An administrator declined this request.',
+    href: `/media/${request.mediaId}`,
+  })
+
   return store.getRequestById(request.id)
 }
 
@@ -361,6 +382,12 @@ export function markAvailable(mediaId, actor) {
       store.createNotification({
         userId: request.userId,
         kind: 'available',
+        title: `${media.title} is now available`,
+        body: 'Marked available by an administrator.',
+        href: `/media/${media.id}`,
+      })
+
+      pushLater(request.userId, 'available', {
         title: `${media.title} is now available`,
         body: 'Marked available by an administrator.',
         href: `/media/${media.id}`,
