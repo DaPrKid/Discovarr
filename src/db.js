@@ -126,6 +126,9 @@ ensureColumn('users', 'notify_events', 'INTEGER NOT NULL DEFAULT 7')
 // The plex.tv account a Plex sign-in is tied to, so later sign-ins reopen the
 // same Discovarr account instead of making another one.
 ensureColumn('users', 'plex_id', 'TEXT')
+// The look a person picked, kept on the account so every device they sign in on
+// paints the same theme instead of each browser remembering its own.
+ensureColumn('users', 'theme', 'TEXT')
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS notifications (
@@ -198,6 +201,7 @@ function mapUser(row) {
     notifyEmail: row.notify_email === 1,
     notifyEvents: row.notify_events ?? 7,
     plexId: row.plex_id ?? null,
+    theme: row.theme ?? null,
     createdAt: row.created_at,
     passwordHash: row.password_hash,
   }
@@ -273,6 +277,13 @@ export function updateUserNotifications(id, { notifyEmail = false, notifyEvents 
     Number(notifyEvents) || 0,
     Number(id)
   )
+  return findUserById(id)
+}
+
+/** The theme a person chose; null means they have never picked one. */
+export function updateUserTheme(id, theme) {
+  const value = theme ? String(theme) : null
+  db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(value, Number(id))
   return findUserById(id)
 }
 

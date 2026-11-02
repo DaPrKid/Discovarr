@@ -104,6 +104,7 @@ import {
   requestAction,
   requestCard,
   statusBadge,
+  THEME_NAMES,
   themeSelect,
 } from './views.js'
 
@@ -614,7 +615,9 @@ function discoverLayout(browse, body, rail = '') {
       ${rail ? '<button class="panel-toggle" type="button" data-panel="rail" aria-pressed="false" aria-label="Show filters" title="Show filters">Filters</button>' : ''}
     </div>`
 
-  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${restore}${body}</div>${rail}</div>`
+  // On a phone the two sidebars become sheets over the grid, and the scrim is
+  // what closes them when a tap lands anywhere else.
+  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${restore}${body}</div>${rail}<div class="drawer-scrim" data-drawer-scrim hidden></div></div>`
 }
 
 function plexFor(plex, mediaType, tmdbId) {
@@ -2156,6 +2159,12 @@ function accountBody({ user, quota, notice, error }) {
       <button class="btn btn-sm" type="submit">Save notification preferences</button>
     </form>
 
+    <section class="panel">
+      <h2 style="margin: 0">Appearance</h2>
+      <p class="muted small">Saved to your account, so a phone and a desktop signed in as you match. Change it on one and refresh the other.</p>
+      ${themeSelect({ label: 'Theme' })}
+    </section>
+
 `
 }
 
@@ -2564,7 +2573,7 @@ function settingsBody({
 
     <section class="panel">
       <h2 style="margin: 0">Appearance</h2>
-      <p class="muted small">The theme is remembered in this browser, so everyone can keep their own. It applies straight away.</p>
+      <p class="muted small">The theme is saved to the account, so every device signed in as you paints the same one. It applies straight away.</p>
       ${themeSelect({ label: 'Theme' })}
     </section>`
 
@@ -4035,6 +4044,21 @@ export function registerPageRoutes(router) {
     } catch (error) {
       failure(res, '/account', error)
     }
+  })
+
+  // The appearance picker posts here instead of reloading, so the choice is on
+  // the account before the next page is drawn anywhere else.
+  router.post('/account/theme', async ({ req, res }) => {
+    const user = requireUser(req)
+    const body = await readBody(req)
+    const theme = String(body.theme ?? '').trim()
+
+    if (!THEME_NAMES.includes(theme)) throw new HttpError(400, 'Unknown theme')
+
+    store.updateUserTheme(user.id, theme)
+    store.recordAudit(user.id, 'account.theme', theme)
+    res.writeHead(204, { 'cache-control': 'no-store' })
+    res.end()
   })
 
   router.get('/settings/backup', async ({ req, res }) => {

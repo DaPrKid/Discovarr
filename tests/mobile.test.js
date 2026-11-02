@@ -157,6 +157,66 @@ test('the calendar also renders as a list for small screens', async () => {
   assert.match(html, /class="cal-grid"/)
 })
 
+test('a theme picked on one device follows the account to another', async () => {
+  // The picker posts here instead of reloading, so the account carries the
+  // choice; a second device signing in has to paint it before the first frame.
+  const saved = await postForm('/account/theme', { theme: 'teal' })
+  assert.equal(saved.status, 204)
+
+  const html = await (await get('/', { cookie })).text()
+  assert.match(html, /<html lang="en" data-theme="teal">/)
+  // The inline script reads it from the account, so a browser holding an older
+  // localStorage value cannot win.
+  assert.match(html, /var accountTheme = 'teal'/)
+
+  // A theme nobody offered is refused rather than written to the row.
+  const refused = await postForm('/account/theme', { theme: 'neon' })
+  assert.ok(refused.status === 400, `expected 400 for an unknown theme, got ${refused.status}`)
+  assert.match(await (await get('/', { cookie })).text(), /data-theme="teal"/)
+
+  // Back to the default so later assertions start from a known state.
+  assert.equal((await postForm('/account/theme', { theme: 'midnight' })).status, 204)
+  assert.match(await (await get('/', { cookie })).text(), /data-theme="midnight"/)
+})
+
+test('the account page offers the theme, so every user can set it', async () => {
+  const html = await (await get('/account', { cookie })).text()
+  assert.match(html, /data-theme-picker/)
+  for (const theme of ['midnight', 'cinema', 'teal', 'forest', 'sapphire', 'crimson']) {
+    assert.match(html, new RegExp(`<option value="${theme}">`), `${theme} in the picker`)
+  }
+})
+
+test('the sidebars are sheets over the grid, with both toggles pinned', async () => {
+  const css = await (await get('/styles.css')).text()
+
+  // A panel slides over the grid on a phone or tablet instead of taking a column
+  // above or below it, and the scrim is what a stray tap closes it with.
+  assert.match(css, /@media \(max-width: 1024px\) \{[\s\S]*?\.discover > \.browse-nav,[\s\S]*?position: fixed/)
+  assert.match(css, /html\[data-drawer='nav'\] \.discover > \.browse-nav/)
+  assert.match(css, /html\[data-drawer='rail'\] \.discover\.has-rail > \.filter-rail/)
+  assert.match(css, /\.drawer-scrim \{[\s\S]{0,200}?position: fixed/)
+  // The heading of a sheet holds still while its body scrolls.
+  assert.match(css, /\.browse-head,\s*\.rail-head \{[\s\S]{0,160}?position: sticky/)
+  // Both toggles ride above the bottom bar, which is what makes a panel
+  // reachable at any scroll position rather than only at the top of the page.
+  assert.match(css, /html \.discover-main \.panel-restore \{[\s\S]{0,200}?position: fixed/)
+  assert.match(css, /--thumb-bar/)
+  // The page itself must not move sideways; only a section inside it may.
+  assert.match(css, /\.page:has\(> \.discover\) \{ overflow-x: clip; \}/)
+  assert.match(css, /html\.has-drawer,\s*html\.has-drawer body \{ overflow: hidden; \}/)
+
+  // The markup the script needs: one scrim, and a toggle in each panel header.
+  const pages = readFileSync(join(projectRoot, 'src', 'pages.js'), 'utf8')
+  assert.match(pages, /class="drawer-scrim" data-drawer-scrim hidden/)
+  assert.match(pages, /data-panel="nav"/)
+  assert.match(pages, /data-panel="rail"/)
+
+  const views = readFileSync(join(projectRoot, 'src', 'views.js'), 'utf8')
+  assert.match(views, /root\.dataset\.drawer = panel/)
+  assert.match(views, /scrim\.hidden = !open/)
+})
+
 test('the phone rules exist in the stylesheet', async () => {
   const css = await (await get('/styles.css')).text()
   // The swap has to sit above the portrait-tablet band (768-834px), where a

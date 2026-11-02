@@ -2525,13 +2525,13 @@ fieldset.plain {
   box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.38);
 }
 
-/* A hidden sidebar leaves the grid the whole window. */
-html[data-hide-nav] .discover > .browse-nav,
-html[data-hide-rail] .discover > .filter-rail {
-  display: none;
-}
-
-@media (min-width: 761px) {
+/* A hidden sidebar leaves the grid the whole window. Holding the device turns a
+   panel into a sheet over the grid instead, so this only applies on a desk. */
+@media (min-width: 1025px) {
+  html[data-hide-nav] .discover > .browse-nav,
+  html[data-hide-rail] .discover > .filter-rail {
+    display: none;
+  }
   html[data-hide-nav] .discover,
   html[data-hide-nav] .discover.has-rail {
     grid-template-columns: minmax(0, 1fr) clamp(200px, 20vw, 252px);
@@ -3093,4 +3093,114 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
   max-height: calc(100dvh - 24px);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+/* --- panels on a phone or tablet: a sheet over the grid ------------------ */
+
+/* The height the bottom bar takes, so floating controls can clear it. Kept as a
+   variable because the bar only exists below 900px. */
+:root { --thumb-bar: 0px; }
+
+@media (max-width: 900px) {
+  :root { --thumb-bar: 62px; }
+}
+
+.drawer-scrim { display: none; }
+
+@media (max-width: 1024px) {
+  /* The sheet covers the grid rather than pushing it, so opening a panel never
+     moves the page under the thumb that just opened it. */
+  .discover > .browse-nav,
+  .discover.has-rail > .filter-rail {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 70;
+    grid-column: auto;
+    width: min(88vw, 380px);
+    max-height: none;
+    margin: 0;
+    padding: calc(12px + env(safe-area-inset-top)) 16px calc(104px + env(safe-area-inset-bottom));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 0;
+    box-shadow: 0 0 0 1px var(--line), 0 30px 70px rgba(0, 0, 0, 0.6);
+    transition: transform 200ms ease;
+  }
+
+  .discover > .browse-nav { left: 0; transform: translateX(-100%); }
+  .discover.has-rail > .filter-rail { right: 0; transform: translateX(100%); }
+
+  html[data-drawer='nav'] .discover > .browse-nav,
+  html[data-drawer='rail'] .discover.has-rail > .filter-rail { transform: none; }
+
+  /* The heading of the sheet stays put while its contents scroll, which is the
+     "everything at the top" part: the close control never leaves the screen. */
+  .browse-head,
+  .rail-head {
+    position: sticky;
+    top: calc(-12px - env(safe-area-inset-top));
+    z-index: 1;
+    margin: 0 0 6px;
+    padding: 10px 2px;
+    background: inherit;
+  }
+
+  .rail-head-actions { gap: 10px; }
+
+  .drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 65;
+    display: block;
+    background: rgba(4, 6, 12, 0.62);
+    backdrop-filter: blur(2px);
+  }
+
+  .drawer-scrim[hidden] { display: none; }
+
+  /* While a sheet is open the page behind it holds still. */
+  html.has-drawer,
+  html.has-drawer body { overflow: hidden; }
+
+  /* Sideways movement belongs to the section, never to the page. */
+  .page:has(> .discover) { overflow-x: clip; }
+
+  .discover,
+  .discover.has-rail { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+
+  /* Both toggles ride above the tab bar on every scroll position, so a panel is
+     never "somewhere up there" behind forty posters. */
+  html .discover-main .panel-restore {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--thumb-bar) + 12px + env(safe-area-inset-bottom));
+    z-index: 55;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0;
+    padding: 0 14px 0 max(14px, env(safe-area-inset-left));
+    pointer-events: none;
+  }
+
+  html .discover-main .panel-restore > [data-panel='nav'],
+  html .discover-main .panel-restore > [data-panel='rail'] {
+    display: inline-flex;
+    min-height: 44px;
+    padding: 8px 16px;
+    pointer-events: auto;
+    background: var(--surface);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  }
+
+  html[data-drawer='nav'] .panel-restore > [data-panel='nav'],
+  html[data-drawer='rail'] .panel-restore > [data-panel='rail'] {
+    border-color: transparent;
+    background: var(--accent-soft);
+    color: #fff;
+  }
 }

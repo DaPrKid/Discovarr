@@ -74,18 +74,25 @@ function mark() {
 }
 
 /**
- * The appearance picker. It lives on the settings page now; the choice is
- * remembered per browser, which is where a theme belongs.
+ * The six themes, in the order the picker lists them. The choice is saved on the
+ * account, so a phone and a desktop signed in as the same person match.
  */
+export const THEMES = [
+  ['midnight', 'Midnight'],
+  ['cinema', 'Cinema'],
+  ['teal', 'Deep Teal'],
+  ['forest', 'Enchanted Forest'],
+  ['sapphire', 'Midnight Sapphire'],
+  ['crimson', 'Imperial Crimson'],
+]
+
+export const THEME_NAMES = THEMES.map(([name]) => name)
+
+/** The appearance picker: on the account page, and in settings for admins. */
 export function themeSelect({ label = 'Theme', className = 'rail-field' } = {}) {
   return `<label class="${escapeHtml(className)}">${escapeHtml(label)}
       <select data-theme-picker aria-label="${escapeHtml(label)}">
-        <option value="midnight">Midnight</option>
-        <option value="cinema">Cinema</option>
-        <option value="teal">Deep Teal</option>
-        <option value="forest">Enchanted Forest</option>
-        <option value="sapphire">Midnight Sapphire</option>
-        <option value="crimson">Imperial Crimson</option>
+        ${THEMES.map(([value, text]) => `<option value="${value}">${text}</option>`).join('')}
       </select>
     </label>`
 }
@@ -184,8 +191,12 @@ function navigation({ user, active, appName, canManageSettings }) {
 }
 
 export function layout({ appName = 'Discovarr', title = '', user = null, active = '', body = '', canManageSettings = false, version = APP_VERSION }) {
+  // The account's theme is rendered into the markup, so a phone shows the same
+  // look the desk chose before the first paint rather than after a flash.
+  const accountTheme = THEME_NAMES.includes(user?.theme) ? user.theme : ''
+
   return `<!doctype html>
-<html lang="en" data-theme="midnight">
+<html lang="en" data-theme="${escapeHtml(accountTheme || 'midnight')}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -199,14 +210,21 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="${escapeHtml(appName)}" />
     <script>
-      // The chosen look is stored per browser, so it is applied before the first
-      // paint and never flashes the default theme.
+      // The look follows the account, so it is already in the markup. The copy
+      // in localStorage is a fallback for signed-out pages, and it is refreshed
+      // from the account on every render so an old browser choice cannot win.
       ;(function () {
         var root = document.documentElement
         var themes = ['midnight', 'cinema', 'teal', 'forest', 'sapphire', 'crimson']
+        var accountTheme = '${accountTheme}'
         try {
-          var saved = localStorage.getItem('discovarr-theme')
-          if (themes.indexOf(saved) !== -1) root.dataset.theme = saved
+          if (themes.indexOf(accountTheme) !== -1) {
+            root.dataset.theme = accountTheme
+            localStorage.setItem('discovarr-theme', accountTheme)
+          } else {
+            var saved = localStorage.getItem('discovarr-theme')
+            if (themes.indexOf(saved) !== -1) root.dataset.theme = saved
+          }
         } catch (error) {}
         // Hiding a sidebar is a per-browser choice, applied here so the grid
         // never jumps on load. Phones start with both panels tucked away.
@@ -252,6 +270,14 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
             root.dataset.theme = picker.value
             paintIcon(picker.value)
             try { localStorage.setItem('discovarr-theme', picker.value) } catch (error) {}
+            // Saved to the account too, so the next device to sign in paints
+            // this theme instead of whatever that browser remembered.
+            fetch('/account/theme', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/x-www-form-urlencoded' },
+              body: 'theme=' + encodeURIComponent(picker.value)
+            }).catch(function () {})
           })
         })
       })()
@@ -370,32 +396,72 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         })
       })()
 
-      // Sidebar toggles: the choice is remembered per browser, and a hidden
-      // panel gives its column back to the poster grid.
+      // Sidebar panels: a column beside the grid on a desk, a sheet that slides
+      // over it on a phone or tablet. The desk remembers the choice per browser;
+      // the sheet simply opens and closes, and the page behind it does not move.
       ;(function () {
         var root = document.documentElement
         var panelFlags = { nav: 'hideNav', rail: 'hideRail' }
-        function apply(panel, hidden) {
-          if (hidden) root.dataset[panelFlags[panel]] = '1'
-          else delete root.dataset[panelFlags[panel]]
-          document.querySelectorAll('[data-panel="' + panel + '"]').forEach(function (button) {
-            button.setAttribute('aria-pressed', hidden ? 'false' : 'true')
+        var sheet = window.matchMedia('(max-width: 1024px)')
+        var scrim = document.querySelector('[data-drawer-scrim]')
+
+        function refresh() {
+          var open = root.dataset.drawer || ''
+          if (scrim) scrim.hidden = !open
+          root.classList.toggle('has-drawer', Boolean(open))
+          document.querySelectorAll('[data-panel]').forEach(function (button) {
+            var panel = button.dataset.panel
+            var pressed = sheet.matches ? open === panel : root.dataset[panelFlags[panel]] !== '1'
+            button.setAttribute('aria-pressed', pressed ? 'true' : 'false')
           })
         }
+
+        function close() {
+          if (!root.dataset.drawer) return
+          delete root.dataset.drawer
+          refresh()
+        }
+
         document.querySelectorAll('[data-panel]').forEach(function (button) {
           var panel = button.dataset.panel
-          apply(panel, root.dataset[panelFlags[panel]] === '1')
-          button.addEventListener('click', function () {
+          button.addEventListener('click', function (event) {
+            if (sheet.matches) {
+              // One button opens and closes its sheet, so a thumb never has to
+              // find a second target behind the panel it just opened.
+              event.preventDefault()
+              if (root.dataset.drawer === panel) close()
+              else {
+                root.dataset.drawer = panel
+                refresh()
+              }
+              return
+            }
             var hidden = root.dataset[panelFlags[panel]] === '1'
-            apply(panel, !hidden)
+            if (hidden) delete root.dataset[panelFlags[panel]]
+            else root.dataset[panelFlags[panel]] = '1'
             try {
               localStorage.setItem('discovarr-' + panel, hidden ? 'shown' : 'hidden')
             } catch (error) {}
+            refresh()
             // The grid changes width when a panel goes, so anything laid out
             // against the old column count needs to know it moved.
             document.dispatchEvent(new CustomEvent('discovarr:panels'))
           })
         })
+
+        if (scrim) scrim.addEventListener('click', close)
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape') close()
+        })
+        // Picking something in the sheet is the end of the job, so it closes.
+        document.querySelectorAll('.browse-nav a, .filter-rail a').forEach(function (link) {
+          link.addEventListener('click', close)
+        })
+        sheet.addEventListener('change', function () {
+          close()
+          refresh()
+        })
+        refresh()
       })()
 
       // A last row that stops short of the edge reads as a broken grid, so the
