@@ -1344,15 +1344,6 @@ code {
     margin-left: 0;
   }
 
-  .browse-nav {
-    position: static;
-    display: flex;
-    flex-wrap: wrap;
-  }
-
-  .browse-heading {
-    width: 100%;
-  }
 }
 
 
@@ -3116,6 +3107,13 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
     top: 0;
     bottom: 0;
     z-index: 70;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    grid-auto-rows: auto;
+    /* The rail column sets align-self: start, which survives into fixed
+       positioning and shrink-wraps the sheet to its content. */
+    align-self: stretch;
     grid-column: auto;
     width: min(88vw, 380px);
     max-height: none;

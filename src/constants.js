@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.0.4'
+export const APP_VERSION = '1.0.5'
 
 // Lifecycle values mirror the enums Seerr uses, so the API and database stay
 // familiar to anyone coming from that codebase.
