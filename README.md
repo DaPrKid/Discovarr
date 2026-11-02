@@ -99,6 +99,16 @@ The container ships with a Community Apps template:
 An Apps install is the same container as the `docker run` above, so updating it
 is the same pull, stop, remove and run with the new tag.
 
+Unraid has no restart-policy setting of its own, so the template puts
+`--restart=unless-stopped` in `ExtraParams`, which is the **Extra Parameters**
+box on the container form. Community Apps rebuilds the template it installs
+from, so that box can arrive empty — check it before pressing Install, or open
+Edit and paste the flag there afterwards. Once it is set, `docker inspect
+Discovarr --format '{{.HostConfig.RestartPolicy.Name}}'` reports
+`unless-stopped` and the container returns by itself after a crash or a Docker
+daemon restart. Unraid's Autostart only covers array start, so the two work
+together rather than replacing each other.
+
 To submit, or to re-scan after changing the template, open
 <https://ca.unraid.net/submit/new>, sign in with Unraid, add
 `https://github.com/DaPrKid/Discovarr`, then run **Validate** and **Scan**.
