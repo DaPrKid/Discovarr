@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.0.5
+docker pull ghcr.io/daprkid/discovarr:1.0.6
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,12 +62,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.0.5
+docker pull ghcr.io/daprkid/discovarr:1.0.6
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.0.5
+  ghcr.io/daprkid/discovarr:1.0.6
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -312,7 +312,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.0.5
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.0.6
 ```
 
 If you prefer to run the process without root at all, start the container with

@@ -399,6 +399,16 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
       // Sidebar panels: a column beside the grid on a desk, a sheet that slides
       // over it on a phone or tablet. The desk remembers the choice per browser;
       // the sheet simply opens and closes, and the page behind it does not move.
+      // The settings sections collapse into a picker in the narrow shell, so
+      // choosing one is a submit; the noscript button covers scripts being off.
+      ;(function () {
+        document.querySelectorAll('[data-settings-picker]').forEach(function (picker) {
+          picker.addEventListener('change', function () {
+            if (picker.form) picker.form.submit()
+          })
+        })
+      })()
+
       ;(function () {
         var root = document.documentElement
         var panelFlags = { nav: 'hideNav', rail: 'hideRail' }

@@ -878,6 +878,22 @@ input[type='checkbox'] {
   margin-top: 10px;
 }
 
+/* Only the narrow shell shows this; see the tab and picker rules below. */
+.settings-picker {
+  display: none;
+  margin: 14px 0 18px;
+}
+
+.settings-picker label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -2954,6 +2970,41 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
   .tab.is-active { color: var(--text); background: var(--accent-soft); }
   .tab-icon { width: 21px; height: 21px; }
   .tab-label { line-height: 1.1; }
+
+  /* Discover's All / Movies / Series were three underlined words huddled in the
+     corner; here the row becomes thumb-sized segments that split the width. */
+  .tabs {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 18px;
+    border-bottom: 0;
+  }
+
+  .tabs .tab {
+    flex: 1 1 auto;
+    min-width: 92px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: var(--surface);
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  .tabs .tab.is-active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: #fff;
+  }
+
+  /* A row of seven settings links is a wall of words on a phone. */
+  .settings-tabs { display: none; }
+  .settings-picker { display: block; }
 
   /* Clear the bar, and the home indicator under it. */
   .page,

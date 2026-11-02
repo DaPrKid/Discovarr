@@ -2206,11 +2206,23 @@ const WATCH_REGIONS = [
 ]
 
 function settingsTabs(tab) {
+  // Seven sections as a row of links is a wall of words on a phone. The phone
+  // and tablet shell gets a picker instead: a real GET form, so it still works
+  // with JavaScript off, with the button only there when nothing else can submit.
   return `<nav class="tabs settings-tabs">
     ${SETTINGS_TABS.map(
       ([key, label]) => `<a class="tab ${tab === key ? 'is-active' : ''}" href="/settings?tab=${key}">${label}</a>`
     ).join('')}
-  </nav>`
+  </nav>
+  <form class="settings-picker" method="get" action="/settings">
+    <label for="settings-section">Section</label>
+    <select id="settings-section" name="tab" data-settings-picker>
+      ${SETTINGS_TABS.map(
+        ([key, label]) => `<option value="${escapeHtml(key)}"${tab === key ? ' selected' : ''}>${escapeHtml(label)}</option>`
+      ).join('')}
+    </select>
+    <noscript><button class="btn btn-sm" type="submit">Show</button></noscript>
+  </form>`
 }
 
 function tokensPanel({ tokens, newToken, newTokenScope = null }) {
