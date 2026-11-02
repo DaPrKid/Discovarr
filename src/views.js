@@ -524,6 +524,27 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           return out
         }
 
+        // A subscription is bound to the VAPID key that created it. After a
+        // reinstall with a fresh database this server holds a new key pair, and
+        // a subscription made under the old one can never be delivered to: the
+        // push service rejects the signature. Comparing the keys is the only way
+        // to tell, because the subscription itself looks healthy.
+        function sameKey(subscription, base64) {
+          try {
+            var current = subscription.options && subscription.options.applicationServerKey
+            if (!current) return false
+            var wanted = bytes(base64)
+            var have = new Uint8Array(current)
+            if (have.length !== wanted.length) return false
+            for (var i = 0; i < have.length; i++) {
+              if (have[i] !== wanted[i]) return false
+            }
+            return true
+          } catch (error) {
+            return false
+          }
+        }
+
         if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
           if (enable) enable.disabled = true
           say('This browser cannot show push notifications.')
@@ -569,11 +590,20 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
               var ready = result[0]
               var keys = result[1]
               return ready.pushManager.getSubscription().then(function (subscription) {
-                if (subscription) return subscription
-                return ready.pushManager.subscribe({
-                  userVisibleOnly: true,
-                  applicationServerKey: bytes(keys.publicKey)
-                })
+                var fresh = function () {
+                  return ready.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: bytes(keys.publicKey)
+                  })
+                }
+
+                if (!subscription) return fresh()
+                if (sameKey(subscription, keys.publicKey)) return subscription
+
+                // Made under an older key, so it has to be replaced rather than
+                // handed back: a stale subscription that looks fine is worse than
+                // no subscription, because nothing ever arrives.
+                return subscription.unsubscribe().then(fresh)
               })
             })
             .then(function (subscription) {
@@ -654,18 +684,29 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         if (disable) disable.addEventListener('click', unsubscribe)
         if (test) test.addEventListener('click', sendTest)
 
-        // A device that subscribed on an earlier visit shows the right buttons.
-        worker()
-          .then(function (ready) {
+        // A device that subscribed on an earlier visit shows the right buttons,
+        // but only when its subscription was made with the key this server holds.
+        Promise.all([
+          worker().then(function (ready) {
             return ready.pushManager.getSubscription()
+          }),
+          fetch('/api/v1/push', { credentials: 'same-origin' }).then(function (response) {
+            return response.json()
           })
-          .then(function (subscription) {
-            show(Boolean(subscription))
+        ])
+          .then(function (result) {
+            var subscription = result[0]
+            var usable = Boolean(subscription) && sameKey(subscription, result[1].publicKey)
+            show(usable)
             // The card is rendered with the HTTPS hint, so say plainly where this
             // device stands once the answer is known.
             say(
-              subscription ? 'This device is subscribed.' : 'Notifications are off for this device.',
-              subscription ? 'ok' : ''
+              usable
+                ? 'This device is subscribed.'
+                : subscription
+                  ? 'This device needs setting up again after the server changed.'
+                  : 'Notifications are off for this device.',
+              usable ? 'ok' : ''
             )
           })
           .catch(function () {})
