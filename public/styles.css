@@ -3204,3 +3204,31 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
     color: #fff;
   }
 }
+
+/* A sheet is not a column: at 300px wide the desk-sized menu items read as a
+   list of billboards, so the phone gets a tighter one. */
+@media (max-width: 560px) {
+  .discover > .browse-nav,
+  .discover.has-rail > .filter-rail {
+    width: min(82vw, 300px);
+    padding: calc(10px + env(safe-area-inset-top)) 12px calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .browse-nav { gap: 2px; }
+
+  .browse-head .browse-heading { margin: 2px 0 6px 8px; }
+
+  .browse-link {
+    gap: 9px;
+    min-height: 38px;
+    padding: 8px 9px;
+    border-radius: 9px;
+    font-size: 0.86rem;
+  }
+
+  .browse-link::before { width: 5px; height: 5px; }
+
+  .rail-head { gap: 8px; }
+  .rail-group { padding-top: 10px; }
+  .rail-group > summary { font-size: 0.72rem; }
+}

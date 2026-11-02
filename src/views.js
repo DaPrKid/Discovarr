@@ -405,10 +405,20 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         var sheet = window.matchMedia('(max-width: 1024px)')
         var scrim = document.querySelector('[data-drawer-scrim]')
 
+        // The filter panel is a plain GET form, so choosing a network is a
+        // full page load. Without carrying the open sheet across it, the panel
+        // slammed shut on the first tick and the rest of the list was hidden
+        // behind the thumb that closed it.
+        function syncSheetField() {
+          var field = document.querySelector('form.filter-rail [data-sheet-field]')
+          if (field) field.value = sheet.matches ? root.dataset.drawer || '' : ''
+        }
+
         function refresh() {
           var open = root.dataset.drawer || ''
           if (scrim) scrim.hidden = !open
           root.classList.toggle('has-drawer', Boolean(open))
+          syncSheetField()
           document.querySelectorAll('[data-panel]').forEach(function (button) {
             var panel = button.dataset.panel
             var pressed = sheet.matches ? open === panel : root.dataset[panelFlags[panel]] !== '1'
@@ -461,6 +471,15 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           close()
           refresh()
         })
+        // A sheet the previous page handed over reopens, so applying a filter
+        // does not lose the panel it was applied from.
+        if (sheet.matches) {
+          var carried = ''
+          try {
+            carried = new URLSearchParams(window.location.search).get('sheet') || ''
+          } catch (error) {}
+          if (carried === 'nav' || carried === 'rail') root.dataset.drawer = carried
+        }
         refresh()
       })()
 

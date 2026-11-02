@@ -30,7 +30,7 @@ No database server and no API keys beyond Radarr/Sonarr are needed: the app stor
   <Requires>A Radarr and/or Sonarr instance with its URL and API key, reachable from this container.</Requires>
   <License>MIT</License>
   <Date>2026-11-02</Date>
-  <Changes>1.0.3: signing in works again behind a reverse proxy, including from a browser holding an expired session; on phones and tablets the browse menu and the filters open as sheets over the grid, with buttons that stay on screen while you scroll; the theme is saved to the account and follows you to your other devices.</Changes>
+  <Changes>1.0.4: the filter sheet stays open while you tick networks on a phone or tablet; 1.0.3: signing in works again behind a reverse proxy, including from a browser holding an expired session; on phones and tablets the browse menu and the filters open as sheets over the grid, with buttons that stay on screen while you scroll; the theme is saved to the account and follows you to your other devices.</Changes>
   <MinVer>6.9</MinVer>
   <Config Name="WebUI" Target="5057" Default="5057" Mode="tcp" Description="Port for the Discovarr web interface." Type="Port" Display="always" Required="true" Mask="false">5057</Config>
   <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/discovarr" Mode="rw" Description="Holds discovarr.db (users, requests, settings) and must persist across updates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/discovarr</Config>

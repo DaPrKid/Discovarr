@@ -807,7 +807,10 @@ function filterRail({
         )}</div>`
       : ''
 
+  // data-sheet-field carries the open sheet through the submit: ticking a
+  // network reloads this page, and the panel has to come back up with it.
   return `<form class="filter-rail" method="get" action="${escapeHtml(action)}" data-filter-form>
+    <input type="hidden" name="sheet" value="" data-sheet-field />
     <div class="rail-head">
       <strong>Filters</strong>
       <div class="rail-head-actions">
