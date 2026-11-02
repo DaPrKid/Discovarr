@@ -159,7 +159,10 @@ test('the calendar also renders as a list for small screens', async () => {
 
 test('the phone rules exist in the stylesheet', async () => {
   const css = await (await get('/styles.css')).text()
-  assert.match(css, /@media \(max-width: 760px\)/)
+  // The swap has to sit above the portrait-tablet band (768-834px), where a
+  // six-link top row no longer fits and the bottom bar must already be on.
+  assert.match(css, /@media \(max-width: 900px\) \{[\s\S]*?\.topbar \.nav \{ display: none; \}/)
+  assert.match(css, /@media \(max-width: 900px\) \{[\s\S]*?\.tabbar \{/)
   assert.match(css, /\.tabbar\s*\{[^}]*position: fixed/)
   assert.match(css, /@media \(pointer: coarse\)/)
   assert.match(css, /font-size: 16px/)
