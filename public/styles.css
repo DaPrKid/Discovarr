@@ -2918,7 +2918,9 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
   text-align: center;
 }
 
-@media (max-width: 760px) {
+/* Portrait tablets land between 768 and 834 CSS px, and a six-link top bar needs
+   roughly 800, so the swap has to happen above them or the row clips again. */
+@media (max-width: 900px) {
   .topbar {
     flex-wrap: nowrap;
     gap: 10px;
