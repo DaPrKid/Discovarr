@@ -207,6 +207,20 @@ test('a proxy that rewrites Host does not lock the sign-in form out', async () =
   assert.notEqual(status, 403, 'signing in must not be refused as cross-origin')
 })
 
+test('an expired session does not turn the sign-in form into a 403', async () => {
+  // The browser still holds the old cookie when it posts the sign-in form, so a
+  // cookie-presence test read a stale session behind a proxy as a forgery.
+  const { status } = await call('/login', {
+    method: 'POST',
+    body: { username: 'owner', password: 'definitely-wrong' },
+    headers: {
+      cookie: 'discovarr_session=expired-token',
+      origin: 'https://discovarr.example.com',
+    },
+  })
+  assert.notEqual(status, 403)
+})
+
 test('a same-site post is not treated as cross-site', async () => {
   const { status } = await call('/api/v1/request', {
     method: 'POST',

@@ -155,40 +155,18 @@ export async function readBody(req) {
  * the preview tunnel rewrite Host while the browser keeps the public Origin.
  */
 export function isSameOrigin(req) {
-  // Only a cross-site verdict is refused. Treating `same-site` as a failure
-  // locked people out of their own sign-in page whenever a reverse proxy
-  // terminated TLS and left the app on http, and a browser that sends no
-  // Sec-Fetch-Site at all (Safari before 16.4, embedded webviews) fell through
-  // to a Host comparison that a proxy rewriting Host could never satisfy.
-  const site = req.headers['sec-fetch-site']
-  if (site === 'cross-site') return false
-  if (site === 'same-origin' || site === 'same-site' || site === 'none') return true
-
-  const origin = req.headers.origin
-  if (!origin || origin === 'null') return true
-
-  let originHost
-  try {
-    originHost = new URL(origin).hostname.toLowerCase()
-  } catch {
-    return false
-  }
-
-  const known = [req.headers.host, req.headers['x-forwarded-host'], req.headers['x-real-host']]
-    .filter(Boolean)
-    .some((header) =>
-      String(header)
-        .split(',')
-        .map((entry) => entry.trim().toLowerCase())
-        .some((entry) => entry === originHost || entry.split(':')[0] === originHost)
-    )
-  if (known) return true
-
-  // With no session to ride on there is nothing to forge: this is the sign-in
-  // form itself or first-run setup, reached through a proxy whose Host cannot
-  // be compared with the browser's Origin. The name is SESSION_COOKIE in
-  // auth.js, spelled out here because importing it would be a cycle.
-  return !/(?:^|;\s*)discovarr_session=/.test(String(req.headers.cookie ?? ''))
+  // Only a cross-site verdict is refused. The Origin/Host comparison that used
+  // to back this up cannot work behind a reverse proxy: the browser keeps the
+  // public origin while the proxy rewrites Host, and the app is not told what
+  // the public host is. Comparing cookies instead did not help either - an
+  // expired session still sends its cookie, so that combination read as a
+  // forgery and refused the app's own sign-in form.
+  //
+  // What actually keeps a cross-site form from carrying credentials is the
+  // session cookie itself: it is SameSite=Lax, so a cross-site POST arrives
+  // without it. This check only adds a refusal for browsers that say outright
+  // that the request came from another site.
+  return req.headers['sec-fetch-site'] !== 'cross-site'
 }
 
 // ---------------------------------------------------------------------------
