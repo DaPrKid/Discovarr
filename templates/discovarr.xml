@@ -26,6 +26,7 @@ No database server and no API keys beyond Radarr/Sonarr are needed: the app stor
   <Icon>https://raw.githubusercontent.com/DaPrKid/Discovarr/main/brand/discovarr-lens.png</Icon>
   <TemplateURL>https://raw.githubusercontent.com/DaPrKid/Discovarr/main/templates/discovarr.xml</TemplateURL>
   <ReadMe>https://raw.githubusercontent.com/DaPrKid/Discovarr/main/README.md</ReadMe>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
   <ExtraSearchTerms>media requests radarr sonarr plex jellyfin emby overseerr seerr watchlist discover</ExtraSearchTerms>
   <Requires>A Radarr and/or Sonarr instance with its URL and API key, reachable from this container.</Requires>
   <License>MIT</License>
