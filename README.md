@@ -405,6 +405,19 @@ as `?token=` for clients that cannot send one.
 | `GET`/`PATCH` | `/users`, `/users/:id` | Roles, permissions, quotas |
 | `GET`/`PUT` | `/settings` | Admin |
 | `GET` | `/services/:kind/options` | Root folders and quality profiles |
+| `GET` | `/discover` | Trending, search or filtered browse. `type`, `q`, `page`, and the same filters as the website (`genre`, `network`, `studio`, `kind`, `collections`, `sort`, `rating`, `lang`) |
+| `GET` | `/discover/facets?type=` | Genres, networks, studios, sorts and languages for one type |
+| `GET` | `/recommendations` | Recommendations seeded by the library, watchlist and requests |
+| `GET` | `/titles/:type/:tmdbId` · `/media/:id/page` | Title page: facts, cast, seasons, profiles, Plex, collection |
+| `GET` | `/person/:id` · `/collection/:id` | Person and collection pages |
+| `POST` | `/collection/:id/request` | `{ tmdbIds }` requests the ticked films |
+| `GET` | `/watchlist` · `POST /watchlist/toggle` | The account's watchlist |
+| `GET` | `/calendar?month=` | The household month, as JSON |
+| `GET` | `/notifications` · `POST /notifications/read` | The bell. `{ id }` marks one, an empty body marks all |
+| `GET` | `/activity` | Retries, and the download queues when the account can change settings |
+| `GET` | `/profiles?mediaType=` | Quality profiles a requester can pick |
+| `GET` | `/tv/:tmdbId/season/:number` | One season's episodes |
+| `POST` | `/request/bulk` | `{ action, ids }` — approve, decline, retry or delete, per item |
 
 ## Layout
 

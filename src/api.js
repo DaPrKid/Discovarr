@@ -35,6 +35,7 @@ import { verifyPassword } from './passwords.js'
 import { serviceOptions, serviceSummary } from './services.js'
 import { deviceLabel, pushPublicKey, readSubscription, sendTestPush } from './push.js'
 import { searchTmdb, tmdbConfigured } from './tmdb.js'
+import { registerCompanionRoutes } from './companion.js'
 import { syncLibrary, syncState } from './sync.js'
 
 function parseType(value) {
@@ -305,4 +306,6 @@ export function registerApiRoutes(router) {
       throw new HttpError(502, error.message)
     }
   })
+
+  registerCompanionRoutes(router)
 }

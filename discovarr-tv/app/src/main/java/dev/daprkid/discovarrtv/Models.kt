@@ -32,6 +32,11 @@ data class User(
 ) {
     val isAdmin: Boolean get() = role == "admin"
 
+    /** Administrators hold every permission, matching the server. */
+    fun can(flag: Int): Boolean = isAdmin || (permissions and flag) == flag
+
+    val canManageRequests: Boolean get() = can(Permission.MANAGE_REQUESTS)
+
     companion object {
         fun from(json: JSONObject) = User(
             id = json.optLong("id"),
@@ -67,6 +72,8 @@ data class Media(
     val runtime: Int?,
     val activeRequests: Int,
     val myActiveRequests: Int,
+    /** True when Plex can play this title right now. */
+    val onPlex: Boolean = false,
 ) {
     val year: String? get() = releaseDate?.take(4)?.takeIf { it.length == 4 }
 
@@ -82,9 +89,12 @@ data class Media(
 
     val hasActiveRequest: Boolean get() = activeRequests > 0
 
-    /** AVAILABLE or PARTIALLY_AVAILABLE: nothing to request. */
+    /** Fully in the library. A partly-available series can still have seasons to request. */
+    val isFullyAvailable: Boolean get() = statusId == MediaStatus.AVAILABLE
+
+    /** AVAILABLE or PARTIALLY_AVAILABLE: something is already here. */
     val isAvailable: Boolean
-        get() = statusId == MediaStatus.AVAILABLE || statusId == MediaStatus.PARTIALLY_AVAILABLE
+        get() = isFullyAvailable || statusId == MediaStatus.PARTIALLY_AVAILABLE
 
     /** PENDING or PROCESSING: a download is already moving through the stack. */
     val isProcessing: Boolean
@@ -106,6 +116,7 @@ data class Media(
             runtime = if (json.isNull("runtime")) null else json.optInt("runtime"),
             activeRequests = json.optInt("activeRequests"),
             myActiveRequests = json.optInt("myActiveRequests"),
+            onPlex = json.optBoolean("plex") || json.optBoolean("onPlex"),
         )
 
         fun list(array: JSONArray?): List<Media> {
@@ -121,6 +132,8 @@ data class Season(
     val seasonNumber: Int,
     val name: String,
     val episodeCount: Int,
+    val statusId: Int = MediaStatus.UNKNOWN,
+    val inLibrary: Boolean = false,
 )
 
 /** One episode, as the season partial the browser loads renders it. */
@@ -146,6 +159,8 @@ data class MediaDetail(
                         seasonNumber = season.optInt("seasonNumber"),
                         name = season.str("name") ?: "Season ${season.optInt("seasonNumber")}",
                         episodeCount = season.optInt("episodeCount"),
+                        statusId = season.optInt("status", MediaStatus.UNKNOWN),
+                        inLibrary = season.optBoolean("inLibrary") || season.optInt("status") == MediaStatus.AVAILABLE,
                     )
                 }
             }
@@ -162,10 +177,6 @@ data class MediaDetail(
  * What this install actually offers. Sections that are off are never drawn,
  * not drawn empty, so a films-only server shows no empty book shelves.
  */
-data class Features(
-    val books: Boolean = false,
-)
-
 /** Mirrors MediaStatus in the server's src/constants.js. */
 internal object MediaStatus {
     const val UNKNOWN = 1
@@ -173,6 +184,16 @@ internal object MediaStatus {
     const val PROCESSING = 3
     const val PARTIALLY_AVAILABLE = 4
     const val AVAILABLE = 5
+}
+
+/** Mirrors Permission in the server's src/constants.js. */
+internal object Permission {
+    const val REQUEST_MOVIE = 1
+    const val REQUEST_TV = 2
+    const val AUTO_APPROVE = 4
+    const val MANAGE_REQUESTS = 8
+    const val MANAGE_USERS = 16
+    const val MANAGE_SETTINGS = 32
 }
 
 /** Mirrors MediaRequestStatus in the server's src/constants.js. */
@@ -192,6 +213,9 @@ data class RequestItem(
     val createdAt: String?,
     val qualityProfileName: String?,
     val media: Media?,
+    val seasons: List<Int> = emptyList(),
+    val requester: String? = null,
+    val requesterId: Long? = null,
 ) {
     /** Requests are only worth colouring red when they are genuinely stuck. */
     val statusLine: String
@@ -212,14 +236,21 @@ data class RequestItem(
     val isMoving: Boolean get() = statusId == RequestStatus.APPROVED
 
     companion object {
-        fun from(json: JSONObject) = RequestItem(
-            id = json.optLong("id"),
-            statusId = json.optInt("status"),
-            note = json.str("note"),
-            createdAt = json.str("createdAt"),
-            qualityProfileName = json.str("qualityProfileName"),
-            media = json.optJSONObject("media")?.let(Media::from),
-        )
+        fun from(json: JSONObject): RequestItem {
+            val seasons = json.optJSONArray("seasons")
+            val requester = json.optJSONObject("requester")
+            return RequestItem(
+                id = json.optLong("id"),
+                statusId = json.optInt("status"),
+                note = json.str("note"),
+                createdAt = json.str("createdAt"),
+                qualityProfileName = json.str("qualityProfileName"),
+                media = json.optJSONObject("media")?.let(Media::from),
+                seasons = if (seasons == null) emptyList() else (0 until seasons.length()).map { seasons.optInt(it) },
+                requester = requester?.str("username"),
+                requesterId = requester?.longOrNull("id"),
+            )
+        }
 
         fun list(json: JSONObject): List<RequestItem> {
             val results = json.optJSONArray("results") ?: return emptyList()
