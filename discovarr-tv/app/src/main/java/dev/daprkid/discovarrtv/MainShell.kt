@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,27 +65,40 @@ import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
 
+/** The rail item that should stay lit while a title, person or collection is open. */
+private fun Route.anchor(): Route = when (this) {
+    is Route.Detail -> from.anchor()
+    is Route.Person -> from.anchor()
+    is Route.Collection -> from.anchor()
+    else -> this
+}
+
 /** Where the app is, from the rail's point of view. */
 sealed interface Route {
     data object Home : Route
+    data object Browse : Route
     data object Calendar : Route
     data object Watchlist : Route
     data object Search : Route
     data object Requests : Route
+    data object Activity : Route
+    data object Notifications : Route
     data object Settings : Route
     data class Detail(val media: Media, val from: Route) : Route
+    data class Person(val id: Long, val from: Route) : Route
+    data class Collection(val id: Long, val from: Route) : Route
 }
 
 /** Everything the home screen needs, fetched once per sign-in. */
 data class Catalog(
     val movies: List<Media> = emptyList(),
     val shows: List<Media> = emptyList(),
-    val books: List<Media> = emptyList(),
-    val audiobooks: List<Media> = emptyList(),
+    val library: List<Media> = emptyList(),
+    val source: String = "local",
     val loading: Boolean = true,
     val error: String? = null,
 ) {
-    val total: Int get() = movies.size + shows.size + books.size + audiobooks.size
+    val total: Int get() = movies.size + shows.size + library.size
 }
 
 @Composable
@@ -107,40 +122,42 @@ fun MainShell(
     var route by remember { mutableStateOf<Route>(Route.Home) }
     var catalog by remember { mutableStateOf(Catalog()) }
     var authExpired by remember { mutableStateOf(false) }
-    var features by remember { mutableStateOf(Features()) }
+    var account by remember { mutableStateOf<User?>(null) }
+    var unread by remember { mutableStateOf(0) }
 
-    // What the library already holds, as `type:tmdbId`. Search filters on it, and
-    // the catalog for the shelves is already in memory, so this costs no request.
     val libraryKeys = remember(catalog) {
-        buildList {
-            (catalog.movies + catalog.shows + catalog.books + catalog.audiobooks).forEach { item ->
-                item.tmdbId?.let { add("${item.mediaType}:$it") }
-            }
+        (catalog.movies + catalog.shows + catalog.library).mapNotNull { item ->
+            item.tmdbId?.let { "${item.mediaType}:$it" }
         }.toSet()
+    }
+
+    fun refreshUnread() {
+        scope.launch {
+            unread = runCatching { client.notifications().first }.getOrDefault(unread)
+        }
     }
 
     fun loadCatalog() {
         catalog = catalog.copy(loading = true, error = null)
         scope.launch {
             try {
-                // Books are only fetched at all when the Readarr side is on.
-                val booksOn = client.booksEnabled()
-                features = Features(books = booksOn)
-
-                // Each shelf is a separate small request; four in a row keeps the
-                // code readable and still finishes well before anyone notices.
+                account = runCatching { client.me() }.getOrNull()
+                refreshUnread()
+                val films = client.discover(DiscoverSpec(type = "movie"))
+                val series = client.discover(DiscoverSpec(type = "tv"))
+                val source = if (films.source == "tmdb" || series.source == "tmdb") "tmdb" else "local"
                 catalog = Catalog(
-                    movies = client.media("movie"),
-                    shows = client.media("tv"),
-                    books = if (booksOn) client.media("book") else emptyList(),
-                    audiobooks = if (booksOn) client.media("audiobook") else emptyList(),
+                    movies = films.results,
+                    shows = series.results,
+                    library = if (source == "tmdb") client.media("all").filter { it.isAvailable || it.hasActiveRequest } else emptyList(),
+                    source = source,
                     loading = false,
                 )
             } catch (error: ApiException) {
                 if (error.isAuthError) authExpired = true
-                catalog = catalog.copy(loading = false, error = error.message ?: "Could not load the library")
+                catalog = catalog.copy(loading = false, error = error.message ?: "Could not load Discover")
             } catch (error: Exception) {
-                catalog = catalog.copy(loading = false, error = error.message ?: "Could not load the library")
+                catalog = catalog.copy(loading = false, error = error.message ?: "Could not load Discover")
             }
         }
     }
@@ -152,6 +169,8 @@ fun MainShell(
     BackHandler(enabled = route != Route.Home) {
         route = when (val current = route) {
             is Route.Detail -> current.from
+            is Route.Person -> current.from
+            is Route.Collection -> current.from
             else -> Route.Home
         }
     }
@@ -160,6 +179,7 @@ fun MainShell(
         Rail(
             route = route,
             username = session.username,
+            unread = unread,
             activeRequester = railFocus,
             onSelect = { selected -> route = selected },
             onSignOut = {
@@ -200,14 +220,18 @@ fun MainShell(
                     is Route.Home -> HomeScreen(
                         catalog = catalog,
                         client = client,
-                        showBooks = features.books,
                         onOpen = { media -> route = Route.Detail(media, Route.Home) },
                         onRetry = { loadCatalog() },
                     )
 
+                    is Route.Browse -> BrowseScreen(
+                        client = client,
+                        onOpen = { media -> route = Route.Detail(media, Route.Browse) },
+                        onCollection = { id -> route = Route.Collection(id, Route.Browse) },
+                    )
+
                     is Route.Search -> SearchScreen(
                         client = client,
-                        showBooks = features.books,
                         libraryKeys = libraryKeys,
                         onOpen = { media -> route = Route.Detail(media, Route.Search) },
                     )
@@ -224,7 +248,19 @@ fun MainShell(
 
                     is Route.Requests -> RequestsScreen(
                         client = client,
+                        canManage = account?.canManageRequests == true,
                         onOpen = { media -> route = Route.Detail(media, Route.Requests) },
+                    )
+
+                    is Route.Activity -> ActivityScreen(
+                        client = client,
+                        onOpen = { media -> route = Route.Detail(media, Route.Activity) },
+                    )
+
+                    is Route.Notifications -> NotificationsScreen(
+                        client = client,
+                        onOpen = { media -> route = Route.Detail(media, Route.Notifications) },
+                        onChanged = { refreshUnread() },
                     )
 
                     is Route.Settings -> SettingsScreen(
@@ -242,6 +278,23 @@ fun MainShell(
                     is Route.Detail -> DetailScreen(
                         media = selected.media,
                         client = client,
+                        onBack = { route = selected.from },
+                        onPerson = { id -> route = Route.Person(id, selected) },
+                        onOpen = { media -> route = Route.Detail(media, selected) },
+                        onCollection = { id -> route = Route.Collection(id, selected) },
+                    )
+
+                    is Route.Person -> PersonScreen(
+                        personId = selected.id,
+                        client = client,
+                        onOpen = { media -> route = Route.Detail(media, selected) },
+                        onBack = { route = selected.from },
+                    )
+
+                    is Route.Collection -> CollectionScreen(
+                        collectionId = selected.id,
+                        client = client,
+                        onOpen = { media -> route = Route.Detail(media, selected) },
                         onBack = { route = selected.from },
                     )
                 }
@@ -263,6 +316,7 @@ fun MainShell(
 private fun Rail(
     route: Route,
     username: String,
+    unread: Int,
     activeRequester: FocusRequester,
     onSelect: (Route) -> Unit,
     onSignOut: () -> Unit,
@@ -272,10 +326,13 @@ private fun Rail(
     // account menu there, so a television rail keeps the six that matter.
     val destinations = listOf(
         Triple("Discover", RailGlyph.Home, Route.Home),
+        Triple("Browse", RailGlyph.Browse, Route.Browse),
+        Triple("Search", RailGlyph.Search, Route.Search),
         Triple("Calendar", RailGlyph.Calendar, Route.Calendar),
         Triple("Watchlist", RailGlyph.Star, Route.Watchlist),
         Triple("Requests", RailGlyph.Download, Route.Requests),
-        Triple("Search", RailGlyph.Search, Route.Search),
+        Triple("Activity", RailGlyph.Activity, Route.Activity),
+        Triple(if (unread > 0) "Updates ($unread)" else "Updates", RailGlyph.Bell, Route.Notifications),
         Triple("Settings", RailGlyph.Settings, Route.Settings),
     )
 
@@ -306,20 +363,22 @@ private fun Rail(
             Mark(size = 34.dp, modifier = Modifier.padding(bottom = 18.dp))
         }
 
-        destinations.forEach { (label, glyph, target) ->
-            val current = route == target ||
-                (route is Route.Detail && route.from == target && target == Route.Home)
-            RailItem(
-                label = label,
-                glyph = glyph,
-                active = current,
-                expanded = expanded,
-                requester = if (current && active) activeRequester else null,
-                onClick = { onSelect(target) },
-            )
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            destinations.forEach { (label, glyph, target) ->
+                val current = route.anchor() == target
+                RailItem(
+                    label = label,
+                    glyph = glyph,
+                    active = current,
+                    expanded = expanded,
+                    requester = if (current && active) activeRequester else null,
+                    onClick = { onSelect(target) },
+                )
+            }
         }
-
-        Spacer(Modifier.weight(1f))
 
         if (expanded) {
             Text(
@@ -389,7 +448,7 @@ private fun RailItem(
 }
 
 /** The rail's icons, drawn rather than imported: the app carries no icon set. */
-private enum class RailGlyph { Home, Calendar, Star, Download, Search, Settings, SignOut }
+private enum class RailGlyph { Home, Browse, Calendar, Star, Download, Search, Activity, Bell, Settings, SignOut }
 
 @Composable
 private fun RailGlyphIcon(glyph: RailGlyph, tint: Color) {
@@ -452,6 +511,56 @@ private fun RailGlyphIcon(glyph: RailGlyph, tint: Color) {
                 drawLine(tint, Offset(w * 0.20f, h * 0.86f), Offset(w * 0.80f, h * 0.86f), strokeWidth = line, cap = StrokeCap.Round)
             }
 
+            RailGlyph.Browse -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.12f, h * 0.12f),
+                    size = Size(w * 0.32f, h * 0.32f),
+                    cornerRadius = CornerRadius(w * 0.06f),
+                    style = stroke,
+                )
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.56f, h * 0.12f),
+                    size = Size(w * 0.32f, h * 0.32f),
+                    cornerRadius = CornerRadius(w * 0.06f),
+                    style = stroke,
+                )
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.12f, h * 0.56f),
+                    size = Size(w * 0.32f, h * 0.32f),
+                    cornerRadius = CornerRadius(w * 0.06f),
+                    style = stroke,
+                )
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.56f, h * 0.56f),
+                    size = Size(w * 0.32f, h * 0.32f),
+                    cornerRadius = CornerRadius(w * 0.06f),
+                    style = stroke,
+                )
+            }
+
+            RailGlyph.Activity -> {
+                drawLine(tint, Offset(w * 0.16f, h * 0.78f), Offset(w * 0.16f, h * 0.48f), strokeWidth = line, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.40f, h * 0.78f), Offset(w * 0.40f, h * 0.30f), strokeWidth = line, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.64f, h * 0.78f), Offset(w * 0.64f, h * 0.42f), strokeWidth = line, cap = StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.86f, h * 0.78f), Offset(w * 0.86f, h * 0.18f), strokeWidth = line, cap = StrokeCap.Round)
+            }
+
+            RailGlyph.Bell -> {
+                path.moveTo(w * 0.5f, h * 0.12f)
+                path.lineTo(w * 0.22f, h * 0.40f)
+                path.lineTo(w * 0.22f, h * 0.62f)
+                path.lineTo(w * 0.78f, h * 0.62f)
+                path.lineTo(w * 0.78f, h * 0.40f)
+                path.close()
+                drawPath(path, tint, style = stroke)
+                drawLine(tint, Offset(w * 0.32f, h * 0.62f), Offset(w * 0.68f, h * 0.62f), strokeWidth = line, cap = StrokeCap.Round)
+                drawCircle(tint, radius = w * 0.08f, center = Offset(w * 0.5f, h * 0.78f), style = stroke)
+            }
+
             RailGlyph.Search -> {
                 drawCircle(tint, radius = w * 0.27f, center = Offset(w * 0.44f, h * 0.42f), style = stroke)
                 drawLine(tint, Offset(w * 0.64f, h * 0.62f), Offset(w * 0.86f, h * 0.86f), strokeWidth = line, cap = StrokeCap.Round)
@@ -496,7 +605,6 @@ private fun RailGlyphIcon(glyph: RailGlyph, tint: Color) {
 private fun HomeScreen(
     catalog: Catalog,
     client: DiscovarrClient,
-    showBooks: Boolean,
     onOpen: (Media) -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -509,7 +617,9 @@ private fun HomeScreen(
             Column {
                 Text("Discover", style = Palette.Title)
                 Text(
-                    if (catalog.loading) "Loading the library..." else "${catalog.total} titles on ${client.baseUrl}",
+                    if (catalog.loading) "Loading Discover..." else {
+                        if (catalog.source == "tmdb") "Trending this week" else "The local catalog — add a TMDB key for trending"
+                    },
                     style = Palette.BodyMuted,
                 )
             }
@@ -525,14 +635,14 @@ private fun HomeScreen(
             }
         }
 
-        // Empty shelves are skipped rather than shown as blank rows, so a library
-        // without books looks exactly like the app did before books existed.
         val shelves = buildList {
-            add("Movies" to catalog.movies)
-            add("TV shows" to catalog.shows)
-            if (showBooks) {
-                add("Books" to catalog.books)
-                add("Audiobooks" to catalog.audiobooks)
+            if (catalog.source == "tmdb") {
+                add("Trending films" to catalog.movies)
+                add("Trending series" to catalog.shows)
+                if (catalog.library.isNotEmpty()) add("In your library" to catalog.library)
+            } else {
+                add("Movies" to catalog.movies)
+                add("TV shows" to catalog.shows)
             }
         }
 
@@ -548,7 +658,11 @@ private fun HomeScreen(
                                 title = media.title,
                                 subtitle = media.year ?: media.subtitle,
                                 imageUrl = client.resolveImage(media.posterPath),
-                                badge = if (media.myActiveRequests > 0) "REQUESTED" else null,
+                                badge = when {
+                                    media.onPlex -> "PLEX"
+                                    media.myActiveRequests > 0 -> "REQUESTED"
+                                    else -> null
+                                },
                                 onClick = { onOpen(media) },
                                 // A Radarr or Sonarr import can land without a
                                 // poster; the web borrows TMDB's, so the shelf
@@ -565,11 +679,7 @@ private fun HomeScreen(
         if (!catalog.loading && catalog.total == 0 && catalog.error == null) {
             item {
                 StatusLine(
-                    if (showBooks) {
-                        "The library is empty. Run a sync in Discovarr after adding your Sonarr, Radarr and Readarr services."
-                    } else {
-                        "The library is empty. Run a sync in Discovarr after adding your Sonarr and Radarr services."
-                    },
+                    "Nothing to show yet. Add a TMDB key, or run a sync after connecting Sonarr and Radarr.",
                     isError = true,
                 )
             }

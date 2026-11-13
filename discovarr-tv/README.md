@@ -9,22 +9,30 @@ and the app talks to the endpoints Discovarr already exposes.
 
 ## What it does
 
-- **Discover** — the library's films, shows, books and audiobooks on shelves.
-  Empty shelves are hidden, so a films-only setup looks like it did before books
-  existed.
-- **Search** — one field across everything, with the same filter chips the web
-  offers, including the book types only when Readarr is switched on.
-- **Title page** — the browser's page, ported: poster, tagline, overview, the
-  fact table (release date, runtime, rating, genres, director, studio, library
-  state), the cast strip, the season list, the trailer, the Plex button and the
-  watchlist toggle. Facts and cast come from the same HTML the browser renders,
-  because `/api/v1` does not carry them.
-- **Watchlist** — the server's watchlist, newest first, savable and removable
-  from the television. It is the same list the browser shows, not a second one.
+- **Discover** — trending films and series when TMDB is configured, and the
+  local catalog when it is not. A title Plex can play is badged.
+- **Browse** — Networks, Studios, Movie genres, Series genres and Recommendations,
+  with the same filters as the web: type (including anime), genre, network or
+  studio, collections-only, sort, minimum rating and language, plus paging.
+- **Search** — one field across films and series, with suggestions as you type.
+- **Title page** — poster, tagline, overview, facts, where to watch, cast (each
+  name opens the person), seasons with their episodes, a tick per season, the
+  quality profile, the collection beside the film, the trailer, Play on Plex and
+  the watchlist toggle.
+- **People and collections** — a cast member opens their biography and credits.
+  A collection lists every film, ticks the ones still missing, and requests the
+  selection in one go.
+- **Watchlist** — the server's watchlist, newest first. The same list the
+  browser shows.
 - **Calendar** — a month of releases for what is in the library and what has been
-  asked for, walked with the D-pad as an agenda, with previous/next month.
-- **Requests** — the same list the web UI shows, with live state (waiting for
-  approval, with the download client, available, failed).
+  asked for, walked with the D-pad as an agenda.
+- **Requests** — the same list the web shows, with status filters. Someone who
+  can approve requests gets Approve, Decline, Retry, Mark available and Remove
+  on each row. Anyone can remove their own pending request.
+- **Activity** — requests waiting for another automatic attempt, ones that gave
+  up, and (for an account that can change settings) the Radarr and Sonarr queues.
+- **Updates** — the bell. Unread count on the rail, the list, and mark-all-read.
+  Opening one jumps to the title when the update points at one.
 - **Settings** — the account this box is paired with, the six themes, how many
   presses open a title, Plex profile switching and sign out.
 - **Looks like the browser** — the Discovarr mark and gradient wordmark, and all
@@ -39,8 +47,9 @@ and the app talks to the endpoints Discovarr already exposes.
   watchlist. *Switch account* asks for another account on the same server without
   retyping the address; *Change Plex profile* re-runs the household picker.
 - **Play on Plex** — hands the title to the Plex app instead of a browser tab.
-- **Only what is switched on** — if the Readarr integration is off, the books and
-  audiobooks shelves, filter chips and copy are never drawn at all.
+- **Films and series only** — this server does not have books. An earlier build
+  asked for a "book" shelf and the API treated an unknown type as "everything",
+  so the shelves doubled. That call is gone.
 
 ## Requirements
 
@@ -147,27 +156,45 @@ who signed in.
   focus and folds down to icons while you are reading a page, then opens again the
   moment focus returns to it. Left at the edge of any page walks back to the
   rail, because a viewer should not have to leave a title to reach the menu.
-- **No image library.** Posters come from the public `/img/<size>/<file>` route
-  and Open Library URLs; a small LRU keeps a screen's worth of art in memory.
-- **Books are a setting, not a guess.** `/api/v1/settings` reports
-  `services.readarr.enabled`, so an administrator's app knows immediately. A
-  non-administrator cannot read settings and needs no special case: if the server
-  holds no books and no audiobooks, there is nothing to show either way.
-- **Pages without an API are read, not guessed.** The watchlist is a form post and
-  the calendar is a month grid, so the television reads the markup the browser
-  would have shown. That keeps one source of truth, at the cost of depending on
-  that markup — worth knowing before changing `pages.js`.
+- **No image library.** Posters come from the public `/img/<size>/<file>` route;
+  a small LRU keeps a screen's worth of art in memory.
+- **JSON first.** Discover, browse, titles, people, collections, the watchlist,
+  the calendar, updates and activity are `/api/v1` JSON, the same decisions the
+  HTML pages make. The HTML is only the fallback when a server answers 404.
+
+The television reads JSON from `/api/v1` for Discover, browse, title pages,
+people, collections, the watchlist, the calendar, notifications and activity.
+Those routes were added beside the HTML pages, which the browser still uses.
+If a server is older and answers 404, the title page, watchlist, calendar and
+episode lists fall back to the HTML they used to scrape.
+
+## Left off the television
+
+These are on the web and stay there. A remote is a poor way to run them, or
+they only make sense in a browser.
+
+- **Settings tabs** (Integrations, Users, Notifications, API tokens, Tasks,
+  Logs), including service URLs, quality-profile editing, quotas, webhooks,
+  SMTP, the database download and the settings file. Changing a server from
+  the sofa is how a household locks itself out. Themes and sign-out are the
+  account settings that do belong here.
+- **Creating a calendar feed link.** That is an API token. The month itself is
+  on the television; subscribing a phone calendar stays in the browser.
+- **Web push.** Android TV does not subscribe to browser push. The in-app
+  Updates list is the same information.
+- **Hover previews.** There is no pointer. One press opens the title, which is
+  the card the hover was standing in for.
+- **Bulk checkboxes.** Approve, decline, retry and remove are on each request.
+  Ticking a page of rows with a remote is slower than doing the row.
+- **The phone layout and the installable web app.** This is the television.
+- **Audit log, diagnostics and cache pruning.** Administrator maintenance.
 
 ## Limitations
 
 - No built-in player. Playback is handed to the Plex app, and only when Discovarr
   knows Plex holds the title.
 - Artwork comes from TMDB, so a title it has no poster for shows its initials on a
-  coloured tile. The browser does the same; the next sync that finds art fills it
-  in.
-- Season selection is not implemented: requesting a series requests every season,
-  the web UI's default. Single seasons need the browser.
-- Activity, notifications and the settings pages that need `MANAGE_SETTINGS` are
-  not on the television; only the account's own settings are.
-- Requests can be filed and followed but not approved or declined from the TV.
+  coloured tile. The browser does the same.
+- Browse, people and collections need a TMDB key, the same as the website.
+  Without one, Discover shows the local catalog.
 - No in-app update channel. Rebuild and `adb install -r` again.

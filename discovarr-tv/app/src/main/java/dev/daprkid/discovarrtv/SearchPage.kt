@@ -57,7 +57,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun SearchScreen(
     client: DiscovarrClient,
-    showBooks: Boolean,
     libraryKeys: Set<String>,
     onOpen: (Media) -> Unit,
 ) {
@@ -144,7 +143,7 @@ fun SearchScreen(
             Column {
                 Text("Search", style = Palette.Title)
                 Text(
-                    if (showBooks) "Films, shows, books and audiobooks" else "Films and shows",
+                    "Films and series",
                     style = Palette.BodyMuted,
                 )
             }
@@ -155,7 +154,7 @@ fun SearchScreen(
                 TvTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = "Title, author or actor",
+                    placeholder = "Film or series",
                     modifier = Modifier.weight(1f),
                 )
                 Spacer(Modifier.width(12.dp))
@@ -201,17 +200,11 @@ fun SearchScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val types = buildList {
-                        add("All" to "all")
-                        add("Movies" to "movie")
-                        add("Shows" to "tv")
-                        // The books half of the bar only exists when the Readarr
-                        // integration is switched on server-side.
-                        if (showBooks) {
-                            add("Books" to "book")
-                            add("Audiobooks" to "audiobook")
-                        }
-                    }
+                    val types = listOf(
+                        "All" to "all",
+                        "Movies" to "movie",
+                        "Shows" to "tv",
+                    )
                     items(types.size) { index ->
                         val (label, value) = types[index]
                         FilterChip(label, type == value) { type = value }
