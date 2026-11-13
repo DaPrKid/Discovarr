@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Android TV home screen asks for a 320x180 banner. Drawn as a vector so
+     it ships at any density without extra bitmaps in the repository. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#0B0B0D"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#E5A00D"
+        android:pathData="M124,52 L172,90 L124,128 Z" />
+    <path
+        android:fillColor="#F5F5F7"
+        android:pathData="M186,52h12v76h-12z" />
+    <path
+        android:fillColor="#9A9AA5"
+        android:pathData="M186,52h52v10h-52z" />
+    <path
+        android:fillColor="#9A9AA5"
+        android:pathData="M186,118h52v10h-52z" />
+</vector>
