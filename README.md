@@ -185,8 +185,7 @@ anonymous pull on every release, so the install cannot break silently.
 - **On a phone** — the four places you actually use sit on a bottom bar within
   reach of a thumb, the rest are one tap away under your name, tables become
   cards, and the calendar turns into a day-by-day list. Added to a home screen it
-  installs with its own icon and a matching status bar instead of opening as a
-  bookmark.
+  installs as its own app; see [Install on a phone](#install-on-a-phone).
 - **Hover previews** — hover or focus any title, poster or calendar entry and a
   card explains what it is about without leaving the page. The description is
   fetched once per title and remembered for the rest of the visit.
@@ -312,6 +311,49 @@ test connection**. The token is the `X-Plex-Token` value in any item's
 either the new Plex agent or the legacy one, and the deep link opens
 `app.plex.tv` on the right server and item.
 
+## Install on a phone
+
+Discovarr is a progressive web app. Add it to the home screen and it opens
+without the browser bar, with its own icon and a status bar in the app's
+colour.
+
+**Android (Chrome).** Open the site, then the browser menu, and choose
+**Install app** or **Add to Home screen**. When Chrome is ready it also shows
+an Install button at the top of the page. You can dismiss that; the menu entry
+stays.
+
+**iPhone or iPad (Safari).** Tap **Share**, then **Add to Home Screen**. iOS
+does not offer a button inside the page. The same steps are written under
+**Account → Add to your home screen**. Notifications on an iPhone need this
+home-screen app, and iOS 16.4 or newer.
+
+The icon on Android is the Discovarr mark. On an iPhone it is the theme you
+had selected when you added the site.
+
+### HTTPS
+
+A service worker — which install and notifications both need — only registers
+in a secure context. `http://localhost` counts. A phone opening
+`http://192.168.x.x:5057` does not: put a reverse proxy with TLS in front of
+the container (Caddy, Traefik, nginx, or the proxy you already use on Unraid)
+and open the `https://` address. The app's links are root-absolute, so that
+proxy should serve Discovarr at the root of that host. A subpath only works
+when the proxy strips it and the browser still sees `/`.
+
+### What is saved on the device
+
+The worker caches the stylesheet, icons and a small offline page so the next
+load paints quickly. It does **not** cache pages or `/api` responses: those
+are rendered for whoever is signed in, and a saved copy could show one
+person's library to someone else on the same phone. With no network you get a
+short "You're offline" page and a Try again button, not a stale Discover.
+
+A new image replaces the worker on the next visit. The script is served with
+`cache-control: no-cache`, the cache name includes the version, and the
+previous cache is deleted when the new worker activates. Push subscriptions
+are tied to the worker's address, which does not change, so phones keep
+receiving notifications across that update.
+
 ## Push notifications
 
 A phone or desktop browser can notify you when a request is approved, declined
@@ -414,6 +456,9 @@ discovarr/
 ├── docker-compose.yml
 ├── docker/entrypoint.sh  # chowns /data, then drops to PUID:PGID
 ├── public/styles.css
+├── public/sw.js          # shell cache, offline page, push notifications
+├── public/offline.html
+├── public/icons/         # 192/512, maskable, and apple-touch icons
 ├── tests/lifecycle.test.js
 ├── tests/services.test.js   # *arr client and profile dispatch against a fake service
 ├── tests/setup.test.js

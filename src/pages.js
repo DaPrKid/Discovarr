@@ -2164,6 +2164,16 @@ function accountBody({ user, quota, notice, error }) {
 
     ${pushCard(user, store.listPushSubscriptions(user.id))}
 
+    <section class="panel" id="home-screen">
+      <h2 style="margin: 0">Add to your home screen</h2>
+      <p class="muted small">Opens with its own icon and without the browser bar. On an iPhone this is also what allows notifications, from iOS 16.4 on.</p>
+      <ol class="install-steps">
+        <li><strong>Android, in Chrome.</strong> Open the browser menu and choose Install app or Add to Home screen. When this browser can install it, an Install button also shows at the top of the page.</li>
+        <li><strong>iPhone or iPad, in Safari.</strong> Tap Share, then Add to Home Screen.</li>
+      </ol>
+      <p class="muted small">Installing needs HTTPS. This computer can use http://localhost; a phone on the network needs the address itself to be HTTPS, usually a reverse proxy in front of the container.</p>
+    </section>
+
     <section class="panel">
       <h2 style="margin: 0">Appearance</h2>
       <p class="muted small">Saved to your account, so a phone and a desktop signed in as you match. Change it on one and refresh the other.</p>
@@ -2227,7 +2237,7 @@ function pushCard(user, devices = []) {
         <button class="btn btn-sm btn-ghost" type="button" data-push-disable hidden>Turn off for this device</button>
         <button class="btn btn-sm btn-ghost" type="button" data-push-test hidden>Send a test</button>
       </div>
-      <p class="muted small" data-push-status>Push needs an HTTPS address; on an iPhone, add the app to the home screen first.</p>
+      <p class="muted small" data-push-status>Push needs an HTTPS address. On an iPhone, add the app to the home screen first (iOS 16.4 or newer).</p>
     </section>`
 }
 
@@ -3737,22 +3747,40 @@ export function registerPageRoutes(router) {
   // is why it must be a calendar-scoped token: leaking one exposes this feed and
   // nothing else, whereas an API token in the same place exposes the account.
   // A header still works, for anything that can send one.
-  // Installed to a home screen, the app should not open as a bookmark with a
-  // URL bar. No service worker: nothing is cached, so nothing can go stale.
-  router.get('/manifest.webmanifest', ({ res }) => {
-    const name = appName()
+  // Installed to a home screen, the app opens without the browser bar. Links
+  // in the app are root-absolute, so start_url and scope are the origin root:
+  // a reverse proxy that mounts a subpath has to present that path as `/` to
+  // the browser, the same way every other link already requires. The service
+  // worker resolves its own cache against registration.scope.
+  router.get('/manifest.webmanifest', ({ req, res }) => {
+    const name = String(appName() || 'Discovarr')
+    const theme = currentUser(req)?.theme
+    const chrome = {
+      midnight: '#0c0e14',
+      cinema: '#0d0a08',
+      teal: '#07100f',
+      forest: '#0f1211',
+      sapphire: '#060a15',
+      crimson: '#0b0709',
+    }
+    const color = chrome[theme] || chrome.midnight
     const manifest = {
+      id: '/',
       name,
       short_name: name.length > 12 ? name.slice(0, 12) : name,
       description: 'Request films and series once, from one page.',
       start_url: '/',
       scope: '/',
       display: 'standalone',
-      background_color: '#0c0e14',
-      theme_color: '#0c0e14',
+      background_color: color,
+      theme_color: color,
+      lang: 'en',
+      prefer_related_applications: false,
       icons: [
-        { src: '/favicon-midnight.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-        { src: '/favicon-midnight.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: '/icons/icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+        { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
       ],
     }
     const body = Buffer.from(JSON.stringify(manifest))

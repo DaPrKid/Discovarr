@@ -269,7 +269,7 @@ test('every inline script carries the response nonce, and the nonce is fresh', a
 
   const body = await first.text()
   const stamped = [...body.matchAll(/<script nonce="([^"]*)"/g)].map((match) => match[1])
-  assert.equal(stamped.length, 2, 'both inline scripts are stamped')
+  assert.equal(stamped.length, 3, 'every inline script is stamped')
   assert.deepEqual(new Set(stamped), new Set([firstNonce]), 'the attribute matches the header')
   assert.equal((body.match(/<script(?![^>]*nonce=)/g) ?? []).length, 0, 'no script is left unstamped')
 
