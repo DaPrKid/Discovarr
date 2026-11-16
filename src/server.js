@@ -4,8 +4,10 @@ import { dirname, extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { registerApiRoutes } from './api.js'
+import { stylesVersion } from './assets.js'
 import { currentUser } from './auth.js'
 import { config } from './config.js'
+import { APP_VERSION } from './constants.js'
 import { countUsers, deleteExpiredSessions, getSettings } from './db.js'
 import { createRouter, HttpError, sendHtml, sendJson } from './http.js'
 import { pruneCache } from './cache.js'
@@ -23,6 +25,7 @@ const MIME_TYPES = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
   ['.svg', 'image/svg+xml'],
   ['.png', 'image/png'],
+  ['.html', 'text/html; charset=utf-8'],
   ['.ico', 'image/x-icon'],
   ['.woff2', 'font/woff2'],
 ])
@@ -88,18 +91,26 @@ const router = createRouter({
   },
 })
 
-// Served from the root so its scope covers the whole app, and never cached: a
-// stale worker would keep an old notification handler around.
+// Served from the root so its scope can cover the whole app. Browsers must not
+// keep a byte-for-byte copy: the next image has to replace the worker on the
+// following load. The version tokens are filled here, from the same constants
+// the rest of the build uses, so the worker's cache name cannot drift.
 router.get('/sw.js', async ({ res }) => {
   try {
     const file = await readFile(join(publicDir, 'sw.js'))
+    const body = Buffer.from(
+      file
+        .toString('utf8')
+        .replaceAll('__DISCOVARR_VERSION__', APP_VERSION)
+        .replaceAll('__STYLES_VERSION__', stylesVersion)
+    )
     res.writeHead(200, {
       'content-type': 'text/javascript; charset=utf-8',
-      'content-length': file.length,
+      'content-length': body.length,
       'cache-control': 'no-cache',
       'service-worker-allowed': '/',
     })
-    res.end(file)
+    res.end(body)
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
     res.end('not found')

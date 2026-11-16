@@ -203,9 +203,10 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
     <title>${escapeHtml(title)} · ${escapeHtml(appName)}</title>
     <link rel="stylesheet" href="/styles.css?v=${escapeHtml(stylesVersion)}" />
     <link rel="icon" type="image/png" href="/favicon-midnight.png" />
-    <link rel="apple-touch-icon" id="apple-icon" href="/favicon-midnight.png" />
+    <link rel="apple-touch-icon" id="apple-icon" href="/icons/apple-touch-midnight.png" sizes="180x180" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" id="theme-color" content="#0c0e14" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="${escapeHtml(appName)}" />
@@ -256,9 +257,10 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         }
         function paintIcon(theme) {
           if (themes.indexOf(theme) === -1) return
-          var href = '/favicon-' + theme + '.png'
-          if (icon) icon.href = href
-          if (appleIcon) appleIcon.href = href
+          if (icon) icon.href = '/favicon-' + theme + '.png'
+          // iOS snapshots this when the site is added to the home screen, so it
+          // follows the theme on screen at that moment. 180px, opaque.
+          if (appleIcon) appleIcon.href = '/icons/apple-touch-' + theme + '.png'
           if (themeMeta && chrome[theme]) themeMeta.content = chrome[theme]
         }
         paintIcon(root.dataset.theme)
@@ -289,6 +291,72 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         ? navigation({ user, active, appName, canManageSettings })
         : `<header class="topbar"><span class="brand">${mark()}<span class="brand-name">${escapeHtml(appName)}</span></span></header>`
     }
+    <div class="install-hint" data-install-hint hidden role="region" aria-label="Install app">
+      <p>Add ${escapeHtml(appName)} to your home screen.</p>
+      <button type="button" class="btn btn-sm" data-install-accept>Install</button>
+      <button type="button" class="btn btn-sm btn-ghost" data-install-dismiss>Not now</button>
+    </div>
+    <script>
+      // Register on every page, not only after someone opens the push card, so
+      // the installed app and its notifications keep a worker. The install
+      // banner is Chromium's beforeinstallprompt; Safari has no equivalent, so
+      // iPhone instructions live on the account page instead.
+      ;(function () {
+        var hint = document.querySelector('[data-install-hint]')
+        var standalone =
+          window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {})
+        }
+
+        if (!hint || standalone) return
+
+        function dismissed() {
+          try {
+            return localStorage.getItem('discovarr-install-dismissed') === '1'
+          } catch (error) {
+            return false
+          }
+        }
+
+        var deferred = null
+        window.addEventListener('beforeinstallprompt', function (event) {
+          event.preventDefault()
+          if (dismissed()) return
+          deferred = event
+          hint.hidden = false
+        })
+        window.addEventListener('appinstalled', function () {
+          hint.hidden = true
+          deferred = null
+        })
+
+        var accept = hint.querySelector('[data-install-accept]')
+        var dismiss = hint.querySelector('[data-install-dismiss]')
+        if (accept) {
+          accept.addEventListener('click', function () {
+            if (!deferred) return
+            var pending = deferred
+            deferred = null
+            pending.prompt().then(function () {
+              hint.hidden = true
+            }).catch(function () {
+              hint.hidden = true
+            })
+          })
+        }
+        if (dismiss) {
+          dismiss.addEventListener('click', function () {
+            hint.hidden = true
+            deferred = null
+            try {
+              localStorage.setItem('discovarr-install-dismissed', '1')
+            } catch (error) {}
+          })
+        }
+      })()
+    </script>
     <main class="page">${body}</main>
     <div class="hover-card" id="hover-card" hidden></div>
     <script>

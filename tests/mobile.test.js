@@ -8,6 +8,8 @@ import { dirname, join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { APP_VERSION } from '../src/constants.js'
+
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const ADMIN = { email: 'owner@discovarr.local', username: 'owner', password: 'ownerpass' }
 
@@ -51,6 +53,12 @@ function postForm(path, fields) {
 
 function get(path, headers = {}) {
   return fetch(`${baseUrl}${path}`, { redirect: 'manual', headers })
+}
+
+function pngSize(bytes) {
+  const buffer = Buffer.from(bytes)
+  assert.equal(buffer.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
 }
 
 before(async () => {
@@ -120,9 +128,23 @@ test('every page offers the phone shell and the install metadata', async () => {
   assert.match(html, /data-menu/)
   assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest" \/>/)
   assert.match(html, /<meta name="theme-color" id="theme-color"/)
-  assert.match(html, /rel="apple-touch-icon"/)
+  assert.match(html, /<link rel="apple-touch-icon"[^>]*href="\/icons\/apple-touch-midnight\.png"/)
+  assert.match(html, /<meta name="mobile-web-app-capable" content="yes" \/>/)
+  assert.match(html, /<meta name="apple-mobile-web-app-capable" content="yes" \/>/)
+  assert.match(html, /<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" \/>/)
+  assert.match(html, /viewport-fit=cover/)
+  assert.match(html, /navigator\.serviceWorker\.register\('\/sw\.js', \{ scope: '\/' \}\)/)
+  assert.match(html, /data-install-hint/)
+  assert.match(html, /beforeinstallprompt/)
   // Desktop keeps the full row of links.
   assert.match(html, /<nav class="nav" aria-label="Sections">/)
+})
+
+test('a signed-out page carries the same install metadata', async () => {
+  const html = await (await get('/login')).text()
+  assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest" \/>/)
+  assert.match(html, /rel="apple-touch-icon"/)
+  assert.match(html, /navigator\.serviceWorker\.register\('\/sw\.js', \{ scope: '\/' \}\)/)
 })
 
 test('the manifest installs the app instead of bookmarking a tab', async () => {
@@ -133,8 +155,82 @@ test('the manifest installs the app instead of bookmarking a tab', async () => {
   const manifest = await response.json()
   assert.equal(manifest.display, 'standalone')
   assert.equal(manifest.start_url, '/')
+  assert.equal(manifest.scope, '/')
+  assert.equal(manifest.id, '/')
   assert.equal(manifest.name, 'Discovarr')
-  assert.ok(manifest.icons.length >= 1)
+  assert.equal(manifest.short_name, 'Discovarr')
+  assert.equal(manifest.background_color, '#0c0e14')
+  assert.equal(manifest.theme_color, '#0c0e14')
+  assert.equal(manifest.prefer_related_applications, false)
+
+  const sizes = (purpose) =>
+    manifest.icons.filter((icon) => icon.purpose === purpose).map((icon) => icon.sizes)
+  assert.deepEqual(sizes('any').sort(), ['192x192', '512x512'])
+  assert.deepEqual(sizes('maskable').sort(), ['192x192', '512x512'])
+
+  for (const icon of manifest.icons) {
+    const iconResponse = await get(icon.src)
+    assert.equal(iconResponse.status, 200, icon.src)
+    assert.match(String(iconResponse.headers.get('content-type')), /image\/png/)
+    const actual = pngSize(await iconResponse.arrayBuffer())
+    assert.equal(`${actual.width}x${actual.height}`, icon.sizes, icon.src)
+  }
+})
+
+test('the service worker caches the shell, not anybody\'s pages', async () => {
+  const response = await get('/sw.js')
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'no-cache')
+  const sw = await response.text()
+
+  assert.equal(sw.includes('__DISCOVARR_VERSION__'), false)
+  assert.equal(sw.includes('__STYLES_VERSION__'), false)
+  assert.match(sw, new RegExp(`discovarr-${APP_VERSION.replaceAll('.', '\\.')}`))
+  const css = readFileSync(join(projectRoot, 'public', 'styles.css'))
+  const styles = createHash('sha256').update(css).digest('hex').slice(0, 10)
+  assert.match(sw, new RegExp(`styles\\.css\\?v=${styles}`))
+
+  assert.match(sw, /addEventListener\('install'/)
+  assert.match(sw, /addEventListener\('activate'/)
+  assert.match(sw, /addEventListener\('fetch'/)
+  assert.match(sw, /addEventListener\('push'/)
+  assert.match(sw, /addEventListener\('notificationclick'/)
+  assert.match(sw, /caches\.delete/)
+  assert.match(sw, /path\.startsWith\('\/api\/'\)/)
+  assert.match(sw, /path\.startsWith\('\/img\/'\)/)
+  assert.match(sw, /request\.mode === 'navigate'/)
+  assert.match(sw, /Do not store/)
+  assert.match(sw, /offline\.html/)
+
+  for (const path of [
+    '/offline.html',
+    '/styles.css',
+    '/icons/icon-192.png',
+    '/icons/icon-512.png',
+    '/icons/icon-maskable-192.png',
+    '/icons/icon-maskable-512.png',
+    '/icons/apple-touch-midnight.png',
+    '/favicon-midnight.png',
+  ]) {
+    assert.match(sw, new RegExp(path.slice(1).replaceAll('.', '\\.')))
+    assert.equal((await get(path)).status, 200, path)
+  }
+
+  const offline = await (await get('/offline.html')).text()
+  assert.match(offline, /You're offline/)
+  assert.match(offline, /<form method="get">/)
+  assert.match(offline, /Try again/)
+  const apple = pngSize(await (await get('/icons/apple-touch-midnight.png')).arrayBuffer())
+  assert.deepEqual(apple, { width: 180, height: 180 })
+})
+
+test('the account page explains how to install on a phone', async () => {
+  const html = await (await get('/account', { cookie })).text()
+  assert.match(html, /Add to your home screen/)
+  assert.match(html, /Add to Home Screen/)
+  assert.match(html, /Install app/)
+  assert.match(html, /iOS 16\.4/)
+  assert.match(html, /HTTPS/)
 })
 
 test('tables carry a label for every value once they stack', async () => {
@@ -227,6 +323,11 @@ test('the phone rules exist in the stylesheet', async () => {
   assert.match(css, /@media \(pointer: coarse\)/)
   assert.match(css, /font-size: 16px/)
   assert.match(css, /min-height: 44px/)
+  assert.match(css, /@media \(pointer: coarse\) \{[\s\S]*?\.bell \{[^}]*width: 44px/)
+  assert.match(css, /calc\(14px \+ env\(safe-area-inset-top\)\)/)
+  assert.match(css, /calc\(10px \+ env\(safe-area-inset-top\)\)/)
+  assert.match(css, /env\(safe-area-inset-left\)/)
+  assert.match(css, /\.install-hint\[hidden\] \{ display: none; \}/)
   assert.match(css, /\.table thead\s*\{\s*display: none/)
   assert.match(css, /\.cal-grid\s*\{\s*display: none/)
 })
