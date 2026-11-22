@@ -1017,6 +1017,62 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         })
       })()
 
+      // A database snapshot is binary, so it is posted as the body of one
+      // request instead of being pasted into a field the way settings are.
+      ;(function () {
+        var form = document.querySelector('[data-db-restore-form]')
+        if (!form) return
+        var input = form.querySelector('[data-db-restore-file]')
+        var confirmInput = form.querySelector('[data-db-restore-confirm]')
+        var status = form.querySelector('[data-db-restore-status]')
+        if (!input || !confirmInput) return
+
+        var say = function (text) {
+          if (!status) return
+          status.textContent = text
+          status.hidden = false
+        }
+
+        form.addEventListener('submit', function (event) {
+          event.preventDefault()
+          var file = input.files && input.files[0]
+          if (!file) {
+            say('Choose a snapshot file first.')
+            return
+          }
+          if (confirmInput.value.trim().toUpperCase() !== 'RESTORE') {
+            say('Type RESTORE to confirm.')
+            return
+          }
+
+          say('Uploading ' + file.name + '…')
+          fetch('/settings/backup/restore', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'content-type': 'application/vnd.sqlite3',
+              'x-restore-confirm': 'RESTORE'
+            },
+            body: file
+          })
+            .then(function (response) {
+              return response
+                .json()
+                .catch(function () { return {} })
+                .then(function (body) {
+                  if (!response.ok) throw new Error(body.error || 'The restore failed.')
+                  return body
+                })
+            })
+            .then(function (body) {
+              window.location.href =
+                '/settings?tab=tasks&notice=' +
+                encodeURIComponent('Restored ' + (body.source || 'the snapshot') + ' over the database.')
+            })
+            .catch(function (error) { say(error.message) })
+        })
+      })()
+
       // Episode lists load the first time a season is opened.
       document.querySelectorAll('details[data-episodes]').forEach(function (block) {
         block.addEventListener('toggle', function () {

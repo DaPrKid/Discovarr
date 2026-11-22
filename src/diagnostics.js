@@ -38,6 +38,9 @@ export function diagnosticsSnapshot() {
       file: config.databaseFile,
       bytes: fileSize(config.databaseFile),
       walBytes: fileSize(`${config.databaseFile}-wal`),
+      // Which migration the file is on, so a support question starts with the
+      // same number on both sides.
+      schema: store.schemaVersion(),
     },
     cache: cacheStats(),
     counts: {

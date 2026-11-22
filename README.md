@@ -204,13 +204,20 @@ anonymous pull on every release, so the install cannot break silently.
   progress and an estimated finish.
 - **A real backup** — Settings → Tasks downloads the SQLite database itself
   (`VACUUM INTO`, so it is consistent while the app is running and needs no
-  `-wal` files).
+  `-wal` files). The same page keeps snapshots on disk: one every 7 days by
+  default, the newest 7 kept, each one downloadable, and any of them — or a file
+  from another machine — can be restored in place. A restore saves the database
+  it replaces first, and leaves sign-in sessions alone so nobody is signed out.
+  Treat a snapshot like a password: it holds the API keys and the SMTP password.
 - **Trailers** — a title page links to its YouTube trailer when TMDB has one.
 - **API tokens** — create a named token in Settings → API tokens and call `/api/v1/…` with
   `Authorization: Bearer <token>`. The token is shown once, stored only as a
   SHA-256 hash, records its last use, and can be revoked without touching your
   password or sessions. A feed link is its own token: it reads the calendar and
-  nothing else.
+  nothing else. A **TV token** is the middle case, for the Android TV app and
+  anything else that keeps its credential in plain storage: it browses, searches
+  and files requests, but cannot change the account, its password, its users or
+  the settings.
 - **Person pages** — every name in a title's cast opens that person's biography,
   dates and the full list of films and series they appear in.
 - **Genre shelves** — the genre pages lead with titles from the busiest
@@ -357,6 +364,8 @@ created with `umask 002` so the group can write them.
 | `HOST` | `0.0.0.0` | Listen address |
 | `DATABASE_FILE` | `./data/discovarr.db` | SQLite file (image: `/data/discovarr.db`) |
 | `IMAGE_CACHE_DIR` | `<database dir>/images` | TMDB artwork cache |
+| `BACKUP_DIR` | `<database dir>/backups` | Where the scheduled database snapshots are written |
+| `RESTORE_MAX_MB` | `512` | Largest snapshot accepted by the restore upload |
 | `ADMIN_PASSWORD` | unset | Bootstrap only: create the first administrator at boot instead of using `/setup` |
 | `ADMIN_EMAIL` | `admin@discovarr.local` | Bootstrap admin email (used with `ADMIN_PASSWORD`) |
 | `ADMIN_USERNAME` | `admin` | Bootstrap admin username (used with `ADMIN_PASSWORD`) |
@@ -383,7 +392,9 @@ Session cookie from `POST /api/v1/auth/login`, or a personal token from
 Account → API tokens sent as `Authorization: Bearer <token>`; `filter`/`page`/`take` where
 relevant. Admin-only endpoints require the matching permission. The iCalendar
 feed at `/calendar.ics` takes the same header, or its own calendar-scoped token
-as `?token=` for clients that cannot send one.
+as `?token=` for clients that cannot send one. A TV token authenticates the same
+way but is refused by `POST /auth/password`, `PATCH /users/:id`,
+`PUT /settings` and `POST /sync`, which change the account rather than use it.
 
 | Method | Path | Notes |
 | --- | --- | --- |

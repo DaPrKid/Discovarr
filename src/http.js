@@ -145,6 +145,24 @@ export async function readBody(req) {
 }
 
 /**
+ * The whole body as bytes, for the one upload that is not a form: a database
+ * snapshot restored from a file. The limit is passed in because that endpoint
+ * takes a far larger payload than any form on the site.
+ */
+export async function readRawBody(req, limit = MAX_BODY_BYTES) {
+  const chunks = []
+  let size = 0
+
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > limit) throw new HttpError(413, `That file is larger than ${Math.round(limit / (1024 * 1024))} MB`)
+    chunks.push(chunk)
+  }
+
+  return Buffer.concat(chunks)
+}
+
+/**
  * Blocks cross-site form posts and fetches. Non-browser clients (curl, scripts)
  * send no Origin header and rely on the session cookie instead.
  */

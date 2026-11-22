@@ -11,6 +11,9 @@ export const config = {
   port: Number(process.env.PORT ?? 5057),
   host: process.env.HOST ?? '0.0.0.0',
   databaseFile,
+  // Automatic snapshots live beside the database unless another volume is
+  // mounted for them.
+  backupDir: process.env.BACKUP_DIR ?? join(dirname(databaseFile), 'backups'),
   // TMDB artwork is cached next to the database so it survives restarts.
   imageCacheDir: process.env.IMAGE_CACHE_DIR ?? join(dirname(databaseFile), 'images'),
   // Optional hands-off bootstrap. When ADMIN_PASSWORD is set the first
@@ -36,6 +39,9 @@ export const config = {
   plexDiscoverBase: (process.env.PLEX_DISCOVER_BASE ?? 'https://discover.provider.plex.tv').replace(/\/+$/, ''),
   loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? 8),
   loginRateWindowMs: Number(process.env.LOGIN_RATE_WINDOW_MINUTES ?? 15) * 60 * 1000,
+  // A restored database is uploaded as one body, so it is allowed to be much
+  // larger than the megabyte a form post may carry.
+  restoreMaxBytes: Number(process.env.RESTORE_MAX_MB ?? 512) * 1024 * 1024,
   // Only believe X-Forwarded-For when a proxy of ours sets it. Otherwise any
   // client can invent an address and take a fresh budget for every guess.
   trustProxy: bool(process.env.TRUST_PROXY, false),

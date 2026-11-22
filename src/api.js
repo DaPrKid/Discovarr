@@ -2,6 +2,7 @@ import {
   clearLoginAttempts,
   clearedSessionCookie,
   createSession,
+  credentialScope,
   currentUser,
   endSession,
   hasPermission,
@@ -12,7 +13,7 @@ import {
   sessionCookie,
   sessionToken,
 } from './auth.js'
-import { APP_VERSION, MediaType, Permission } from './constants.js'
+import { APP_VERSION, MediaType, Permission, TokenScope } from './constants.js'
 import {
   approveRequest,
   changePassword,
@@ -40,6 +41,17 @@ import { syncLibrary, syncState } from './sync.js'
 
 function parseType(value) {
   return value === MediaType.MOVIE || value === MediaType.TV ? value : 'all'
+}
+
+/**
+ * A TV token lives in a device's plain storage, so it is deliberately narrower
+ * than an account: it browses and files requests, but the handful of routes
+ * below change the account itself and are refused.
+ */
+function requireAccountCredential(req) {
+  if (credentialScope(req) === TokenScope.TV) {
+    throw new HttpError(403, 'A TV token can browse and request, but not change the account')
+  }
 }
 
 function publicUser(user) {
@@ -112,6 +124,7 @@ export function registerApiRoutes(router) {
   })
 
   router.post('/api/v1/auth/password', async ({ req, res }) => {
+    requireAccountCredential(req)
     const user = requireUser(req)
     const body = await readBody(req)
 
@@ -212,6 +225,7 @@ export function registerApiRoutes(router) {
   })
 
   router.post('/api/v1/sync', async ({ req, res }) => {
+    requireAccountCredential(req)
     const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'Syncing requires permission')
     sendJson(res, 200, await syncLibrary({ actorId: actor.id }))
   })
@@ -222,6 +236,7 @@ export function registerApiRoutes(router) {
   })
 
   router.patch('/api/v1/users/:id', async ({ req, res, params }) => {
+    requireAccountCredential(req)
     const actor = requirePermission(req, Permission.MANAGE_USERS, 'Managing users requires permission')
     const body = await readBody(req)
     const updated = updateUserByAdmin(
@@ -247,6 +262,7 @@ export function registerApiRoutes(router) {
   })
 
   router.put('/api/v1/settings', async ({ req, res }) => {
+    requireAccountCredential(req)
     const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'Changing settings requires permission')
     const body = await readBody(req)
 

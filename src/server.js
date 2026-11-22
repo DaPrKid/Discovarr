@@ -4,6 +4,7 @@ import { dirname, extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { registerApiRoutes } from './api.js'
+import { runScheduledBackup } from './backup.js'
 import { currentUser } from './auth.js'
 import { config } from './config.js'
 import { countUsers, deleteExpiredSessions, getSettings, pruneHistory } from './db.js'
@@ -153,6 +154,17 @@ setInterval(() => {
 startSyncScheduler()
 startRetryQueue()
 
+// The snapshot schedule is checked hourly rather than slept for days, so a
+// container that restarts often still takes one when it is due.
+setInterval(() => {
+  try {
+    const result = runScheduledBackup()
+    if (!result.skipped) console.log(`[discovarr] wrote database snapshot ${result.name}`)
+  } catch (error) {
+    console.warn(`[discovarr] backup failed: ${error.message}`)
+  }
+}, 60 * 60 * 1000).unref()
+
 // Artwork is cached forever otherwise. Six-hourly is often enough to keep an
 // install in check without competing with a sync for the disk.
 setInterval(() => {
@@ -178,6 +190,7 @@ server.listen(config.port, config.host, () => {
   console.log(`[discovarr] listening on http://${config.host}:${config.port}`)
   console.log(`[discovarr] database: ${config.databaseFile}`)
   console.log(`[discovarr] image cache: ${config.imageCacheDir}`)
+  console.log(`[discovarr] database snapshots: ${config.backupDir}`)
 
   if (config.demoAutoLoginEmail) {
     console.warn(

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { config, sessionTtlMs } from './config.js'
 import {
-  TokenScope, Role } from './constants.js'
+  API_TOKEN_SCOPES, TokenScope, Role } from './constants.js'
 import {
   deleteOtherSessions,
   deleteSession,
@@ -115,22 +115,40 @@ export function hashApiToken(token) {
 /**
  * Resolves a plaintext personal token to its user, or null. The scope is part
  * of the lookup, so a calendar feed token cannot authenticate the API and an
- * account token cannot be used as a subscription link.
+ * account token cannot be used as a subscription link. `scope` may be a list
+ * when more than one kind of token is accepted.
  */
 export function userForApiToken(token, { scope = TokenScope.API } = {}) {
   if (!token) return null
 
+  const allowed = Array.isArray(scope) ? scope : [scope]
   const record = findApiToken(hashApiToken(token))
-  if (!record || record.scope !== scope) return null
+  if (!record || !allowed.includes(record.scope)) return null
 
   touchApiToken(record.id)
   return findUserById(record.user_id)
 }
 
-/** Personal API tokens authenticate scripts and home automation. */
-function bearerUser(req) {
+function bearerToken(req) {
   const match = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization ?? '').trim())
-  return match ? userForApiToken(match[1]) : null
+  return match ? match[1] : null
+}
+
+/** Personal API and TV tokens authenticate scripts, devices and home automation. */
+function bearerUser(req) {
+  const token = bearerToken(req)
+  return token ? userForApiToken(token, { scope: API_TOKEN_SCOPES }) : null
+}
+
+/**
+ * Which kind of credential signed this request in, or null for a session.
+ * A TV token is narrowed on the few routes that change the account itself.
+ */
+export function credentialScope(req) {
+  const token = bearerToken(req)
+  if (!token) return null
+
+  return findApiToken(hashApiToken(token))?.scope ?? null
 }
 
 export function currentUser(req) {

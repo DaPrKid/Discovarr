@@ -1,4 +1,5 @@
 import { saveServiceSelection } from './core.js'
+import { backupState } from './backup.js'
 import {
   MIN_PASSWORD_LENGTH,
   PERMISSION_LABELS,
@@ -94,6 +95,12 @@ function settingsTabs(tab) {
   </form>`
 }
 
+const TOKEN_KINDS = Object.freeze({
+  [TokenScope.API]: 'API',
+  [TokenScope.CALENDAR]: 'Calendar',
+  [TokenScope.TV]: 'TV',
+})
+
 export function tokensPanel({ tokens, newToken, newTokenScope = null }) {
   return `<section class="panel">
       <h2 style="margin: 0">Your API tokens</h2>
@@ -119,7 +126,7 @@ export function tokensPanel({ tokens, newToken, newTokenScope = null }) {
                 .map(
                   (token) => `<tr>
                     <td data-label="Name">${escapeHtml(token.name)}</td>
-                    <td data-label="Kind">${token.scope === TokenScope.CALENDAR ? 'Calendar' : 'API'}</td>
+                    <td data-label="Kind">${escapeHtml(TOKEN_KINDS[token.scope] ?? token.scope)}</td>
                     <td data-label="Token"><code>${escapeHtml(token.prefix)}…</code></td>
                     <td data-label="Created">${escapeHtml(token.createdAt.slice(0, 10))}</td>
                     <td data-label="Last used">${token.lastUsedAt ? escapeHtml(token.lastUsedAt.slice(0, 16).replace('T', ' ')) : 'never'}</td>
@@ -139,6 +146,13 @@ export function tokensPanel({ tokens, newToken, newTokenScope = null }) {
         <div>
           <button class="btn btn-sm btn-ghost" type="submit">Create calendar link</button>
           <p class="muted small">A read-only feed for a phone or calendar app. It works only on <code>/calendar.ics</code>, so treat the link as a subscription, never as a password.</p>
+        </div>
+      </form>
+      <form method="post" action="/settings/tokens" class="row">
+        <input type="hidden" name="scope" value="${TokenScope.TV}" />
+        <div>
+          <button class="btn btn-sm btn-ghost" type="submit">Create TV token</button>
+          <p class="muted small">For the Android TV app and anything else that keeps its credential in plain storage. It browses, searches and files requests, but cannot change the account it belongs to, so a token lifted off a TV box is not a way into the account.</p>
         </div>
       </form>
     </section>`
@@ -598,8 +612,28 @@ export function settingsBody({
       <button class="btn btn-sm btn-ghost" type="submit">Prune cache</button>
     </form>`
 
+  const backup = backupState()
+  const backupRows = backup.backups.length
+    ? `<table class="table">
+        <thead><tr><th>Snapshot</th><th>Size</th><th>Taken</th><th></th></tr></thead>
+        <tbody>${backup.backups
+          .map(
+            (entry) => `<tr>
+              <td data-label="Snapshot"><code>${escapeHtml(entry.name)}</code>${
+                entry.automatic ? ' <span class="muted small">automatic</span>' : ''
+              }</td>
+              <td data-label="Size">${formatBytes(entry.bytes)}</td>
+              <td data-label="Taken">${escapeHtml(entry.createdAt.slice(0, 16).replace('T', ' '))}</td>
+              <td><a class="btn btn-sm btn-ghost" href="/settings/backup/${encodeURIComponent(entry.name)}">Download</a></td>
+            </tr>`
+          )
+          .join('')}</tbody>
+      </table>`
+    : '<p class="muted small">No snapshots yet. The first automatic one is written within an hour of the next start.</p>'
+
   const backupPanel = `<section class="panel">
       <h2 style="margin: 0">Backup and restore</h2>
+      <p class="muted small">A database snapshot is the whole install: accounts, requests, settings, API keys and tokens. Treat a copy the way you treat a password.</p>
       <p class="muted small">Every setting as one JSON file, so a move to another machine does not mean retyping keys.</p>
       <p><a class="btn btn-sm" href="/settings/export">Download settings file</a>
         <a class="btn btn-sm btn-ghost" href="/settings/export?secrets=1">Download with secrets</a></p>
@@ -614,6 +648,67 @@ export function settingsBody({
         <button class="btn btn-sm btn-ghost" type="submit">Restore settings</button>
         <p class="muted small">Only known settings are written and unknown keys are ignored. Blank secrets are skipped, so a redacted file cannot wipe keys that are already saved.</p>
       </form>
+    </section>
+
+    <section class="panel">
+      <h2 style="margin: 0">Database snapshots</h2>
+      <p class="muted small">Written next to the database in <code>${escapeHtml(backup.directory)}</code>, by SQLite itself, so a copy is consistent while the app is running.</p>
+      <form method="post" action="/settings" class="stack">
+        <input type="hidden" name="settingsSection" value="backup" />
+        <input type="hidden" name="settingsTab" value="tasks" />
+        <div class="row-grid">
+          <label>Take one every (days, 0 = never)
+            <input type="number" name="backupIntervalDays" min="0" value="${escapeHtml(String(backup.intervalDays))}" />
+          </label>
+          <label>Snapshots to keep
+            <input type="number" name="backupKeep" min="1" max="365" value="${escapeHtml(String(backup.keep))}" />
+          </label>
+        </div>
+        <p class="muted small">Last automatic snapshot: ${
+          backup.lastRun ? escapeHtml(backup.lastRun.replace('T', ' ').slice(0, 19)) : 'never'
+        }${
+          backup.nextDue ? ` · next due ${escapeHtml(backup.nextDue.replace('T', ' ').slice(0, 16))}` : ''
+        }</p>
+        <button class="btn btn-sm" type="submit">Save backup schedule</button>
+      </form>
+
+      <form method="post" action="/settings/backup/now" class="row">
+        <button class="btn btn-sm btn-ghost" type="submit">Back up now</button>
+      </form>
+
+      <h3>Snapshots on this server</h3>
+      ${backupRows}
+      ${
+        backup.backups.length
+          ? `<form method="post" action="/settings/backup/restore" class="stack">
+              <label>Replace this install with
+                <select name="name">${backup.backups
+                  .map(
+                    (entry) =>
+                      `<option value="${escapeHtml(entry.name)}">${escapeHtml(entry.name)} · ${escapeHtml(
+                        entry.createdAt.slice(0, 16).replace('T', ' ')
+                      )}</option>`
+                  )
+                  .join('')}</select>
+              </label>
+              <label>Type <strong>RESTORE</strong> to confirm
+                <input type="text" name="confirm" autocomplete="off" placeholder="RESTORE" />
+              </label>
+              <button class="btn btn-sm btn-danger" type="submit">Restore this snapshot</button>
+              <p class="muted small">Accounts, requests, settings and keys are replaced by the snapshot and the current database is saved first. Sign-in sessions are left alone, so nobody is signed out by a restore.</p>
+            </form>`
+          : ''
+      }
+      <form method="post" action="/settings/backup/restore" class="stack" data-db-restore-form>
+        <label class="file-pick">Or restore a snapshot from this computer
+          <input type="file" accept=".sqlite,application/vnd.sqlite3" data-db-restore-file />
+        </label>
+        <label>Type <strong>RESTORE</strong> to confirm
+          <input type="text" autocomplete="off" placeholder="RESTORE" data-db-restore-confirm />
+        </label>
+        <button class="btn btn-sm btn-ghost" type="submit">Upload and restore</button>
+        <p class="muted small" data-db-restore-status hidden></p>
+      </form>
     </section>`
 
   const diagnosticsPanel = `<section class="panel">
@@ -622,7 +717,7 @@ export function settingsBody({
         <tbody>
           <tr><th>Version</th><td>${escapeHtml(diag.version)} · Node ${escapeHtml(diag.node)} · ${escapeHtml(diag.platform)}</td></tr>
           <tr><th>Uptime</th><td>${escapeHtml(formatDuration(diag.uptimeSeconds))}</td></tr>
-          <tr><th>Database</th><td>${formatBytes(diag.database.bytes)} (write-ahead log ${formatBytes(diag.database.walBytes)})</td></tr>
+          <tr><th>Database</th><td>${formatBytes(diag.database.bytes)} (write-ahead log ${formatBytes(diag.database.walBytes)}) · schema ${escapeHtml(String(diag.database.schema))}</td></tr>
           <tr><th>Artwork cache</th><td>${diag.cache.files} file(s), ${formatBytes(diag.cache.bytes)}</td></tr>
           <tr><th>Catalog</th><td>${diag.counts.media} title(s) · ${diag.counts.users} user(s) · ${diag.counts.sessions} active session(s)</td></tr>
           <tr><th>Requests</th><td>${diag.counts.pending} pending · ${diag.counts.approved} approved · ${diag.counts.failed} failed · ${diag.counts.completed} completed · ${diag.counts.declined} declined</td></tr>
@@ -826,6 +921,12 @@ export function settingsFromBody(body) {
   if (section === 'tasks') {
     if (body.syncIntervalMinutes !== undefined) input.syncIntervalMinutes = body.syncIntervalMinutes
     if (body.maxAttempts !== undefined) input.maxAttempts = body.maxAttempts
+  }
+
+  if (section === 'backup') {
+    input.backup = {}
+    if (body.backupIntervalDays !== undefined) input.backup.intervalDays = body.backupIntervalDays
+    if (body.backupKeep !== undefined) input.backup.keep = body.backupKeep
   }
 
   if (section === 'cache') {

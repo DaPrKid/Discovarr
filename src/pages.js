@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { backupPath, readBackup, restoreFromBytes, restoreFromFile, runScheduledBackup } from './backup.js'
 import { clearLoginAttempts, clearedSessionCookie, createSession, currentUser, endSession, hashApiToken, hasPermission, recordFailedLogin, requirePermission, requireUser, sessionCookie, sessionToken, userForApiToken } from './auth.js'
 import { buildReleaseCalendar } from './ics.js'
 import { config } from './config.js'
@@ -38,7 +39,7 @@ import {
   updateUserByAdmin,
 } from './core.js'
 import * as store from './db.js'
-import { HttpError, parseCookies, readBody, redirect, sendHtml, sendJson } from './http.js'
+import { HttpError, parseCookies, readBody, readRawBody, redirect, sendHtml, sendJson } from './http.js'
 import { verifyPassword } from './passwords.js'
 import {
   createPlexPin,
@@ -3244,10 +3245,10 @@ export function registerPageRoutes(router) {
   router.post('/settings/tokens', async ({ req, res }) => {
     const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot change settings')
     const body = await readBody(req)
-    const scope = body.scope === TokenScope.CALENDAR ? TokenScope.CALENDAR : TokenScope.API
+    const scope = [TokenScope.CALENDAR, TokenScope.TV].includes(body.scope) ? body.scope : TokenScope.API
     const name =
       String(body.name ?? '').trim().slice(0, 60) ||
-      (scope === TokenScope.CALENDAR ? 'Calendar feed' : 'API token')
+      (scope === TokenScope.CALENDAR ? 'Calendar feed' : scope === TokenScope.TV ? 'TV token' : 'API token')
 
     const token = `dcv_${randomBytes(24).toString('base64url')}`
     store.createApiToken({
@@ -3330,6 +3331,85 @@ export function registerPageRoutes(router) {
       'content-length': snapshot.length,
     })
     res.end(snapshot)
+  })
+
+  // One of the snapshots already on the server, by name. The name is checked
+  // against the pattern the app writes, so it cannot point anywhere else.
+  router.get('/settings/backup/:name', ({ req, res, params }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot download a backup')
+    const backup = readBackup(params.name)
+
+    if (!backup) throw new HttpError(404, 'That snapshot is not on this server')
+
+    store.recordAudit(actor.id, 'settings.backup_downloaded', `${params.name} (${backup.bytes.length} bytes)`)
+
+    res.writeHead(200, {
+      'content-type': 'application/vnd.sqlite3',
+      'content-disposition': `attachment; filename="${params.name}"`,
+      'cache-control': 'no-store',
+      'content-length': backup.bytes.length,
+    })
+    res.end(backup.bytes)
+  })
+
+  router.post('/settings/backup/now', async ({ req, res }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot take a backup')
+
+    try {
+      const result = runScheduledBackup({ force: true, actorId: actor.id })
+      redirect(res, withMessage('/settings?tab=tasks', 'notice', `Snapshot ${result.name} written`))
+    } catch (error) {
+      redirect(res, withMessage('/settings?tab=tasks', 'err', error.message))
+    }
+  })
+
+  /**
+   * Two ways in: a plain form that names a snapshot already on the server, and
+   * an upload, which arrives as the raw file because a browser cannot put a
+   * multi-megabyte binary into a form field.
+   */
+  router.post('/settings/backup/restore', async ({ req, res }) => {
+    const actor = requirePermission(req, Permission.MANAGE_SETTINGS, 'You cannot restore a backup')
+    const type = String(req.headers['content-type'] ?? '')
+    const uploaded = type.includes('application/vnd.sqlite3') || type.includes('application/octet-stream')
+
+    if (uploaded) {
+      try {
+        if (String(req.headers['x-restore-confirm'] ?? '') !== 'RESTORE') {
+          throw new HttpError(400, 'Type RESTORE to confirm')
+        }
+
+        const bytes = await readRawBody(req, config.restoreMaxBytes)
+        const result = restoreFromBytes(bytes, { actorId: actor.id })
+        sendJson(res, 200, { ok: true, source: result.source, safety: result.safety })
+      } catch (error) {
+        const status = error instanceof HttpError ? error.status : 400
+        sendJson(res, status >= 500 ? 500 : status, { error: error.message })
+      }
+      return
+    }
+
+    try {
+      const body = await readBody(req)
+      if (String(body.confirm ?? '').trim().toUpperCase() !== 'RESTORE') {
+        throw new HttpError(400, 'Type RESTORE to confirm that the database should be replaced')
+      }
+
+      const file = backupPath(body.name)
+      if (!file) throw new HttpError(404, 'That snapshot is not on this server')
+
+      const result = restoreFromFile(file, { actorId: actor.id })
+      redirect(
+        res,
+        withMessage(
+          '/settings?tab=tasks',
+          'notice',
+          `Restored ${result.source}. The database it replaced was saved first, as ${result.safety}.`
+        )
+      )
+    } catch (error) {
+      redirect(res, withMessage('/settings?tab=tasks', 'err', error.message))
+    }
   })
 
   /** The settings page in one call, so POST handlers can answer without a redirect. */

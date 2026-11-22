@@ -745,6 +745,18 @@ export function updateSettings(input, actor) {
     if (smtp.verifyTls !== undefined) entries['smtp.verifyTls'] = smtp.verifyTls ? 'true' : 'false'
   }
 
+  // The snapshot schedule. The interval is in days because a database copy is
+  // cheap to take but not free to store, and the keep count is what bounds the
+  // disk a year's worth of them can use.
+  if (input.backup) {
+    if (input.backup.intervalDays !== undefined) {
+      entries['backup.intervalDays'] = String(Math.min(365, Math.max(0, Number(input.backup.intervalDays ?? 7) || 0)))
+    }
+    if (input.backup.keep !== undefined) {
+      entries['backup.keep'] = String(Math.min(365, Math.max(1, Number(input.backup.keep ?? 7) || 7)))
+    }
+  }
+
   if (input.cache) {
     if (input.cache.maxMb !== undefined) {
       entries['cache.maxMb'] = String(Math.max(0, Number(input.cache.maxMb ?? 500) || 0))

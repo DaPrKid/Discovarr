@@ -138,6 +138,15 @@ export const SETTING_DEFAULTS = Object.freeze({
   'notifications.onAvailable': 'true',
   // A dispatch that failed: its own switch, so muting it keeps approvals on.
   'notifications.onFailure': 'true',
+
+  // Snapshots of the database itself, written next to it. Daily, a week of
+  // them, plus any taken by hand; 0 for the interval switches them off.
+  'backup.intervalDays': '7',
+  'backup.keep': '7',
+  // When the last automatic snapshot was written, in ISO form. Empty until the
+  // first one, which is also what makes a fresh install wait for the timer
+  // rather than back up during its first request.
+  'backup.lastRun': '',
 })
 
 export const ACTIVE_REQUEST_STATUSES = Object.freeze([
@@ -150,7 +159,14 @@ export const MIN_PASSWORD_LENGTH = 8
 
 // Calendar clients can only pass a credential in the URL, so a feed token is
 // scoped to /calendar.ics: a leaked subscription link is not an account key.
+// A TV token is for a device that keeps its credential in plain storage: it
+// browses and files requests, but cannot change the account it belongs to.
 export const TokenScope = Object.freeze({
   API: 'api',
   CALENDAR: 'calendar',
+  TV: 'tv',
 })
+
+// Scopes that sign a request in as its user over the normal API. A calendar
+// token is deliberately absent: it only ever opens the feed.
+export const API_TOKEN_SCOPES = Object.freeze([TokenScope.API, TokenScope.TV])

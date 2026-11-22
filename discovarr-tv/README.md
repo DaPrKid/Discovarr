@@ -174,6 +174,9 @@ who signed in.
 - Plain HTTP is accepted only for a private address (`10.x`, `192.168.x`,
   `172.16–31.x`, `localhost`, `*.local`). A server reached over the internet
   needs `https://`, because the session token would otherwise travel in the clear.
-- The session cookie or API token is kept in the app's private preferences, not
+- The session cookie or token is kept in the app's private preferences, not
   encrypted at rest. A rooted box, or an image taken of it, exposes that token;
   it can be revoked from Discovarr's API tokens page like any other session.
+  Pairing the box with a **TV token** (Settings → API tokens → Create TV token)
+  limits the damage: that token browses, searches and files requests, but cannot
+  change the account, its password, its users or the server's settings.

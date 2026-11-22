@@ -21,6 +21,12 @@ export const db = new DatabaseSync(config.databaseFile)
 db.exec('PRAGMA journal_mode = WAL;')
 db.exec('PRAGMA foreign_keys = ON;')
 
+// Read before the schema below creates anything: a brand-new file is set up in
+// one go rather than walked through every migration, and says so in the log.
+const freshDatabase = !db
+  .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+  .get()
+
 /**
  * Runs a group of statements as one unit. node:sqlite ships no transaction
  * helper, so multi-step writes could stop halfway and leave a title flagged
@@ -127,41 +133,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log (created_at);
 `)
 
-// Forward-only migrations for databases created by earlier versions.
-function ensureColumn(table, column, definition) {
-  const columns = db
-    .prepare(`PRAGMA table_info(${table})`)
+function columnNames(table, schema = 'main') {
+  return db
+    .prepare(`PRAGMA ${schema}.table_info(${table})`)
     .all()
     .map((row) => row.name)
-
-  if (!columns.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
 }
 
-ensureColumn('media', 'poster_path', 'TEXT')
-ensureColumn('media', 'backdrop_path', 'TEXT')
-ensureColumn('media', 'external_id', 'INTEGER')
-ensureColumn('media', 'synced_at', 'TEXT')
-ensureColumn('users', 'permissions', 'INTEGER NOT NULL DEFAULT 0')
-ensureColumn('users', 'quota_movie', 'INTEGER NOT NULL DEFAULT 0')
-ensureColumn('users', 'quota_tv', 'INTEGER NOT NULL DEFAULT 0')
-// The quality profile a request was filed with, so a dispatch honours the
-// choice made on the request form instead of always using the default.
-ensureColumn('requests', 'quality_profile_id', 'INTEGER')
-ensureColumn('requests', 'quality_profile_name', 'TEXT')
-// Background retry bookkeeping: how many dispatches have failed and when the
-// next automatic attempt is due.
-ensureColumn('requests', 'attempts', 'INTEGER NOT NULL DEFAULT 0')
-ensureColumn('requests', 'next_retry_at', 'TEXT')
-// Per-user notification choices: whether to also send email, and which events
-// the user cares about (1 approved, 2 declined, 4 available).
-ensureColumn('users', 'notify_email', 'INTEGER NOT NULL DEFAULT 0')
-ensureColumn('users', 'notify_events', 'INTEGER NOT NULL DEFAULT 7')
-// The plex.tv account a Plex sign-in is tied to, so later sign-ins reopen the
-// same Discovarr account instead of making another one.
-ensureColumn('users', 'plex_id', 'TEXT')
-// The look a person picked, kept on the account so every device they sign in on
-// paints the same theme instead of each browser remembering its own.
-ensureColumn('users', 'theme', 'TEXT')
+/** Adding a column only when an older database is missing it. */
+function ensureColumn(table, column, definition) {
+  if (!columnNames(table).includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS notifications (
@@ -176,7 +160,6 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id);
-  CREATE INDEX IF NOT EXISTS idx_requests_retry ON requests (status, next_retry_at);
 
   CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,9 +209,123 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions (user_id);
 `)
 
-// Tokens created before calendar feeds were scoped authenticate the API, so the
-// column starts at 'api' and older installs keep working unchanged.
-ensureColumn('api_tokens', 'scope', "TEXT NOT NULL DEFAULT 'api'")
+// ---------------------------------------------------------------------------
+// Schema migrations
+// ---------------------------------------------------------------------------
+
+/**
+ * The database carries its own schema number, so an install knows which steps
+ * it still needs rather than re-deriving that from a pile of column probes.
+ * Every step below also runs on a database from before this scheme existed
+ * (which reads as version 0) and is written to be safe to re-run, because those
+ * installs already hold most of these columns.
+ */
+export const SCHEMA_VERSION = 6
+
+const MIGRATIONS = [
+  [
+    1,
+    'artwork and sync columns',
+    () => {
+      ensureColumn('media', 'poster_path', 'TEXT')
+      ensureColumn('media', 'backdrop_path', 'TEXT')
+      ensureColumn('media', 'external_id', 'INTEGER')
+      ensureColumn('media', 'synced_at', 'TEXT')
+    },
+  ],
+  [
+    2,
+    'user permissions and quotas',
+    () => {
+      ensureColumn('users', 'permissions', 'INTEGER NOT NULL DEFAULT 0')
+      ensureColumn('users', 'quota_movie', 'INTEGER NOT NULL DEFAULT 0')
+      ensureColumn('users', 'quota_tv', 'INTEGER NOT NULL DEFAULT 0')
+    },
+  ],
+  [
+    3,
+    'request profiles and retry bookkeeping',
+    () => {
+      // The quality profile a request was filed with, so a dispatch honours the
+      // choice made on the request form instead of always using the default.
+      ensureColumn('requests', 'quality_profile_id', 'INTEGER')
+      ensureColumn('requests', 'quality_profile_name', 'TEXT')
+      // How many dispatches have failed and when the next attempt is due.
+      ensureColumn('requests', 'attempts', 'INTEGER NOT NULL DEFAULT 0')
+      ensureColumn('requests', 'next_retry_at', 'TEXT')
+      // The queue finds due retries by these two columns, so the index is
+      // created here, after the column it needs exists.
+      db.exec('CREATE INDEX IF NOT EXISTS idx_requests_retry ON requests (status, next_retry_at)')
+    },
+  ],
+  [
+    4,
+    'user notification choices and Plex identity',
+    () => {
+      // Whether to also send email, and which events matter (1 approved,
+      // 2 declined, 4 available).
+      ensureColumn('users', 'notify_email', 'INTEGER NOT NULL DEFAULT 0')
+      ensureColumn('users', 'notify_events', 'INTEGER NOT NULL DEFAULT 7')
+      // The plex.tv account a sign-in is tied to, so later sign-ins reopen the
+      // same Discovarr account instead of making another one.
+      ensureColumn('users', 'plex_id', 'TEXT')
+    },
+  ],
+  [
+    5,
+    'theme on the account',
+    () => {
+      // Kept on the account so every device paints the same theme instead of
+      // each browser remembering its own.
+      ensureColumn('users', 'theme', 'TEXT')
+    },
+  ],
+  [
+    6,
+    'token scope',
+    () => {
+      // Tokens created before calendar feeds were scoped authenticate the API,
+      // so the column starts at 'api' and older installs keep working.
+      ensureColumn('api_tokens', 'scope', "TEXT NOT NULL DEFAULT 'api'")
+    },
+  ],
+]
+
+export function schemaVersion() {
+  return Number(db.prepare('PRAGMA user_version').get().user_version ?? 0)
+}
+
+function applyMigrations() {
+  const current = schemaVersion()
+
+  if (current > SCHEMA_VERSION) {
+    console.warn(
+      `[discovarr] this database is schema ${current} but this version of Discovarr only knows ${SCHEMA_VERSION}; upgrade the app instead of running it against a newer database`
+    )
+    return
+  }
+
+  if (current === SCHEMA_VERSION) return
+
+  // Every step that is still missing runs in one transaction with the version
+  // bump, so a crash halfway leaves the database exactly where it started and
+  // the next start tries again.
+  withTransaction(() => {
+    for (const [version, , up] of MIGRATIONS) {
+      if (version > current) up()
+    }
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+  })
+
+  console.log(
+    freshDatabase
+      ? `[discovarr] created database schema ${SCHEMA_VERSION}`
+      : `[discovarr] migrated database from schema ${current} to ${SCHEMA_VERSION}`
+  )
+}
+
+applyMigrations()
+
 
 // Usernames identify an account on the sign-in form, so they are unique
 // regardless of case. Older databases may hold duplicates, which makes the
@@ -1084,12 +1181,98 @@ export function snapshotDatabase() {
   const target = join(tmpdir(), `discovarr-${randomBytes(6).toString('hex')}.sqlite`)
 
   try {
-    db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
-    db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`)
+    writeSnapshotTo(target)
     return readFileSync(target)
   } finally {
     rmSync(target, { force: true })
   }
+}
+
+/**
+ * The same consistent copy, written straight to a path. Used by the scheduled
+ * backups: a large library is compacted by SQLite itself and never has to be
+ * held in memory as one buffer.
+ */
+export function writeSnapshotTo(target) {
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  db.exec(`VACUUM INTO '${String(target).replace(/'/g, "''")}'`)
+}
+
+/**
+ * The tables a restore replaces. Sessions are deliberately absent: restoring an
+ * older snapshot must not hand out the sessions that were live when it was
+ * taken, nor sign out the administrator who is doing the restoring.
+ */
+export const RESTORE_TABLES = Object.freeze([
+  'users',
+  'media',
+  'seasons',
+  'requests',
+  'settings',
+  'notifications',
+  'watchlist',
+  'api_tokens',
+  'push_keys',
+  'push_subscriptions',
+  'audit_log',
+])
+
+/**
+ * Copies every table of an attached snapshot over the live one in a single
+ * transaction: either the whole database is the snapshot afterwards or nothing
+ * changed. Only columns both sides have are copied, so a snapshot from an older
+ * release still restores and the newer columns fall back to their defaults.
+ *
+ * The snapshot must already be attached as `restored`.
+ */
+export function copySnapshotIntoDatabase() {
+  return withTransaction(() => {
+    // Users and media are deleted before the rows that point at them come back,
+    // so foreign keys are checked once, at commit, instead of mid-way.
+    db.exec('PRAGMA defer_foreign_keys = ON')
+
+    // Sessions are not in the snapshot, but deleting the users cascades into
+    // them, so the live ones are set aside and put back below. Otherwise a
+    // restore would sign out everyone using the app at that moment.
+    db.exec('DROP TABLE IF EXISTS temp.restore_sessions')
+    db.exec('CREATE TEMP TABLE restore_sessions AS SELECT * FROM main.sessions')
+
+    const present = new Set(
+      db
+        .prepare("SELECT name FROM restored.sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => row.name)
+    )
+
+    const copied = {}
+
+    for (const table of RESTORE_TABLES) {
+      if (present.has(table)) db.exec(`DELETE FROM main.${table}`)
+    }
+
+    for (const table of RESTORE_TABLES) {
+      if (!present.has(table)) continue
+
+      const source = columnNames(table, 'restored')
+      const shared = columnNames(table).filter((column) => source.includes(column))
+      if (!shared.length) continue
+
+      const list = shared.map((column) => `"${column}"`).join(', ')
+      db.exec(`INSERT INTO main.${table} (${list}) SELECT ${list} FROM restored.${table}`)
+      copied[table] = shared.length
+    }
+
+    // A session whose account the snapshot does not carry cannot come back:
+    // there is nothing left to sign in to.
+    db.exec(`
+      INSERT OR IGNORE INTO main.sessions (token, user_id, created_at, expires_at)
+      SELECT token, user_id, created_at, expires_at FROM restore_sessions
+      WHERE user_id IN (SELECT id FROM main.users)
+    `)
+    db.exec('DROP TABLE temp.restore_sessions')
+
+    return copied
+  })
 }
 
 /**

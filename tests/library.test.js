@@ -316,6 +316,50 @@ test('the release calendar can be subscribed to with a scoped token', async () =
   assert.equal(anonymous.status, 401)
 })
 
+test('a TV token browses and requests but cannot change the account', async () => {
+  // The TV app keeps its credential in plain storage on the box, so the token
+  // it can be paired with is narrower than the account it belongs to.
+  const created = await postForm('/settings/tokens', { name: 'Living room', scope: 'tv' })
+  const html = await created.text()
+  const token = /New token, shown once: <code>(dcv_[^<]+)<\/code>/.exec(html)?.[1]
+  assert.ok(token, 'no TV token was issued')
+  assert.match(html, /<td data-label="Kind">TV<\/td>/, 'the token list should say it is a TV token')
+
+  const auth = { authorization: `Bearer ${token}` }
+
+  const me = await fetch(`${baseUrl}/api/v1/auth/me`, { headers: auth })
+  assert.equal(me.status, 200, 'a TV token signs the device in')
+  assert.equal((await me.json()).user.username, 'owner')
+
+  const catalog = await fetch(`${baseUrl}/api/v1/media?type=all`, { headers: auth })
+  assert.equal(catalog.status, 200, 'a TV token can read the catalogue')
+
+  const settings = await fetch(`${baseUrl}/api/v1/settings`, {
+    method: 'PUT',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ appName: 'Hijacked' }),
+  })
+  assert.equal(settings.status, 403, 'a TV token must not change settings')
+
+  const password = await fetch(`${baseUrl}/api/v1/auth/password`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ currentPassword: 'x', newPassword: 'y' }),
+  })
+  assert.equal(password.status, 403, 'a TV token must not change the password')
+
+  // An API token still does everything its account may do.
+  const apiCreated = await postForm('/settings/tokens', { name: 'Scripts' })
+  const api = /New token, shown once: <code>(dcv_[^<]+)<\/code>/.exec(await apiCreated.text())?.[1]
+  assert.ok(api)
+  const allowed = await fetch(`${baseUrl}/api/v1/settings`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${api}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ appName: 'Discovarr' }),
+  })
+  assert.equal(allowed.status, 200, 'an API token keeps its full access')
+})
+
 test('a wrong token is refused', async () => {
   const response = await fetch(`${baseUrl}/api/v1/auth/me`, {
     headers: { authorization: 'Bearer dcv_not-a-real-token' },
