@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer as createHttpServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -511,6 +511,68 @@ test('films filter by streaming service as well as by studio', async () => {
   assert.equal(queried.query.with_watch_providers, '8')
   assert.equal(queried.query.watch_region, 'US')
   assert.equal(queried.query.with_companies, '420')
+})
+
+test('the regional provider list is cached on disk, so a restart can still name services', async () => {
+  // Rendering the panel fetches TMDB's regional list. It has to be kept beside
+  // the database like the network export, or a restart while TMDB is down would
+  // fall back to the built-in ids and mislabel whatever was chosen.
+  await page('/networks')
+
+  const cacheFile = join(dataDir, 'brands', 'providers-US.json')
+  assert.ok(existsSync(cacheFile), 'the provider list is written under the data directory')
+
+  const cached = JSON.parse(readFileSync(cacheFile, 'utf8'))
+  assert.equal(cached.region, 'US')
+  assert.ok(cached.items.some((item) => item.name === 'Acme Stream'))
+
+  // A fresh process — a restart — with TMDB unreachable reads that file. Only
+  // the cache travels, so the built-in list is the only other answer it could
+  // give.
+  const readInFreshProcess = async (fetchedAt) => {
+    const scratch = mkdtempSync(join(tmpdir(), 'discovarr-providers-'))
+    mkdirSync(join(scratch, 'brands'), { recursive: true })
+    writeFileSync(join(scratch, 'brands', 'providers-US.json'), JSON.stringify({ ...cached, fetchedAt }))
+    const outFile = join(scratch, 'providers.json')
+
+    const probe = `
+      import { writeFileSync } from 'node:fs'
+      const { streamingProviders } = await import(${JSON.stringify(join(projectRoot, 'src/tmdb.js'))})
+      writeFileSync(${JSON.stringify(outFile)}, JSON.stringify(await streamingProviders()))
+    `
+
+    const child = spawn(process.execPath, ['--input-type=module', '-e', probe], {
+      env: {
+        ...process.env,
+        DATABASE_FILE: join(scratch, 'db.sqlite'),
+        TMDB_API_KEY: 'test-key',
+        TMDB_BASE_URL: 'http://127.0.0.1:1/3',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    let stderr = ''
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+
+    const exitCode = await new Promise((resolve) => child.on('exit', resolve))
+    assert.equal(exitCode, 0, `the probe process should read the cache, not crash: ${stderr}`)
+
+    const providers = JSON.parse(readFileSync(outFile, 'utf8'))
+    rmSync(scratch, { recursive: true, force: true })
+    return providers
+  }
+
+  const fresh = await readInFreshProcess(cached.fetchedAt)
+  assert.ok(fresh.some((item) => item.name === 'Acme Stream'), 'the cached regional list answers')
+  assert.ok(!fresh.some((item) => item.name === 'MUBI'), 'the built-in ids are not used over the cache')
+
+  // Past its refresh window and TMDB still down: the names must come from the
+  // file rather than from built-in ids, or a saved filter would be relabelled.
+  const stale = await readInFreshProcess(new Date(Date.now() - 30 * 86400000).toISOString())
+  assert.ok(stale.some((item) => item.name === 'Acme Stream'), 'a stale cache answers when TMDB is down')
+  assert.ok(!stale.some((item) => item.name === 'MUBI'), 'the built-in ids are not used over a stale cache')
 })
 
 test('a chosen service is named from the regional list, not a built-in id', async () => {

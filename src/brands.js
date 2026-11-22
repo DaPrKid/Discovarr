@@ -1,8 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 
-import { config } from './config.js'
+import { readBrandCache, writeBrandCache } from './brand-cache.js'
 import { networkOptions, providerOptions, streamingProviders, studioOptions, tmdbConfigured, tmdbGet } from './tmdb.js'
 
 /**
@@ -27,19 +25,6 @@ const EXPORT_BASE = (process.env.NETWORK_EXPORT_BASE ?? 'https://files.tmdb.org/
 let memory = null
 /** The last failed download, so a dead export host is not retried on every keystroke. */
 let lastAttempt = 0
-
-function catalogueFile() {
-  return join(dirname(config.databaseFile), 'brands', 'networks.json')
-}
-
-function readCatalogue() {
-  try {
-    const parsed = JSON.parse(readFileSync(catalogueFile(), 'utf8'))
-    return Array.isArray(parsed?.items) && parsed.items.length ? parsed : null
-  } catch {
-    return null
-  }
-}
 
 /**
  * The export is one JSON object per line. TMDB keeps a row per regional feed, so
@@ -91,12 +76,7 @@ async function downloadCatalogue() {
       const items = parseCatalogue(text)
       if (!items.length) continue
 
-      try {
-        mkdirSync(dirname(catalogueFile()), { recursive: true })
-        writeFileSync(catalogueFile(), JSON.stringify({ fetchedAt: new Date().toISOString(), items }))
-      } catch {
-        // A read-only data directory still leaves the list usable in memory.
-      }
+      writeBrandCache('networks', items)
 
       return items
     } catch {
@@ -111,7 +91,7 @@ async function downloadCatalogue() {
 export async function networkCatalogue() {
   if (memory && Date.now() - memory.at < TTL_MS) return memory.items
 
-  const stored = readCatalogue()
+  const stored = readBrandCache('networks')
   if (stored && Date.now() - Date.parse(stored.fetchedAt) < TTL_MS) {
     memory = { at: Date.now(), items: stored.items }
     return memory.items

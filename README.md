@@ -159,8 +159,10 @@ anonymous pull on every release, so the install cannot break silently.
   services in TMDB's own order for the region and searches the rest of that list
   as you type, so a smaller service is still one name away. A chosen service is
   named from that same list rather than a built-in id, so an id TMDB has since
-  reused cannot mislabel the filter; the built-in shortlist answers only when
-  TMDB cannot be reached.
+  reused cannot mislabel the filter. The list is refreshed daily and kept under
+  `/data/brands` like the network export, so a restart while TMDB is down still
+  names services from the region's own list; the built-in shortlist answers only
+  when there is no cache and no TMDB.
 - **A filter panel on the browse pages** — the right-hand rail of Networks,
   Studios and the genre pages toggles genres, studios, networks and streaming
   services, then narrows further by year, minimum rating, vote count, original

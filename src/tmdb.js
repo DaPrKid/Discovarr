@@ -1,3 +1,4 @@
+import { readBrandCache, writeBrandCache } from './brand-cache.js'
 import { config } from './config.js'
 import { getSetting } from './db.js'
 import { MediaType } from './constants.js'
@@ -344,7 +345,9 @@ export function studioOptions() {
  * row would only find the shows that service produced.
  *
  * This is the printed shortlist; the rest of the region's services are found by
- * searching TMDB's full provider list.
+ * searching TMDB's full provider list. The list itself is kept under
+ * `/data/brands`, so a restart while TMDB is down still names services from the
+ * region's own list instead of these ids.
  */
 const WATCH_PROVIDERS = Object.freeze([
   { id: 8, name: 'Netflix' },
@@ -377,10 +380,18 @@ export async function providerChoices(limit = 24) {
   return (await streamingProviders()).slice(0, limit)
 }
 
+// Refreshed daily, on disk as well as in memory: TMDB adds services by the day,
+// and a list that is a day old is still worth far more than built-in ids when
+// the next start cannot reach TMDB at all.
 const PROVIDER_TTL_MS = 24 * 60 * 60 * 1000
 let providerCache = null
 /** The last failed lookup, so an outage is not two requests per page load. */
 let providerAttempt = 0
+
+/** One file per region, so changing the region does not read another's list. */
+function providerCacheName(region) {
+  return `providers-${region}`
+}
 
 /** The streaming services printed before anyone searches. */
 export function providerOptions() {
@@ -395,11 +406,26 @@ export function providerOptions() {
 export async function streamingProviders() {
   if (providerCache && Date.now() - providerCache.at < PROVIDER_TTL_MS) return providerCache.items
 
-  if (Date.now() - providerAttempt < BROWSE_TTL_MS) return providerCache?.items ?? providerOptions()
+  const region = watchRegion()
+  const stored = readBrandCache(providerCacheName(region))
+  if (stored && Date.now() - Date.parse(stored.fetchedAt) < PROVIDER_TTL_MS) {
+    providerCache = { at: Date.now(), items: stored.items }
+    return providerCache.items
+  }
+
+  // A restart with TMDB down answers from yesterday's list rather than
+  // relabelling every service with a built-in id, so the file is used even when
+  // it is past its refresh window.
+  const useStored = () => {
+    if (!stored) return null
+    providerCache = { at: Date.now(), items: stored.items }
+    return stored.items
+  }
+
+  if (Date.now() - providerAttempt < BROWSE_TTL_MS) return useStored() ?? providerCache?.items ?? providerOptions()
   providerAttempt = Date.now()
 
   try {
-    const region = watchRegion()
     const [films, series] = await Promise.all([
       tmdbGet('/watch/providers/movie', { watch_region: region, language: 'en-US' }),
       tmdbGet('/watch/providers/tv', { watch_region: region, language: 'en-US' }),
@@ -420,12 +446,13 @@ export async function streamingProviders() {
       .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
       .map(({ id, name }) => ({ id, name }))
 
-    if (!items.length) return providerCache?.items ?? providerOptions()
+    if (!items.length) return useStored() ?? providerCache?.items ?? providerOptions()
 
+    writeBrandCache(providerCacheName(region), items, { region })
     providerCache = { at: Date.now(), items }
     return items
   } catch {
-    return providerCache?.items ?? providerOptions()
+    return useStored() ?? providerCache?.items ?? providerOptions()
   }
 }
 
