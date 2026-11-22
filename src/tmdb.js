@@ -367,6 +367,16 @@ const WATCH_PROVIDERS = Object.freeze([
   { id: 87, name: 'Acorn TV' },
 ])
 
+/**
+ * The services printed in the panel. TMDB has an order of its own for the
+ * region, with the household names first, so the shortlist follows that list
+ * instead of ids baked into the app that only cover the ones somebody thought
+ * of. The built-in list above is only the answer when TMDB cannot be reached.
+ */
+export async function providerChoices(limit = 24) {
+  return (await streamingProviders()).slice(0, limit)
+}
+
 const PROVIDER_TTL_MS = 24 * 60 * 60 * 1000
 let providerCache = null
 /** The last failed lookup, so an outage is not two requests per page load. */

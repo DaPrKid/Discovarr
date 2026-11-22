@@ -118,6 +118,7 @@ before(async () => {
           { provider_id: 8, provider_name: 'Netflix', display_priority: 1, display_priorities: { US: 1 } },
           { provider_id: 386, provider_name: 'Peacock Premium', display_priority: 4, display_priorities: { US: 4 } },
           { provider_id: 99, provider_name: 'Shudder', display_priority: 9, display_priorities: { US: 9 } },
+          { provider_id: 777, provider_name: 'Acme Stream', display_priority: 12, display_priorities: { US: 12 } },
         ],
       }
     } else if (url.pathname.startsWith('/3/discover/')) {
@@ -453,6 +454,13 @@ test('streaming services filter by provider, not by network', async () => {
   const index = await (await page('/networks')).text()
   assert.match(index, /name="provider" value="8"/)
   assert.doesNotMatch(index, /name="network" value="213"/, 'Netflix is a service, not a network')
+
+  // The printed shortlist is TMDB's own list for the region, in its order: a
+  // service the app has never heard of is offered, and a built-in id TMDB did
+  // not list is not.
+  assert.match(index, /name="provider" value="777"/)
+  assert.match(index, /Acme Stream/)
+  assert.doesNotMatch(index, /name="provider" value="11"/)
 
   // The title is named from the provider catalogue, and the query is a provider
   // one: the region is what makes "on Netflix" mean here rather than anywhere.

@@ -69,7 +69,7 @@ import {
   genreList,
   networkOptions,
   networkWithLogo,
-  providerOptions,
+  providerChoices,
   personDetails,
   recommendedTitles,
   searchPage,
@@ -1162,7 +1162,9 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
       filters,
       genres,
       networks: networkOptions(),
-      providers: providerOptions(),
+      // The printed services follow TMDB's order for the region, not a list of
+      // ids typed into the app.
+      providers: await providerChoices(),
       studios: studioOptions(),
       types,
       clearHref: basePath,
