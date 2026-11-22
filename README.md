@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.1.1
+docker pull ghcr.io/daprkid/discovarr:1.2.0
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,16 +62,20 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.1.1
+docker pull ghcr.io/daprkid/discovarr:1.2.0
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.1.1
+  ghcr.io/daprkid/discovarr:1.2.0
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
-migration, the release notes say so before this block.
+migration, the release notes say so before this block. **1.2.0** is the first
+one that upgrades the database itself: on first start it moves the schema to the
+current version in a single transaction, and refuses a database written by a
+newer release instead of half-reading it. Settings → Tasks → **Back up now**
+takes a copy of the old one first if you want it.
 
 ### First run
 
@@ -349,7 +353,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.1.1
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.0
 ```
 
 If you prefer to run the process without root at all, start the container with
