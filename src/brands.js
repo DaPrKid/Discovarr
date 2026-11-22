@@ -289,16 +289,23 @@ export async function brandNames(kind, ids) {
   const wanted = [...new Set((ids ?? []).map(String).filter(looksLikeId))]
   if (!wanted.length) return []
 
-  const known = new Map(curated(kind).map((item) => [String(item.id), item.name]))
+  const known = new Map()
+
+  // A streaming service is named by TMDB's regional list before any built-in
+  // id: provider ids get reused and retired, and a chosen service must not come
+  // back wearing another service's name. The built-in shortlist only fills the
+  // gaps left when TMDB cannot be reached.
+  if (kind === 'provider') {
+    for (const item of await streamingProviders().catch(() => [])) known.set(String(item.id), item.name)
+  }
+
+  for (const item of curated(kind)) {
+    if (!known.has(String(item.id))) known.set(String(item.id), item.name)
+  }
 
   const unknown = wanted.filter((id) => !known.has(id))
   if (unknown.length) {
-    const list =
-      kind === 'studio'
-        ? []
-        : kind === 'provider'
-          ? await streamingProviders().catch(() => [])
-          : await networkCatalogue().catch(() => [])
+    const list = kind === 'studio' || kind === 'provider' ? [] : await networkCatalogue().catch(() => [])
     for (const item of list) {
       if (!known.has(String(item.id))) known.set(String(item.id), item.name)
     }

@@ -119,6 +119,9 @@ before(async () => {
           { provider_id: 386, provider_name: 'Peacock Premium', display_priority: 4, display_priorities: { US: 4 } },
           { provider_id: 99, provider_name: 'Shudder', display_priority: 9, display_priorities: { US: 9 } },
           { provider_id: 777, provider_name: 'Acme Stream', display_priority: 12, display_priorities: { US: 12 } },
+          // The built-in list has 1899 as "Max"; TMDB is the authority on the
+          // name, so a chosen id must come back as TMDB spells it.
+          { provider_id: 1899, provider_name: 'Max (US)', display_priority: 2, display_priorities: { US: 2 } },
         ],
       }
     } else if (url.pathname.startsWith('/3/discover/')) {
@@ -488,6 +491,36 @@ test('streaming services filter by provider, not by network', async () => {
     await fetch(`${baseUrl}/search/brands?kind=network&q=netflix`, { headers: { cookie: adminCookie } })
   ).json()
   assert.deepEqual(found.items, [{ id: 8, name: 'Netflix', field: 'provider' }])
+})
+
+test('films filter by streaming service as well as by studio', async () => {
+  const studios = await (await page('/studios')).text()
+  assert.match(studios, /Streaming services/)
+  assert.match(studios, /name="provider" value="8"/)
+  assert.match(studios, /data-brand-remote="\/search\/brands\?kind=provider"/)
+
+  const genres = await (await page('/genres/movie')).text()
+  assert.match(genres, /Streaming services/)
+  assert.match(genres, /name="provider" value="8"/)
+
+  const netflixFilms = await (await page('/studios?studio=420&provider=8')).text()
+  assert.match(netflixFilms, /name="provider" value="8" checked/)
+  assert.match(netflixFilms, /<h1>Marvel Studios \+ Netflix<\/h1>/)
+
+  const queried = lastRequest('/3/discover/movie')
+  assert.equal(queried.query.with_watch_providers, '8')
+  assert.equal(queried.query.watch_region, 'US')
+  assert.equal(queried.query.with_companies, '420')
+})
+
+test('a chosen service is named from the regional list, not a built-in id', async () => {
+  // The built-in list calls provider 1899 "Max"; TMDB now lists it as
+  // "Max (US)". The tick and the heading have to follow TMDB, or a reused id
+  // would put the wrong name on the filter.
+  const marked = await (await page('/networks?provider=1899')).text()
+  assert.match(marked, /name="provider" value="1899" checked/)
+  assert.match(marked, /<h1>Max \(US\)<\/h1>/)
+  assert.doesNotMatch(marked, /<h1>Max<\/h1>/)
 })
 
 test('the studios page shares the rail and sends studio filters', async () => {

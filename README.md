@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.4
+docker pull ghcr.io/daprkid/discovarr:1.2.5
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,12 +62,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.4
+docker pull ghcr.io/daprkid/discovarr:1.2.5
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.2.4
+  ghcr.io/daprkid/discovarr:1.2.5
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -152,15 +152,19 @@ anonymous pull on every release, so the install cannot break silently.
   studios use its company search.
 - **Streaming services, not networks** — ABC and HBO are networks; Netflix,
   Prime Video, Disney+, Max, Shudder and the rest are streaming services, and
-  they get their own searchable group in the panel. A service filters by TMDB's
-  watch provider for the configured region, so it finds everything available to
-  stream there rather than only the shows that service produced. The panel
-  prints the services in TMDB's own order for the configured region and searches
-  the rest of that list as you type, so a smaller service is still one name
-  away; a built-in shortlist stands in only when TMDB cannot be reached.
+  they get their own searchable group on the Networks, Studios and genre pages,
+  so films filter by service as well. A service filters by TMDB's watch provider
+  for the configured region, so it finds everything available to stream there
+  rather than only the shows that service produced. The panel prints the
+  services in TMDB's own order for the region and searches the rest of that list
+  as you type, so a smaller service is still one name away. A chosen service is
+  named from that same list rather than a built-in id, so an id TMDB has since
+  reused cannot mislabel the filter; the built-in shortlist answers only when
+  TMDB cannot be reached.
 - **A filter panel on the browse pages** — the right-hand rail of Networks,
-  Studios and the genre pages toggles genres, studios and networks, then narrows
-  further by year, minimum rating, vote count, original language and sort order.
+  Studios and the genre pages toggles genres, studios, networks and streaming
+  services, then narrows further by year, minimum rating, vote count, original
+  language and sort order.
   It applies as soon as a toggle changes and still works as a plain GET form
   without JavaScript. Discover itself is the grid alone.
 - **Type switches** — Anime, Animation, Documentary, Reality, Kids and Talk show
@@ -366,7 +370,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.4
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.5
 ```
 
 If you prefer to run the process without root at all, start the container with

@@ -858,21 +858,19 @@ async function filterRail({
         )
 
   // Streaming services sit beside the networks they are not: a service is a
-  // watch provider, so its filter asks TMDB what is available on it here.
-  const streamingGroup =
-    mediaType === MediaType.TV
-      ? railGroup(
-          'Streaming services',
-          filters.providers.length,
-          filters.providers.length > 0,
-          brandToggleList(
-            'provider',
-            'Streaming services',
-            await brandOptions('provider', providers, filters.providers),
-            filters.providers
-          )
-        )
-      : ''
+  // watch provider, so its filter asks TMDB what is available on it here. Films
+  // stream as well as series, so this group is on the studio pages too.
+  const streamingGroup = railGroup(
+    'Streaming services',
+    filters.providers.length,
+    filters.providers.length > 0,
+    brandToggleList(
+      'provider',
+      'Streaming services',
+      await brandOptions('provider', providers, filters.providers),
+      filters.providers
+    )
+  )
 
   // The broadcast window: only series have an air date to filter on.
   const airedGroup = isTv
