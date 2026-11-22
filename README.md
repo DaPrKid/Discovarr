@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.1
+docker pull ghcr.io/daprkid/discovarr:1.2.2
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,12 +62,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.1
+docker pull ghcr.io/daprkid/discovarr:1.2.2
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.2.1
+  ghcr.io/daprkid/discovarr:1.2.2
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -176,7 +176,9 @@ anonymous pull on every release, so the install cannot break silently.
   "Already requested" button or an Available badge instead of a second request.
 - **Request from anywhere** — the Request button on any card opens the same
   dialog as the title page, so the quality profile is chosen rather than
-  assumed, and a watchlist entry can be requested without opening it first.
+  assumed, and a watchlist entry can be requested without opening it first. The
+  answer comes back to the card: it turns into a Requested badge where it stands,
+  and the grid keeps its place instead of jumping to the requests page.
 - **Watchlist** — save any title for later from its page, whether or not it is
   in the catalog yet, then work through it from the Watchlist tab.
 - **Release calendar** — a real month grid, one box per day, with the films and
@@ -356,7 +358,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.1
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.2
 ```
 
 If you prefer to run the process without root at all, start the container with

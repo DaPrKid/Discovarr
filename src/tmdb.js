@@ -85,6 +85,7 @@ function normalizePage(data, fallbackPage) {
     items: [],
     page: Number(data.page) || Number(fallbackPage) || 1,
     totalPages: Math.min(Math.max(Number(data.total_pages) || 1, 1), 500),
+    totalResults: Math.max(Number(data.total_results) || 0, 0),
   }
 }
 

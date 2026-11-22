@@ -114,6 +114,7 @@ before(async () => {
       body = {
         page: number,
         total_pages: 2,
+        total_results: 24,
         results: Array.from({ length: 12 }, (_, index) => ({
           id: number * 1000 + index,
           name: `${type} ${number}-${index}`,
@@ -563,6 +564,49 @@ test('a series request covers all seasons or only the ticked ones', async () => 
     redirect: 'manual',
   })
   assert.match(again.headers.get('location'), /err=/)
+})
+
+test('a request from a card is answered in place, not by the requests page', async () => {
+  const post = (body, headers = {}) =>
+    fetch(`${baseUrl}/media/import`, {
+      method: 'POST',
+      headers: { cookie: adminCookie, 'content-type': 'application/x-www-form-urlencoded', ...headers },
+      body,
+      redirect: 'manual',
+    })
+
+  // The page's own script asks for JSON: the card turns into a badge and the
+  // grid is not reloaded or left.
+  const json = await post('mediaType=movie&tmdbId=500&returnTo=%2Fnetworks%3Fnetwork%3D213', {
+    accept: 'application/json',
+  })
+  assert.equal(json.status, 200)
+  assert.deepEqual(await json.json(), { ok: true, notice: 'Request submitted' })
+
+  // A refusal comes back as JSON too, so the dialog can show it and stay open.
+  const refused = await fetch(`${baseUrl}/media/999999/request`, {
+    method: 'POST',
+    headers: {
+      cookie: adminCookie,
+      accept: 'application/json',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: 'returnTo=%2Fnetworks',
+  })
+  assert.equal(refused.status, 404)
+  assert.deepEqual(await refused.json(), { ok: false, error: 'Title not found' })
+
+  // Without script the same form posts and comes back to the page it came from.
+  const form = await post('mediaType=movie&tmdbId=501&returnTo=%2Fnetworks%3Fnetwork%3D213')
+  assert.equal(form.status, 303)
+  assert.equal(form.headers.get('location'), '/networks?network=213&notice=Request%20submitted')
+
+  // The dialog the script drives, and the count that says the short list is all
+  // TMDB has for the brand.
+  const networks = await (await page('/networks?network=213')).text()
+  assert.match(networks, /id="card-request-dialog"/)
+  assert.match(networks, /accept: 'application\/json'/)
+  assert.match(networks, /24 in all\./)
 })
 
 test('the title page styles carry the backdrop, seasons and collection panel', async () => {

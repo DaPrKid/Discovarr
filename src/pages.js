@@ -150,6 +150,31 @@ function failure(res, returnTo, error) {
   redirect(res, withMessage(returnTo, 'err', error.message))
 }
 
+/** A form that was posted by the page itself, not by the browser. */
+function wantsJson(req) {
+  return String(req.headers?.accept ?? '').includes('application/json')
+}
+
+/** The answer for a posted form: JSON when script sent it, a redirect otherwise. */
+function formDone(req, res, error = null) {
+  if (error) {
+    if (wantsJson(req)) {
+      sendJson(res, error instanceof HttpError ? error.status : 500, {
+        ok: false,
+        error: error.message || 'Request failed',
+      })
+      return true
+    }
+    return false
+  }
+
+  if (wantsJson(req)) {
+    sendJson(res, 200, { ok: true, notice: 'Request submitted' })
+    return true
+  }
+  return false
+}
+
 function parseType(value) {
   return value === MediaType.MOVIE || value === MediaType.TV ? value : 'all'
 }
@@ -1058,19 +1083,23 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
   const collectionNote = collectionMode
     ? ` Only collections that match these filters, grouped from the top ${scanned.films} matches.`
     : ''
+  // How many titles TMDB actually has for these filters, so two pages read as
+  // everything there is instead of a list that stopped early.
+  const countNote = result.totalResults ? ` ${result.totalResults.toLocaleString('en-US')} in all.` : ''
+  const subhead = `${subtitle}${collectionNote}${collectionMode ? '' : countNote}`
 
   const head = logo
     ? `<div class="brand-head">
         ${brandLogo(logo.name, logo.logoPath)}
         <div>
           <h1>${escapeHtml(title)}</h1>
-          <p class="muted">${escapeHtml(`${subtitle}${collectionNote}`)}</p>
+          <p class="muted">${escapeHtml(subhead)}</p>
         </div>
       </div>`
     : `<div class="page-head">
         <div>
           <h1>${escapeHtml(title)}</h1>
-          <p class="muted">${escapeHtml(`${subtitle}${collectionNote}`)}</p>
+          <p class="muted">${escapeHtml(subhead)}</p>
         </div>
       </div>`
 
@@ -2798,8 +2827,12 @@ export function registerPageRoutes(router) {
         qualityProfileId: body.qualityProfile ? Number(body.qualityProfile) : null,
         profileIndex: body.profile !== undefined && body.profile !== '' ? Number(body.profile) : null,
       })
+      // Sent by the page itself: answer it there, so the dialog closes and the
+      // title page stays put instead of reloading under the click.
+      if (formDone(req, res)) return
       redirect(res, withMessage(returnTo, 'notice', 'Request submitted'))
     } catch (error) {
+      if (formDone(req, res, error)) return
       failure(res, returnTo, error)
     }
   })
@@ -2817,8 +2850,12 @@ export function registerPageRoutes(router) {
         seasonNumbers: seasonSelection(body),
         profileIndex: body.profile !== undefined && body.profile !== '' ? Number(body.profile) : null,
       })
-      redirect(res, withMessage('/requests', 'notice', 'Request submitted'))
+      // A card asked from a grid stays on that grid: the answer goes back to
+      // the grid itself rather than to the requests page.
+      if (formDone(req, res)) return
+      redirect(res, withMessage(returnTo, 'notice', 'Request submitted'))
     } catch (error) {
+      if (formDone(req, res, error)) return
       failure(res, returnTo, error)
     }
   })

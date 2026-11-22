@@ -360,6 +360,83 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         })
       })()
 
+      // A request asked from a card is answered in place: the dialog posts the
+      // form itself, closes, and the card becomes the Requested badge a reload
+      // would have drawn. The grid keeps its scroll position instead of jumping
+      // to the requests page. Without script the same form still posts.
+      ;(function () {
+        var dialog = document.getElementById('card-request-dialog')
+        if (!dialog || !window.fetch || !window.FormData) return
+        var form = dialog.querySelector('form[data-card-request-form]')
+        var submit = dialog.querySelector('[data-card-request-submit]')
+        if (!form) return
+
+        function mark() {
+          var badge = document.createElement('span')
+          badge.className = 'badge badge-pending'
+          badge.textContent = 'Requested'
+          return badge
+        }
+
+        function say(message) {
+          var line = form.querySelector('[data-card-request-error]')
+          if (!line) {
+            line = document.createElement('p')
+            line.className = 'error small'
+            line.setAttribute('role', 'alert')
+            line.setAttribute('data-card-request-error', '')
+            form.insertBefore(line, form.querySelector('.request-actions'))
+          }
+          line.textContent = message
+        }
+
+        form.addEventListener('submit', function (event) {
+          event.preventDefault()
+          if (submit) submit.disabled = true
+
+          var asked = String(form.tmdbId ? form.tmdbId.value : '')
+          say('')
+
+          fetch(form.action, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              accept: 'application/json',
+              'content-type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams(new FormData(form)).toString()
+          })
+            .then(function (response) {
+              return response.json().then(function (body) {
+                return {
+                  ok: response.ok && body.ok !== false,
+                  message: body.error || body.notice || 'Request failed'
+                }
+              })
+            })
+            .then(function (result) {
+              if (submit) submit.disabled = false
+              if (!result.ok) {
+                say(result.message)
+                return
+              }
+
+              dialog.close()
+              document.querySelectorAll('form[data-request-card]').forEach(function (card) {
+                if (card.dataset.tmdbId === asked) card.replaceWith(mark())
+              })
+              // The title page asks through its own dialog; the button that
+              // opened it becomes the badge there.
+              var opener = document.querySelector('[data-dialog-open="request-dialog"]')
+              if (opener) opener.replaceWith(mark())
+            })
+            .catch(function () {
+              if (submit) submit.disabled = false
+              say('The request could not be sent. Try again.')
+            })
+        })
+      })()
+
       // The account menu is a <details>, so it opens without script; closing it
       // on an outside click and on Escape is what a menu is expected to do.
       ;(function () {
