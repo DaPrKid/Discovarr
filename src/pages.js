@@ -602,14 +602,17 @@ function discoverLayout(browse, body, rail = '') {
       <button class="panel-toggle" type="button" data-panel="nav" aria-pressed="false" aria-label="Show menu" title="Show menu">&#9776; Menu</button>
       ${
         rail
-          ? `<button class="panel-toggle panel-toggle-icon" type="button" data-panel="rail" aria-pressed="false" aria-label="Show filters" title="Show filters"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg></button>`
+          ? `<button class="panel-toggle" type="button" data-panel="rail" aria-pressed="false" aria-label="Show filters" title="Show filters">Filters</button>`
           : ''
       }
     </div>`
 
-  // On a phone the two sidebars become sheets over the grid, and the scrim is
-  // what closes them when a tap lands anywhere else.
-  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${restore}${body}</div>${rail}<div class="drawer-scrim" data-drawer-scrim hidden></div></div>`
+  // Discover keeps its filters open beside the grid, so that one page carries
+  // no fold-away button for them; the other browse pages keep theirs. On a
+  // phone both sidebars become sheets over the grid, and the scrim is what
+  // closes them when a tap lands anywhere else, so Discover keeps the sheet
+  // button there.
+  return `<div class="discover${rail ? ' has-rail' : ''}${browse ? '' : ' is-discover'}">${browseNav(browse)}<div class="discover-main">${restore}${body}</div>${rail}<div class="drawer-scrim" data-drawer-scrim hidden></div></div>`
 }
 
 function plexFor(plex, mediaType, tmdbId) {

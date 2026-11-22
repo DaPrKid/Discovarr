@@ -236,7 +236,11 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         // Hiding a sidebar is a per-browser choice, applied here so the grid
         // never jumps on load. Phones start with both panels tucked away.
         var panelFlags = { nav: 'hideNav', rail: 'hideRail' }
-        Object.keys(panelFlags).forEach(function (panel) {
+        // Discover keeps its filters beside the grid, so that page takes no
+        // part in the remembered layout: a "filters hidden" choice saved by an
+        // earlier visit must not leave it without the panel or its way back.
+        var folds = location.pathname === '/' ? { nav: 'hideNav' } : panelFlags
+        Object.keys(folds).forEach(function (panel) {
           var stored = null
           try { stored = localStorage.getItem('discovarr-' + panel) } catch (error) {}
           var hide = stored === null ? window.innerWidth < 900 : stored === 'hidden'

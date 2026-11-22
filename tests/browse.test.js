@@ -291,7 +291,7 @@ test('the stylesheet keeps the wide sidebar, the old poster size and the rail', 
   assert.match(css, /\.person-head \{/)
 })
 
-test('the brand lists cap, search and expand, and the filter chip lost its word', async () => {
+test('the brand lists cap, search and expand, and Discover has no filter toggle', async () => {
   const html = await (await page('/')).text()
 
   assert.match(html, /data-brand-list/)
@@ -299,8 +299,22 @@ test('the brand lists cap, search and expand, and the filter chip lost its word'
   assert.match(html, /data-brand-search/, 'a search box sits above the list')
   assert.match(html, /data-brand-more/, 'the rest of the list is behind a button')
   assert.match(html, /data-brand-limit="8"/)
-  assert.match(html, /class="panel-toggle panel-toggle-icon"/)
-  assert.doesNotMatch(html, /aria-label="Show filters"[^>]*>Filters</)
+
+  // Discover is the one page that does not fold its filters away, so the desk
+  // hides the button that would bring them back. The markup is shared with the
+  // pages that do keep it.
+  assert.match(html, /class="discover has-rail is-discover"/, 'Discover marks itself')
+  assert.match(html, /aria-label="Show filters"[^>]*>Filters</, 'the chip keeps its word')
+
+  const css = await (await fetch(`${baseUrl}/styles.css?v=0.7.1`)).text()
+  assert.match(
+    css,
+    /html \.discover\.is-discover \.panel-restore > \[data-panel='rail'\],[\s\S]*?display: none;/,
+    'the desk hides the filter button on Discover'
+  )
+
+  const networks = await (await page('/networks')).text()
+  assert.doesNotMatch(networks, /is-discover/, 'the other browse pages keep the toggle')
 })
 
 test('the networks page opens onto titles and filters from the rail', async () => {
