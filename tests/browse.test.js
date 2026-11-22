@@ -291,6 +291,18 @@ test('the stylesheet keeps the wide sidebar, the old poster size and the rail', 
   assert.match(css, /\.person-head \{/)
 })
 
+test('the brand lists cap, search and expand, and the filter chip lost its word', async () => {
+  const html = await (await page('/')).text()
+
+  assert.match(html, /data-brand-list/)
+  assert.match(html, /data-brand-items/)
+  assert.match(html, /data-brand-search/, 'a search box sits above the list')
+  assert.match(html, /data-brand-more/, 'the rest of the list is behind a button')
+  assert.match(html, /data-brand-limit="8"/)
+  assert.match(html, /class="panel-toggle panel-toggle-icon"/)
+  assert.doesNotMatch(html, /aria-label="Show filters"[^>]*>Filters</)
+})
+
 test('the networks page opens onto titles and filters from the rail', async () => {
   const index = await (await page('/networks')).text()
   assert.match(index, /class="filter-rail"/)

@@ -16,6 +16,7 @@ import { APP_VERSION, MediaType, Permission } from './constants.js'
 import {
   approveRequest,
   changePassword,
+  countCatalog,
   createUserByAdmin,
   declineRequest,
   deleteRequest,
@@ -72,8 +73,12 @@ export function registerApiRoutes(router) {
     const identifier = body.username ?? body.email ?? ''
     const user = store.findUserByLogin(identifier)
 
-    if (!user || !verifyPassword(String(body.password ?? ''), user.passwordHash)) {
+    if (!user || !(await verifyPassword(String(body.password ?? ''), user.passwordHash))) {
       const limit = recordFailedLogin(req, identifier)
+
+      // The limiter decides what happens next; the audit row is what lets an
+      // administrator tell an attack from a housemate who forgot their password.
+      store.recordAudit(null, limit.allowed ? 'auth.login_failed' : 'auth.login_locked', String(identifier).slice(0, 120))
 
       if (!limit.allowed) {
         sendJson(
@@ -110,7 +115,7 @@ export function registerApiRoutes(router) {
     const user = requireUser(req)
     const body = await readBody(req)
 
-    const result = changePassword(user, body.currentPassword, body.newPassword, sessionToken(req))
+    const result = await changePassword(user, body.currentPassword, body.newPassword, sessionToken(req))
 
     sendJson(res, 200, { ok: true, otherSessionsRevoked: result.revoked })
   })
@@ -129,13 +134,20 @@ export function registerApiRoutes(router) {
   // require a session, and this used to be the one door left open.
   router.get('/api/v1/media', ({ req, res, url }) => {
     const user = requireUser(req)
-    const results = getCatalog({
-      type: parseType(url.searchParams.get('type')),
-      query: url.searchParams.get('q') ?? url.searchParams.get('query') ?? '',
-      userId: user.id,
-    })
+    const type = parseType(url.searchParams.get('type'))
+    const query = url.searchParams.get('q') ?? url.searchParams.get('query') ?? ''
+    const page = Math.max(1, Number(url.searchParams.get('page') ?? 1) || 1)
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 60) || 60))
+    const total = countCatalog({ type, query })
+    const results = getCatalog({ type, query, userId: user.id, limit, offset: (page - 1) * limit })
 
-    sendJson(res, 200, { page: 1, totalPages: 1, totalResults: results.length, results })
+    sendJson(res, 200, {
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      totalResults: total,
+      results,
+    })
   })
 
   router.get('/api/v1/media/:id', ({ req, res, params }) => {

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { registerApiRoutes } from './api.js'
 import { currentUser } from './auth.js'
 import { config } from './config.js'
-import { countUsers, deleteExpiredSessions, getSettings } from './db.js'
+import { countUsers, deleteExpiredSessions, getSettings, pruneHistory } from './db.js'
 import { createRouter, HttpError, sendHtml, sendJson } from './http.js'
 import { pruneCache } from './cache.js'
 import { serveImage } from './images.js'
@@ -138,6 +138,18 @@ const server = createServer((req, res) => {
 
 deleteExpiredSessions()
 setInterval(deleteExpiredSessions, 60 * 60 * 1000).unref()
+
+// Audit rows and notifications are the only tables nothing else ever shrinks.
+setInterval(() => {
+  try {
+    const pruned = pruneHistory()
+    if (pruned.audit || pruned.notifications) {
+      console.log(`[discovarr] pruned ${pruned.audit} audit row(s) and ${pruned.notifications} notification(s)`)
+    }
+  } catch (error) {
+    console.warn(`[discovarr] prune failed: ${error.message}`)
+  }
+}, 24 * 60 * 60 * 1000).unref()
 startSyncScheduler()
 startRetryQueue()
 

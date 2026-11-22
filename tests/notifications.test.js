@@ -227,6 +227,21 @@ test('approving a request leaves the requester an in-app notification', async ()
   assert.doesNotMatch(await (await get('/notifications', requesterCookie)).text(), /Mark all read/)
 })
 
+test('the bell panel clears the notifications it shows', async () => {
+  const html = await (await get('/notifications', requesterCookie)).text()
+  assert.match(html, /class="bell-icon"/, 'the bell is drawn, not typed')
+  assert.match(html, /action="\/notifications\/clear"/)
+  assert.match(html, /Clear notifications/)
+
+  const cleared = await postForm('/notifications/clear', {}, requesterCookie)
+  assert.equal(cleared.status, 303)
+
+  const after = await (await get('/notifications', requesterCookie)).text()
+  assert.match(after, /Nothing yet/)
+  assert.doesNotMatch(after, /notif-item/)
+  assert.doesNotMatch(after, /action="\/notifications\/clear"/)
+})
+
 test('bulk approve handles the ticked requests in one post', async () => {
   await postForm('/media/2/request', { returnTo: '/' }, requesterCookie)
   const pending = await pendingRequests()

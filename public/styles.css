@@ -3308,3 +3308,83 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
   .rail-group { padding-top: 10px; }
   .rail-group > summary { font-size: 0.72rem; }
 }
+
+/* --- Brand lists in the filter rail: search, cap, and the rest on demand --- */
+.toggle-brand {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.toggle-brand .toggle-list {
+  margin-top: 0;
+}
+
+.toggle-search {
+  display: grid;
+  gap: 4px;
+}
+
+.toggle-search-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.toggle-search input {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.toggle-search input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* display:flex on .toggle beats the hidden attribute without this. */
+.toggle[hidden] {
+  display: none;
+}
+
+.toggle-more {
+  justify-content: center;
+  width: 100%;
+}
+
+.toggle-empty {
+  margin: 0;
+}
+
+/* The bell is drawn like the tab icons rather than typed as an emoji. */
+.bell .bell-icon {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.notif-pop-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* The filter chip keeps its place but loses the word. */
+.panel-toggle-icon {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.panel-toggle-icon svg {
+  width: 18px;
+  height: 18px;
+}

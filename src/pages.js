@@ -599,7 +599,11 @@ function discoverLayout(browse, body, rail = '') {
   // a strip of controls taking up room above the grid.
   const restore = `<div class="panel-restore">
       <button class="panel-toggle" type="button" data-panel="nav" aria-pressed="false" aria-label="Show menu" title="Show menu">&#9776; Menu</button>
-      ${rail ? '<button class="panel-toggle" type="button" data-panel="rail" aria-pressed="false" aria-label="Show filters" title="Show filters">Filters</button>' : ''}
+      ${
+        rail
+          ? `<button class="panel-toggle panel-toggle-icon" type="button" data-panel="rail" aria-pressed="false" aria-label="Show filters" title="Show filters"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg></button>`
+          : ''
+      }
     </div>`
 
   // On a phone the two sidebars become sheets over the grid, and the scrim is
@@ -685,6 +689,33 @@ function selectField(name, label, options, current) {
   </label>`
 }
 
+/**
+ * Networks and studios are long enough to bury everything under them, so they
+ * get a capped list with a search box and a button for the rest. The page
+ * script does the folding; without it every entry is simply visible.
+ */
+function brandToggleList(name, label, options, selected) {
+  const limit = 8
+  const noun = label.toLowerCase()
+  const items = options.map((option) =>
+    toggleField(name, option.id, option.name, selected.some((id) => String(id) === String(option.id)))
+  )
+
+  return `<div class="toggle-brand" data-brand-list data-brand-limit="${limit}">
+    <label class="toggle-search">
+      <span class="toggle-search-label">Search ${escapeHtml(noun)}</span>
+      <input type="search" placeholder="Search ${escapeHtml(noun)}…" data-brand-search autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="toggle-list toggle-scroll" data-brand-items>${items.join('')}</div>
+    <p class="toggle-empty muted small" data-brand-empty hidden>No ${escapeHtml(noun)} matches that search.</p>
+    ${
+      items.length > limit
+        ? `<button class="btn btn-sm btn-ghost toggle-more" type="button" data-brand-more aria-expanded="false">Show all ${items.length} ${escapeHtml(noun)}</button>`
+        : ''
+    }
+  </div>`
+}
+
 function toggleList(name, options, selected, scroll = false) {
   return `<div class="toggle-list${scroll ? ' toggle-scroll' : ''}">${options
     .map((option) =>
@@ -757,13 +788,13 @@ function filterRail({
           'Studios',
           filters.studios.length,
           filters.studios.length > 0,
-          toggleList('studio', studios, filters.studios)
+          brandToggleList('studio', 'Studios', studios, filters.studios)
         )
       : railGroup(
           'Networks',
           filters.networks.length,
           filters.networks.length > 0,
-          toggleList('network', networks, filters.networks, true)
+          brandToggleList('network', 'Networks', networks, filters.networks)
         )
 
   // The broadcast window: only series have an air date to filter on.
@@ -2231,8 +2262,11 @@ export function registerPageRoutes(router) {
     const identifier = body.username ?? body.email ?? ''
     const user = store.findUserByLogin(identifier)
 
-    if (!user || !verifyPassword(String(body.password ?? ''), user.passwordHash)) {
+    if (!user || !(await verifyPassword(String(body.password ?? ''), user.passwordHash))) {
       const limit = recordFailedLogin(req, identifier)
+
+      // What the log needs to answer "who was locked out, and why".
+      store.recordAudit(null, limit.allowed ? 'auth.login_failed' : 'auth.login_locked', String(identifier).slice(0, 120))
 
       return redirect(
         res,
@@ -3179,6 +3213,17 @@ export function registerPageRoutes(router) {
     redirect(res, withMessage('/notifications', 'notice', 'All notifications marked read'))
   })
 
+  // Clearing is the bell menu's own action, so it works as a plain form post and
+  // needs no script to empty the panel.
+  router.post('/notifications/clear', ({ req, res }) => {
+    const user = requireUser(req)
+    const removed = store.clearNotifications(user.id)
+    redirect(
+      res,
+      withMessage('/notifications', 'notice', removed === 1 ? 'Notification cleared' : `${removed} notifications cleared`)
+    )
+  })
+
   router.get('/account', ({ req, res, url }) => {
     const user = pageUser(req, res, '/account')
     if (!user) return
@@ -3250,7 +3295,7 @@ export function registerPageRoutes(router) {
     const body = await readBody(req)
 
     try {
-      const result = changePassword(user, body.currentPassword, body.newPassword, sessionToken(req))
+      const result = await changePassword(user, body.currentPassword, body.newPassword, sessionToken(req))
       redirect(res, withMessage('/account', 'notice', `Password updated (${result.revoked} other session(s) signed out)`))
     } catch (error) {
       failure(res, '/account', error)

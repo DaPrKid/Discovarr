@@ -116,6 +116,13 @@ function notificationPanel(items) {
         <a class="inline-link small" href="/notifications">See all</a>
       </div>
       ${list}
+      ${
+        items.length
+          ? `<form class="notif-pop-foot" method="post" action="/notifications/clear">
+              <button class="btn btn-sm btn-ghost" type="submit">Clear notifications</button>
+            </form>`
+          : ''
+      }
     </div>`
 }
 
@@ -170,7 +177,7 @@ function navigation({ user, active, appName, canManageSettings }) {
     <div class="account">
       <div class="notif">
         <a class="bell" href="/notifications" data-notif-toggle aria-expanded="false" aria-controls="notif-pop" aria-label="Notifications${unread ? `, ${unread} unread` : ''}" title="Notifications">
-          <span aria-hidden="true">✉</span>${unread ? `<span class="bell-count">${unread > 99 ? '99+' : unread}</span>` : ''}
+          <svg class="bell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.2 9.4a5.8 5.8 0 0 1 11.6 0c0 3.6 1 4.9 1.7 5.8.3.4 0 1-.5 1H5c-.5 0-.8-.6-.5-1 .7-.9 1.7-2.2 1.7-5.8z"/><path d="M10 19.2a2.2 2.2 0 0 0 4 0"/></svg>${unread ? `<span class="bell-count">${unread > 99 ? '99+' : unread}</span>` : ''}
         </a>
         ${notificationPanel(recent)}
       </div>
@@ -491,6 +498,56 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           if (carried === 'nav' || carried === 'rail') root.dataset.drawer = carried
         }
         refresh()
+      })()
+
+      // Networks and studios are long lists: the rail keeps the first few,
+      // searches them, and offers the rest behind a button. Nothing is hidden
+      // in the markup, so a browser without this script still sees every entry.
+      ;(function () {
+        var lists = document.querySelectorAll('[data-brand-list]')
+        Array.prototype.forEach.call(lists, function (list) {
+          var items = list.querySelectorAll('[data-brand-items] .toggle')
+          var limit = Number(list.getAttribute('data-brand-limit')) || 8
+          var more = list.querySelector('[data-brand-more]')
+          var search = list.querySelector('[data-brand-search]')
+          var empty = list.querySelector('[data-brand-empty]')
+          var expanded = false
+
+          if (more) more.setAttribute('data-more-label', more.textContent)
+
+          function paint(term) {
+            var shown = 0
+            Array.prototype.forEach.call(items, function (item, index) {
+              var hit = !term || item.textContent.toLowerCase().indexOf(term) !== -1
+              var visible = hit && (term || expanded || index < limit)
+              item.hidden = !visible
+              if (visible) shown += 1
+            })
+            if (more) more.hidden = Boolean(term) || expanded
+            if (empty) empty.hidden = shown > 0
+          }
+
+          paint('')
+
+          if (search) {
+            search.addEventListener('input', function () {
+              paint(search.value.trim().toLowerCase())
+            })
+            // Enter belongs to the search box, not to the filter form.
+            search.addEventListener('keydown', function (event) {
+              if (event.key === 'Enter') event.preventDefault()
+            })
+          }
+
+          if (more) {
+            more.addEventListener('click', function () {
+              expanded = !expanded
+              more.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+              more.textContent = expanded ? 'Show fewer' : more.getAttribute('data-more-label')
+              paint('')
+            })
+          }
+        })
       })()
 
       // Push notifications. The permission prompt only opens from a click, so

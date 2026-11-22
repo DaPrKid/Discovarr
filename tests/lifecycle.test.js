@@ -375,6 +375,21 @@ test('requests are paginated', async () => {
   assert.ok(json.totalPages >= 2)
 })
 
+test('the catalog API pages through its titles', async () => {
+  const first = await call('/api/v1/media?limit=5', { cookie: adminCookie })
+  assert.equal(first.status, 200)
+  assert.equal(first.json.results.length, 5)
+  assert.ok(first.json.totalResults > 5)
+  assert.equal(first.json.totalPages, Math.ceil(first.json.totalResults / 5))
+
+  const second = await call('/api/v1/media?limit=5&page=2', { cookie: adminCookie })
+  assert.equal(second.json.results.length, 5)
+  assert.notEqual(first.json.results[0].id, second.json.results[0].id)
+
+  const capped = await call('/api/v1/media?limit=1000', { cookie: adminCookie })
+  assert.equal(capped.json.limit, 100, 'a caller cannot ask for the whole table')
+})
+
 test('sync runs with no services configured and reports skips', async () => {
   const { status, json } = await call('/api/v1/sync', { method: 'POST', cookie: adminCookie })
   assert.equal(status, 200)

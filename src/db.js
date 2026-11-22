@@ -380,9 +380,8 @@ function mapMedia(row) {
   }
 }
 
-export function listMedia({ type = 'all', query = '', userId = null } = {}) {
+function mediaFilterClauses(type, query, params) {
   const clauses = []
-  const params = [userId ?? -1]
 
   if (type === MediaType.MOVIE || type === MediaType.TV) {
     clauses.push('m.media_type = ?')
@@ -395,6 +394,27 @@ export function listMedia({ type = 'all', query = '', userId = null } = {}) {
     params.push(like, like)
   }
 
+  return clauses
+}
+
+/** How many titles the same filters match, so a page can report a real total. */
+export function countMedia({ type = 'all', query = '' } = {}) {
+  const params = []
+  const clauses = mediaFilterClauses(type, query, params)
+
+  return Number(
+    db
+      .prepare(`SELECT COUNT(*) AS count FROM media m${clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''}`)
+      .get(...params).count
+  )
+}
+
+export function listMedia({ type = 'all', query = '', userId = null, limit = null, offset = 0 } = {}) {
+  const params = [userId ?? -1]
+  const clauses = mediaFilterClauses(type, query, params)
+  const window = limit === null ? '' : 'LIMIT ? OFFSET ?'
+  if (limit !== null) params.push(Number(limit), Math.max(0, Number(offset) || 0))
+
   const rows = db
     .prepare(
       `SELECT m.*,
@@ -402,7 +422,8 @@ export function listMedia({ type = 'all', query = '', userId = null } = {}) {
         (SELECT COUNT(*) FROM requests r WHERE r.media_id = m.id AND r.status IN (1, 2) AND r.user_id = ?) AS my_active_requests
       FROM media m
       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
-      ORDER BY m.release_date DESC, m.title ASC`
+      ORDER BY m.release_date DESC, m.title ASC
+      ${window}`
     )
     .all(...params)
 
@@ -636,6 +657,24 @@ export function getRequestById(id) {
   return mapRequest(db.prepare(`${REQUEST_SELECT} WHERE r.id = ?`).get(Number(id)))
 }
 
+/**
+ * A dispatch that has run out of attempts leaves its title flagged processing
+ * with nothing behind it. This puts the row back, but only when no other
+ * request is still working on the same title.
+ */
+export function resetMediaStatusIfIdle(mediaId, status = MediaStatus.UNKNOWN) {
+  const busy = Number(
+    db
+      .prepare('SELECT COUNT(*) AS count FROM requests WHERE media_id = ? AND status IN (1, 2)')
+      .get(Number(mediaId)).count
+  )
+
+  if (busy > 0) return false
+
+  db.prepare('UPDATE media SET status = ? WHERE id = ?').run(Number(status), Number(mediaId))
+  return true
+}
+
 export function findActiveRequest(mediaId, userId) {
   return mapRequest(
     db
@@ -848,6 +887,11 @@ export function countUnreadNotifications(userId) {
   return db
     .prepare('SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL')
     .get(Number(userId)).count
+}
+
+/** Empty the bell: every notification this account still has, read or not. */
+export function clearNotifications(userId) {
+  return Number(db.prepare('DELETE FROM notifications WHERE user_id = ?').run(Number(userId)).changes)
 }
 
 export function markNotificationsRead(userId, id = null) {
@@ -1070,6 +1114,20 @@ export function listRetryQueue({ userId = null, limit = 50 } = {}) {
 // ---------------------------------------------------------------------------
 // Audit log
 // ---------------------------------------------------------------------------
+
+/**
+ * Read notifications and old audit rows are the two tables nothing else ever
+ * shrinks. Ninety days is long enough to explain an incident; half a year of
+ * notifications is long enough to notice one.
+ */
+export function pruneHistory({ auditDays = 90, notificationDays = 180 } = {}) {
+  const cutoff = (days) => new Date(Date.now() - days * 86400000).toISOString()
+
+  return {
+    audit: Number(db.prepare('DELETE FROM audit_log WHERE created_at < ?').run(cutoff(auditDays)).changes),
+    notifications: Number(db.prepare('DELETE FROM notifications WHERE created_at < ?').run(cutoff(notificationDays)).changes),
+  }
+}
 
 export function recordAudit(userId, action, detail = '') {
   db.prepare('INSERT INTO audit_log (user_id, action, detail, created_at) VALUES (?, ?, ?, ?)').run(

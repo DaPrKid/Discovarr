@@ -49,8 +49,12 @@ export function quotaSummary(user) {
 // Catalog
 // ---------------------------------------------------------------------------
 
-export function getCatalog({ type = 'all', query = '', userId = null } = {}) {
-  return store.listMedia({ type, query, userId })
+export function getCatalog({ type = 'all', query = '', userId = null, limit = null, offset = 0 } = {}) {
+  return store.listMedia({ type, query, userId, limit, offset })
+}
+
+export function countCatalog({ type = 'all', query = '' } = {}) {
+  return store.countMedia({ type, query })
 }
 
 export function getMediaDetail(id, userId = null) {
@@ -258,6 +262,10 @@ async function approveAndDispatch(request, media, actor) {
       })
 
       if (exhausted) {
+        // Out of attempts: the title is no longer on its way anywhere, so it
+        // must not stay flagged processing for ever.
+        store.resetMediaStatusIfIdle(request.mediaId)
+
         store.createNotification({
           userId: request.userId,
           kind: 'failed',
@@ -541,8 +549,8 @@ export function deleteUserByAdmin(id, actor) {
   return user
 }
 
-export function changePassword(user, currentPassword, newPassword, keepToken) {
-  if (!verifyPassword(String(currentPassword ?? ''), user.passwordHash)) {
+export async function changePassword(user, currentPassword, newPassword, keepToken) {
+  if (!(await verifyPassword(String(currentPassword ?? ''), user.passwordHash))) {
     throw new HttpError(401, 'Current password is incorrect')
   }
   if (String(newPassword ?? '').length < MIN_PASSWORD_LENGTH) {
