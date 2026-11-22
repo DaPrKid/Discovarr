@@ -138,12 +138,6 @@ export async function tmdbDetails(mediaType, tmdbId) {
 // TMDB ids for the networks and studios worth a shelf. A wrong id simply yields
 // no titles on that shelf, which is why the shelf list is filtered below.
 const NETWORKS = Object.freeze([
-  // Streaming services
-  { id: 213, name: 'Netflix' },
-  { id: 1024, name: 'Amazon Prime Video' },
-  { id: 2739, name: 'Disney+' },
-  { id: 2552, name: 'Apple TV+' },
-  { id: 453, name: 'Hulu' },
   // Premium and cable drama
   { id: 49, name: 'HBO' },
   { id: 67, name: 'Showtime' },
@@ -316,6 +310,14 @@ export function discoverQuery(mediaType, filters = {}, sort = 'popular') {
   const studios = isTv ? [] : ids(filters.studios)
   if (studios.length) query.with_companies = studios.join('|')
 
+  // Streaming services are watch providers, not networks, and TMDB answers
+  // "what is on Netflix here" from the provider ids plus the region.
+  const providers = ids(filters.providers)
+  if (providers.length) {
+    query.with_watch_providers = providers.join('|')
+    query.watch_region = watchRegion()
+  }
+
   if (filters.from) query[`${dateField}.gte`] = `${filters.from}-01-01`
   if (filters.to) query[`${dateField}.lte`] = `${filters.to}-12-31`
   if (filters.rating) query['vote_average.gte'] = String(filters.rating)
@@ -333,6 +335,88 @@ export function networkOptions() {
 /** The studios offered as toggles in the filter panel. */
 export function studioOptions() {
   return STUDIOS.map((studio) => ({ ...studio }))
+}
+
+/**
+ * Streaming services, which TMDB keeps as watch providers rather than networks:
+ * Netflix is provider 8 while ABC is network 2. A provider filter searches what
+ * is actually available to stream in the configured region, where the network
+ * row would only find the shows that service produced.
+ *
+ * This is the printed shortlist; the rest of the region's services are found by
+ * searching TMDB's full provider list.
+ */
+const WATCH_PROVIDERS = Object.freeze([
+  { id: 8, name: 'Netflix' },
+  { id: 9, name: 'Amazon Prime Video' },
+  { id: 337, name: 'Disney Plus' },
+  { id: 1899, name: 'Max' },
+  { id: 15, name: 'Hulu' },
+  { id: 350, name: 'Apple TV Plus' },
+  { id: 531, name: 'Paramount Plus' },
+  { id: 386, name: 'Peacock Premium' },
+  { id: 283, name: 'Crunchyroll' },
+  { id: 73, name: 'Tubi TV' },
+  { id: 300, name: 'Pluto TV' },
+  { id: 99, name: 'Shudder' },
+  { id: 613, name: 'Freevee' },
+  { id: 11, name: 'MUBI' },
+  { id: 151, name: 'BritBox' },
+  { id: 526, name: 'AMC Plus' },
+  { id: 258, name: 'The Criterion Channel' },
+  { id: 87, name: 'Acorn TV' },
+])
+
+const PROVIDER_TTL_MS = 24 * 60 * 60 * 1000
+let providerCache = null
+/** The last failed lookup, so an outage is not two requests per page load. */
+let providerAttempt = 0
+
+/** The streaming services printed before anyone searches. */
+export function providerOptions() {
+  return WATCH_PROVIDERS.map((provider) => ({ ...provider }))
+}
+
+/**
+ * Every streaming service TMDB lists for the region, in its own display order.
+ * The film and series lists are merged because a service that only carries one
+ * of them is still a service worth filtering by.
+ */
+export async function streamingProviders() {
+  if (providerCache && Date.now() - providerCache.at < PROVIDER_TTL_MS) return providerCache.items
+
+  if (Date.now() - providerAttempt < BROWSE_TTL_MS) return providerCache?.items ?? providerOptions()
+  providerAttempt = Date.now()
+
+  try {
+    const region = watchRegion()
+    const [films, series] = await Promise.all([
+      tmdbGet('/watch/providers/movie', { watch_region: region, language: 'en-US' }),
+      tmdbGet('/watch/providers/tv', { watch_region: region, language: 'en-US' }),
+    ])
+
+    const byId = new Map()
+    for (const row of [...(films.results ?? []), ...(series.results ?? [])]) {
+      const id = Number(row.provider_id)
+      const name = String(row.provider_name ?? '').trim()
+      if (!Number.isFinite(id) || !name) continue
+
+      const priority = Number(row.display_priorities?.[region] ?? row.display_priority ?? 999)
+      const known = byId.get(id)
+      byId.set(id, { id, name, priority: known ? Math.min(priority, known.priority) : priority })
+    }
+
+    const items = [...byId.values()]
+      .sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name))
+      .map(({ id, name }) => ({ id, name }))
+
+    if (!items.length) return providerCache?.items ?? providerOptions()
+
+    providerCache = { at: Date.now(), items }
+    return items
+  } catch {
+    return providerCache?.items ?? providerOptions()
+  }
 }
 
 /** One paged slice of /discover for a network, studio or genre. */

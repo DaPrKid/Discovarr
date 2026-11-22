@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.2
+docker pull ghcr.io/daprkid/discovarr:1.2.3
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,12 +62,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.2
+docker pull ghcr.io/daprkid/discovarr:1.2.3
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.2.2
+  ghcr.io/daprkid/discovarr:1.2.3
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -147,9 +147,16 @@ anonymous pull on every release, so the install cannot break silently.
   Previous/Next paging over trending titles and search results.
 - **Networks and studios** — the panel prints the common networks and studios as
   toggles, and its search reaches the rest of TMDB: a name it does not print,
-  like Shudder, is looked up as you type and comes back ready to tick. Networks
+  like BBC Two, is looked up as you type and comes back ready to tick. Networks
   come from TMDB's daily id export, cached under `/data/brands` for a week;
   studios use its company search.
+- **Streaming services, not networks** — ABC and HBO are networks; Netflix,
+  Prime Video, Disney+, Max, Shudder and the rest are streaming services, and
+  they get their own searchable group in the panel. A service filters by TMDB's
+  watch provider for the configured region, so it finds everything available to
+  stream there rather than only the shows that service produced. The full
+  provider list for the region is searched as you type, so a smaller service is
+  still one name away.
 - **A filter panel on the browse pages** — the right-hand rail of Networks,
   Studios and the genre pages toggles genres, studios and networks, then narrows
   further by year, minimum rating, vote count, original language and sort order.
@@ -358,7 +365,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.2
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.3
 ```
 
 If you prefer to run the process without root at all, start the container with

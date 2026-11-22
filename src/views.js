@@ -649,7 +649,9 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
 
               var input = document.createElement('input')
               input.type = 'checkbox'
-              input.name = field
+              // A network search that only matched a streaming service sends the
+              // row back as a provider, so ticking it filters by provider.
+              input.name = row.field || field
               input.value = String(row.id)
 
               var span = document.createElement('span')

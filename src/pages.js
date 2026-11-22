@@ -69,6 +69,7 @@ import {
   genreList,
   networkOptions,
   networkWithLogo,
+  providerOptions,
   personDetails,
   recommendedTitles,
   searchPage,
@@ -82,7 +83,7 @@ import {
   trendingPage,
   TYPE_GENRE_IDS,
 } from './tmdb.js'
-import { brandNames, searchBrands } from './brands.js'
+import { brandNames as resolveBrandNames, searchBrands } from './brands.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
 import { downloadQueue } from './services.js'
@@ -552,6 +553,7 @@ function filtersFromParams(params) {
     kinds: parseKinds(params.getAll('kind')),
     genres: parseIds(params.getAll('genre')),
     networks: parseIds(params.getAll('network')),
+    providers: parseIds(params.getAll('provider')),
     studios: parseIds(params.getAll('studio')),
     // A film-only switch: only titles that belong to a collection.
     collections: params.get('collections') === '1',
@@ -569,6 +571,7 @@ function hasFilters(filters) {
     filters.kinds.length ||
     filters.genres.length ||
       filters.networks.length ||
+      filters.providers.length ||
       filters.studios.length ||
       filters.collections ||
       filters.from ||
@@ -585,6 +588,7 @@ function filterParams(filters) {
     kind: filters.kinds.join(','),
     genre: filters.genres.join(','),
     network: filters.networks.join('|'),
+    provider: filters.providers.join('|'),
     studio: filters.studios.join('|'),
     collections: filters.collections ? '1' : '',
     sort: filters.sort === 'popular' ? '' : filters.sort,
@@ -780,6 +784,7 @@ async function filterRail({
   filters,
   genres,
   networks = [],
+  providers = [],
   studios = [],
   types = [],
   typeSwitch = false,
@@ -823,7 +828,7 @@ async function filterRail({
   // cannot be removed either.
   const brandOptions = async (kind, options, chosen) => {
     const known = new Set(options.map((option) => String(option.id)))
-    const resolved = await brandNames(kind, chosen).catch(() => [])
+    const resolved = await resolveBrandNames(kind, chosen).catch(() => [])
     return [...resolved.filter((item) => !known.has(String(item.id))), ...options]
   }
 
@@ -851,6 +856,23 @@ async function filterRail({
             filters.networks
           )
         )
+
+  // Streaming services sit beside the networks they are not: a service is a
+  // watch provider, so its filter asks TMDB what is available on it here.
+  const streamingGroup =
+    mediaType === MediaType.TV
+      ? railGroup(
+          'Streaming services',
+          filters.providers.length,
+          filters.providers.length > 0,
+          brandToggleList(
+            'provider',
+            'Streaming services',
+            await brandOptions('provider', providers, filters.providers),
+            filters.providers
+          )
+        )
+      : ''
 
   // The broadcast window: only series have an air date to filter on.
   const airedGroup = isTv
@@ -905,6 +927,7 @@ async function filterRail({
       )
     )}
     ${brandGroup}
+    ${streamingGroup}
     ${airedGroup}
     ${railGroup('Advanced', advancedCount, advancedCount > 0, advanced)}
     <button class="btn btn-sm rail-apply" type="submit">Apply filters</button>
@@ -1038,12 +1061,16 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
 
   const genres = await genreList(mediaType).catch(() => [])
   const types = contentTypeOptions(mediaType)
-  const brands = isMovie ? studioOptions() : networkOptions()
-  const brandIds = isMovie ? filters.studios : filters.networks
 
-  const brandNames = brandIds
-    .map((id) => brands.find((brand) => String(brand.id) === String(id))?.name)
-    .filter(Boolean)
+  // Networks and streaming services are two catalogues in TMDB, and the page
+  // names whatever was picked from either, including ids only a live search
+  // knows about.
+  const studioBrands = isMovie
+    ? studioOptions().filter((studio) => filters.studios.some((id) => String(id) === String(studio.id)))
+    : []
+  const networkBrands = isMovie ? [] : await resolveBrandNames('network', filters.networks)
+  const serviceBrands = await resolveBrandNames('provider', filters.providers)
+  const chosenNames = [...studioBrands, ...networkBrands, ...serviceBrands].map((brand) => brand.name)
   const genreNames = genres
     .filter((genre) => filters.genres.some((id) => String(id) === String(genre.id)))
     .map((genre) => genre.name)
@@ -1051,14 +1078,20 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
 
   const leading = [...typeNames, ...genreNames]
   const noun = isMovie ? 'Films' : 'Series'
-  const title = brandNames.length ? brandNames.join(' + ') : leading.length ? leading.join(' + ') : label
-  const subtitle = brandNames.length
-    ? `${leading.length ? `${leading.join(' + ')} ${noun.toLowerCase()}` : noun} from ${brandNames.join(', ')}.`
+  const title = chosenNames.length ? chosenNames.join(' + ') : leading.length ? leading.join(' + ') : label
+  const subtitle = chosenNames.length
+    ? `${leading.length ? `${leading.join(' + ')} ${noun.toLowerCase()}` : noun} from ${chosenNames.join(', ')}.`
     : leading.length
       ? `${noun} in ${leading.join(' + ')}.`
       : `Every ${isMovie ? 'film' : 'series'} we can find, most popular first — narrow it with the panel on the right.`
 
-  const brand = brandIds.length === 1 ? brands.find((entry) => String(entry.id) === String(brandIds[0])) : null
+  // A single studio or network brings its logo; a streaming service has none in
+  // the provider catalogue, so its name carries the page instead.
+  const brand = isMovie
+    ? studioBrands[0] ?? null
+    : networkBrands.length === 1 && !serviceBrands.length
+      ? networkBrands[0]
+      : null
   const logo = brand ? await (isMovie ? studioWithLogo : networkWithLogo)(brand) : null
 
   const collectionMode = filters.collections && isMovie
@@ -1129,6 +1162,7 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
       filters,
       genres,
       networks: networkOptions(),
+      providers: providerOptions(),
       studios: studioOptions(),
       types,
       clearHref: basePath,
@@ -2558,7 +2592,8 @@ export function registerPageRoutes(router) {
       return
     }
 
-    const kind = url.searchParams.get('kind') === 'studio' ? 'studio' : 'network'
+    const requested = url.searchParams.get('kind')
+    const kind = requested === 'studio' || requested === 'provider' ? requested : 'network'
     const query = String(url.searchParams.get('q') ?? '').trim().slice(0, 80)
 
     try {

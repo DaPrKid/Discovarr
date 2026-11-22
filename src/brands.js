@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 
 import { config } from './config.js'
-import { networkOptions, studioOptions, tmdbConfigured, tmdbGet } from './tmdb.js'
+import { networkOptions, providerOptions, streamingProviders, studioOptions, tmdbConfigured, tmdbGet } from './tmdb.js'
 
 /**
  * Looking up a network or a studio by name.
@@ -139,7 +139,64 @@ export async function networkCatalogue() {
 }
 
 function curated(kind) {
-  return kind === 'studio' ? studioOptions() : networkOptions()
+  if (kind === 'studio') return studioOptions()
+  if (kind === 'provider') return providerOptions()
+  return networkOptions()
+}
+
+function normalName(value) {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+/**
+ * Networks that are really streaming services. TMDB keeps both catalogues, and
+ * a service usually has a network row too — Netflix is network 213 and watch
+ * provider 8 — so a network filter for it would search the shows Netflix made
+ * rather than everything streaming there. Those rows belong to the streaming
+ * list; broadcasters like ABC stay networks.
+ */
+const STREAMING_NETWORK_NAMES = new Set(
+  [
+    'Netflix',
+    'Hulu',
+    'Max',
+    'HBO Max',
+    'Disney+',
+    'Disney+ Hotstar',
+    'Hotstar',
+    'Apple TV',
+    'Prime Video',
+    'Amazon Prime Video',
+    'Amazon Freevee',
+    'Freevee',
+    'Paramount+',
+    'Peacock',
+    'Shudder',
+    'Tubi',
+    'Pluto TV',
+    'Crunchyroll',
+    'BritBox',
+    'Acorn TV',
+    'AMC+',
+    'Criterion Channel',
+    'The Criterion Channel',
+    'MUBI',
+    'Plex',
+    'ZEE5',
+    'iQiyi',
+    'Viki',
+    'Rakuten Viki',
+    'Hayu',
+    'Starzplay',
+    'SkyShowtime',
+    'Crave',
+    'Stan',
+    'Binge',
+  ].map(normalName)
+)
+
+function isStreamingNetwork(name) {
+  return STREAMING_NETWORK_NAMES.has(normalName(name))
 }
 
 /** Exact matches first, then names that start with the term, then the rest. */
@@ -162,8 +219,23 @@ function rank(items, query, limit) {
   return [...exact, ...starts, ...contains].slice(0, limit)
 }
 
+export async function searchProviders(query, limit = 12) {
+  return rank(await streamingProviders(), query, limit)
+}
+
 export async function searchNetworks(query, limit = 12) {
-  return rank(await networkCatalogue(), query, limit)
+  const networks = (await networkCatalogue()).filter((network) => !isStreamingNetwork(network.name))
+  const found = rank(networks, query, limit)
+  if (found.length) return found
+
+  // Nothing that is a network: the name may still be a streaming service, and
+  // then the row carries its own field so ticking it filters by provider. The
+  // old complaint was that a service could not be found at all.
+  try {
+    return (await searchProviders(query, limit)).map((service) => ({ ...service, field: 'provider' }))
+  } catch {
+    return []
+  }
 }
 
 /** Companies, which is what TMDB calls a studio for a film. */
@@ -184,7 +256,9 @@ export async function searchStudios(query, limit = 12) {
 }
 
 export async function searchBrands(kind, query, limit = 12) {
-  return kind === 'studio' ? searchStudios(query, limit) : searchNetworks(query, limit)
+  if (kind === 'studio') return searchStudios(query, limit)
+  if (kind === 'provider') return searchProviders(query, limit)
+  return searchNetworks(query, limit)
 }
 
 function looksLikeId(value) {
@@ -193,6 +267,8 @@ function looksLikeId(value) {
 
 /** One name from TMDB when the id is not in the list we already hold. */
 async function remoteName(kind, id) {
+  // Providers have no per-id endpoint; the region's list is already in hand.
+  if (kind === 'provider') return null
   if (!tmdbConfigured() || !looksLikeId(id)) return null
 
   try {
@@ -217,7 +293,12 @@ export async function brandNames(kind, ids) {
 
   const unknown = wanted.filter((id) => !known.has(id))
   if (unknown.length) {
-    const list = kind === 'studio' ? [] : await networkCatalogue().catch(() => [])
+    const list =
+      kind === 'studio'
+        ? []
+        : kind === 'provider'
+          ? await streamingProviders().catch(() => [])
+          : await networkCatalogue().catch(() => [])
     for (const item of list) {
       if (!known.has(String(item.id))) known.set(String(item.id), item.name)
     }
@@ -228,8 +309,6 @@ export async function brandNames(kind, ids) {
     }
   }
 
-  return wanted.map((id) => ({
-    id,
-    name: known.get(id) ?? `${kind === 'studio' ? 'Studio' : 'Network'} ${id}`,
-  }))
+  const fallback = kind === 'studio' ? 'Studio' : kind === 'provider' ? 'Service' : 'Network'
+  return wanted.map((id) => ({ id, name: known.get(id) ?? `${fallback} ${id}` }))
 }

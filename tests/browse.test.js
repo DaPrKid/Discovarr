@@ -70,6 +70,8 @@ before(async () => {
       res.end(
         gzipSync(
           [
+            { id: 2, name: 'ABC' },
+            { id: 49, name: 'HBO' },
             { id: 213, name: 'Netflix' },
             { id: 2949, name: 'Shudder' },
             { id: 9278, name: 'Shudder' },
@@ -107,6 +109,16 @@ before(async () => {
         page: 1,
         total_pages: 1,
         results: [{ id: 500, media_type: 'movie', title: 'Searched title', release_date: '2020-05-05' }],
+      }
+    } else if (url.pathname === '/3/watch/providers/tv' || url.pathname === '/3/watch/providers/movie') {
+      // Streaming services are a different catalogue from the networks: the
+      // provider ids here do not match the network ids of the same service.
+      body = {
+        results: [
+          { provider_id: 8, provider_name: 'Netflix', display_priority: 1, display_priorities: { US: 1 } },
+          { provider_id: 386, provider_name: 'Peacock Premium', display_priority: 4, display_priorities: { US: 4 } },
+          { provider_id: 99, provider_name: 'Shudder', display_priority: 9, display_priorities: { US: 9 } },
+        ],
       }
     } else if (url.pathname.startsWith('/3/discover/')) {
       const number = Number(query.page ?? 1)
@@ -348,6 +360,14 @@ test('the brand lists cap, search and expand, and Discover carries no filter pan
   assert.match(networks, /class="filter-rail"/)
   assert.match(networks, /data-panel="rail"/)
   assert.match(networks, /aria-label="Show filters"[^>]*>Filters</)
+
+  // Networks are broadcasters; streaming services are watch providers and get
+  // their own searchable group instead of sitting in the network list.
+  assert.match(networks, /name="network" value="2"/)
+  assert.doesNotMatch(networks, /name="network" value="213"/)
+  assert.match(networks, /Streaming services/)
+  assert.match(networks, /name="provider" value="8"/)
+  assert.match(networks, /data-brand-remote="\/search\/brands\?kind=provider"/)
 })
 
 test('a network the printed list does not carry is found by live search', async () => {
@@ -358,8 +378,22 @@ test('a network the printed list does not carry is found by live search', async 
   })
   assert.equal(response.status, 200)
 
+  // A streaming service is not a network, so the network search answers with a
+  // provider row: ticking it filters by what is on that service, and it still
+  // shows up for the name somebody typed.
   const { items } = await response.json()
-  assert.deepEqual(items, [{ id: 2949, name: 'Shudder' }], 'one row per name, not one per region')
+  assert.deepEqual(items, [{ id: 99, name: 'Shudder', field: 'provider' }])
+
+  const service = await (
+    await fetch(`${baseUrl}/search/brands?kind=provider&q=shudder`, { headers: { cookie: adminCookie } })
+  ).json()
+  assert.deepEqual(service.items, [{ id: 99, name: 'Shudder' }])
+
+  // A broadcaster is still found as a network.
+  const broadcaster = await (
+    await fetch(`${baseUrl}/search/brands?kind=network&q=abc`, { headers: { cookie: adminCookie } })
+  ).json()
+  assert.deepEqual(broadcaster.items, [{ id: 2, name: 'ABC' }])
 
   // Studios are companies, so those come from TMDB's own company search.
   const companies = await (
@@ -380,7 +414,7 @@ test('a network the printed list does not carry is found by live search', async 
 test('the networks page opens onto titles and filters from the rail', async () => {
   const index = await (await page('/networks')).text()
   assert.match(index, /class="filter-rail"/)
-  assert.match(index, /name="network" value="213"/)
+  assert.match(index, /name="network" value="2"/)
   assert.match(index, /class="media-card"/)
   assert.match(index, /Page 1 of 2/)
   assert.doesNotMatch(index, /class="logo-wall"|class="logo-tile"/)
@@ -413,6 +447,39 @@ test('the networks page opens onto titles and filters from the rail', async () =
   assert.equal(discover.query['first_air_date.gte'], '2000-01-01')
   assert.equal(discover.query['first_air_date.lte'], '2020-12-31')
   assert.equal(discover.query.sort_by, 'vote_average.desc')
+})
+
+test('streaming services filter by provider, not by network', async () => {
+  const index = await (await page('/networks')).text()
+  assert.match(index, /name="provider" value="8"/)
+  assert.doesNotMatch(index, /name="network" value="213"/, 'Netflix is a service, not a network')
+
+  // The title is named from the provider catalogue, and the query is a provider
+  // one: the region is what makes "on Netflix" mean here rather than anywhere.
+  const netflix = await (await page('/networks?provider=8')).text()
+  assert.match(netflix, /name="provider" value="8" checked/)
+  assert.match(netflix, /<h1>Netflix<\/h1>/)
+
+  const streamed = lastRequest('/3/discover/tv')
+  assert.equal(streamed.query.with_watch_providers, '8')
+  assert.equal(streamed.query.watch_region, 'US')
+  assert.equal(streamed.query.with_networks, undefined)
+
+  // A broadcaster and a service narrow together, each on its own field.
+  const both = await (await page('/networks?network=2&provider=8')).text()
+  assert.match(both, /name="network" value="2" checked/)
+  assert.match(both, /name="provider" value="8" checked/)
+
+  const combined = lastRequest('/3/discover/tv')
+  assert.equal(combined.query.with_networks, '2')
+  assert.equal(combined.query.with_watch_providers, '8')
+
+  // A network search that only matches a service returns it as a provider row,
+  // so the old "cannot find it at all" complaint stays fixed either way.
+  const found = await (
+    await fetch(`${baseUrl}/search/brands?kind=network&q=netflix`, { headers: { cookie: adminCookie } })
+  ).json()
+  assert.deepEqual(found.items, [{ id: 8, name: 'Netflix', field: 'provider' }])
 })
 
 test('the studios page shares the rail and sends studio filters', async () => {
