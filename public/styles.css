@@ -3376,12 +3376,14 @@ html[data-hide-rail] .panel-restore > [data-panel='rail'] {
   border-top: 1px solid var(--line);
 }
 
-/* Discover keeps its filters open beside the grid, so that page has no button
-   that folds them away or brings them back. The other browse pages keep both,
-   and so does the phone sheet, where the rail is not a column at all. */
-@media (min-width: 1025px) {
-  html .discover.is-discover .panel-restore > [data-panel='rail'],
-  html .discover.is-discover .rail-head .panel-hide[data-panel='rail'] {
-    display: none;
-  }
+/* Brands that came back from a live search sit under a short caption, so they
+   read as answers to what was typed rather than part of the printed list. */
+.toggle-brand-found {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.toggle-brand-found [data-brand-note] {
+  margin: 0 0 6px;
 }

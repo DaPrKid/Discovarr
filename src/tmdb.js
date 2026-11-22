@@ -16,7 +16,7 @@ export function tmdbConfigured() {
   return Boolean(tmdbApiKey())
 }
 
-async function tmdbGet(path, params = {}) {
+export async function tmdbGet(path, params = {}) {
   const key = tmdbApiKey()
   if (!key) throw new HttpError(503, 'TMDB is not configured. Add an API key in settings.')
 

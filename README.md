@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.0
+docker pull ghcr.io/daprkid/discovarr:1.2.1
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,12 +62,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.0
+docker pull ghcr.io/daprkid/discovarr:1.2.1
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.2.0
+  ghcr.io/daprkid/discovarr:1.2.1
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -145,13 +145,16 @@ anonymous pull on every release, so the install cannot break silently.
   search form still submits when JavaScript is off.
 - **A denser Discover grid with pages** — a full poster wall per screen and
   Previous/Next paging over trending titles and search results.
-- **Networks and studios** — all 31 networks and 18 studios are toggles in the
-  right-hand panel, so their pages open straight onto titles instead of a wall
-  of logos.
-- **A filter panel on every browse page** — the right-hand rail toggles genres,
-  studios and networks, then narrows further by year, minimum rating, vote
-  count, original language and sort order. It applies as soon as a toggle
-  changes and still works as a plain GET form without JavaScript.
+- **Networks and studios** — the panel prints the common networks and studios as
+  toggles, and its search reaches the rest of TMDB: a name it does not print,
+  like Shudder, is looked up as you type and comes back ready to tick. Networks
+  come from TMDB's daily id export, cached under `/data/brands` for a week;
+  studios use its company search.
+- **A filter panel on the browse pages** — the right-hand rail of Networks,
+  Studios and the genre pages toggles genres, studios and networks, then narrows
+  further by year, minimum rating, vote count, original language and sort order.
+  It applies as soon as a toggle changes and still works as a plain GET form
+  without JavaScript. Discover itself is the grid alone.
 - **Type switches** — Anime, Animation, Documentary, Reality, Kids and Talk show
   sit beside the genres. Anime is matched through its TMDB keyword, so it stays
   distinct from Animation.
@@ -353,7 +356,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.0
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.1
 ```
 
 If you prefer to run the process without root at all, start the container with

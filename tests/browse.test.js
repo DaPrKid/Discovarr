@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { gzipSync } from 'node:zlib'
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 
@@ -56,6 +57,31 @@ before(async () => {
     const query = Object.fromEntries(url.searchParams)
     tmdb.requests.push({ path: url.pathname, query })
 
+    // TMDB's daily network export, which is what the live brand search reads.
+    // The name is checked because it is day, month, year — the other order is a
+    // 403 from the bucket, and the tests should fail rather than fall back.
+    if (url.pathname.startsWith('/exports/')) {
+      const named = /^\/exports\/tv_network_ids_\d{2}_\d{2}_\d{4}\.json\.gz$/.test(url.pathname)
+      res.writeHead(named ? 200 : 404, { 'content-type': 'application/gzip' })
+      if (!named) {
+        res.end()
+        return
+      }
+      res.end(
+        gzipSync(
+          [
+            { id: 213, name: 'Netflix' },
+            { id: 2949, name: 'Shudder' },
+            { id: 9278, name: 'Shudder' },
+            { id: 3353, name: 'Peacock' },
+          ]
+            .map((row) => JSON.stringify(row))
+            .join('\n')
+        )
+      )
+      return
+    }
+
     let body = null
 
     if (url.pathname.startsWith('/3/trending/')) {
@@ -69,6 +95,12 @@ before(async () => {
           title: `Trending ${number}-${index}`,
           release_date: '2024-01-01',
         })),
+      }
+    } else if (url.pathname === '/3/search/company') {
+      body = {
+        page: 1,
+        total_pages: 1,
+        results: [{ id: 120000, name: 'Shudder Films', logo_path: null }],
       }
     } else if (url.pathname.startsWith('/3/search/')) {
       body = {
@@ -243,6 +275,7 @@ before(async () => {
       DEMO_AUTO_LOGIN: '',
       TMDB_API_KEY: 'test-key',
       TMDB_BASE_URL: `http://127.0.0.1:${tmdbPort}/3`,
+      NETWORK_EXPORT_BASE: `http://127.0.0.1:${tmdbPort}/exports`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -271,7 +304,9 @@ test('discover fills the grid and pages through trending titles', async () => {
   assert.equal((first.match(/class="media-card"/g) ?? []).length, 20)
   assert.match(first, /Page 1 of 3/)
   assert.match(first, /href="\/\?page=2"/)
-  assert.match(first, /class="filter-rail"/)
+  // Discover shows the grid, not a filter panel: the filters live on the
+  // networks, studios and genre pages.
+  assert.doesNotMatch(first, /class="filter-rail"/)
 
   const second = await (await page('/?page=2')).text()
   assert.match(second, /Trending 2-0/)
@@ -291,30 +326,54 @@ test('the stylesheet keeps the wide sidebar, the old poster size and the rail', 
   assert.match(css, /\.person-head \{/)
 })
 
-test('the brand lists cap, search and expand, and Discover has no filter toggle', async () => {
-  const html = await (await page('/')).text()
+test('the brand lists cap, search and expand, and Discover carries no filter panel', async () => {
+  const studios = await (await page('/studios')).text()
 
-  assert.match(html, /data-brand-list/)
-  assert.match(html, /data-brand-items/)
-  assert.match(html, /data-brand-search/, 'a search box sits above the list')
-  assert.match(html, /data-brand-more/, 'the rest of the list is behind a button')
-  assert.match(html, /data-brand-limit="8"/)
+  assert.match(studios, /data-brand-list/)
+  assert.match(studios, /data-brand-items/)
+  assert.match(studios, /data-brand-search/, 'a search box sits above the list')
+  assert.match(studios, /data-brand-more/, 'the rest of the list is behind a button')
+  assert.match(studios, /data-brand-limit="8"/)
+  assert.match(studios, /data-brand-remote="\/search\/brands\?kind=studio"/, 'a miss asks TMDB')
 
-  // Discover is the one page that does not fold its filters away, so the desk
-  // hides the button that would bring them back. The markup is shared with the
-  // pages that do keep it.
-  assert.match(html, /class="discover has-rail is-discover"/, 'Discover marks itself')
-  assert.match(html, /aria-label="Show filters"[^>]*>Filters</, 'the chip keeps its word')
+  // Discover keeps the grid and nothing else: no panel, no toggle for one.
+  const discover = await (await page('/')).text()
+  assert.doesNotMatch(discover, /class="filter-rail"/)
+  assert.doesNotMatch(discover, /class="toggle-brand"/)
+  assert.doesNotMatch(discover, /data-panel="rail"/, 'no button for a panel that is not there')
 
-  const css = await (await fetch(`${baseUrl}/styles.css?v=0.7.1`)).text()
-  assert.match(
-    css,
-    /html \.discover\.is-discover \.panel-restore > \[data-panel='rail'\],[\s\S]*?display: none;/,
-    'the desk hides the filter button on Discover'
-  )
-
+  // The pages that do filter keep both the panel and the chip that folds it.
   const networks = await (await page('/networks')).text()
-  assert.doesNotMatch(networks, /is-discover/, 'the other browse pages keep the toggle')
+  assert.match(networks, /class="filter-rail"/)
+  assert.match(networks, /data-panel="rail"/)
+  assert.match(networks, /aria-label="Show filters"[^>]*>Filters</)
+})
+
+test('a network the printed list does not carry is found by live search', async () => {
+  // "Shudder" is not in the hand-written list, which is the complaint this
+  // answers: the search reads TMDB's full network export instead.
+  const response = await fetch(`${baseUrl}/search/brands?kind=network&q=shudder`, {
+    headers: { cookie: adminCookie },
+  })
+  assert.equal(response.status, 200)
+
+  const { items } = await response.json()
+  assert.deepEqual(items, [{ id: 2949, name: 'Shudder' }], 'one row per name, not one per region')
+
+  // Studios are companies, so those come from TMDB's own company search.
+  const companies = await (
+    await fetch(`${baseUrl}/search/brands?kind=studio&q=shudder`, { headers: { cookie: adminCookie } })
+  ).json()
+  assert.deepEqual(companies.items, [{ id: 120000, name: 'Shudder Films' }])
+
+  const anonymous = await fetch(`${baseUrl}/search/brands?kind=network&q=shudder`)
+  assert.equal(anonymous.status, 401, 'the lookup is not public')
+
+  // A filter picked from a live search comes back ticked and named, so it can
+  // be seen and removed again on the next page.
+  const chosen = await (await page('/networks?network=2949')).text()
+  assert.match(chosen, /name="network" value="2949" checked/)
+  assert.match(chosen, /<span>Shudder<\/span>/)
 })
 
 test('the networks page opens onto titles and filters from the rail', async () => {

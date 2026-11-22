@@ -82,6 +82,7 @@ import {
   trendingPage,
   TYPE_GENRE_IDS,
 } from './tmdb.js'
+import { brandNames, searchBrands } from './brands.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
 import { downloadQueue } from './services.js'
@@ -607,12 +608,9 @@ function discoverLayout(browse, body, rail = '') {
       }
     </div>`
 
-  // Discover keeps its filters open beside the grid, so that one page carries
-  // no fold-away button for them; the other browse pages keep theirs. On a
-  // phone both sidebars become sheets over the grid, and the scrim is what
-  // closes them when a tap lands anywhere else, so Discover keeps the sheet
-  // button there.
-  return `<div class="discover${rail ? ' has-rail' : ''}${browse ? '' : ' is-discover'}">${browseNav(browse)}<div class="discover-main">${restore}${body}</div>${rail}<div class="drawer-scrim" data-drawer-scrim hidden></div></div>`
+  // On a phone the two sidebars become sheets over the grid, and the scrim is
+  // what closes them when a tap lands anywhere else.
+  return `<div class="discover${rail ? ' has-rail' : ''}">${browseNav(browse)}<div class="discover-main">${restore}${body}</div>${rail}<div class="drawer-scrim" data-drawer-scrim hidden></div></div>`
 }
 
 function plexFor(plex, mediaType, tmdbId) {
@@ -705,13 +703,22 @@ function brandToggleList(name, label, options, selected) {
     toggleField(name, option.id, option.name, selected.some((id) => String(id) === String(option.id)))
   )
 
-  return `<div class="toggle-brand" data-brand-list data-brand-limit="${limit}">
+  // data-brand-remote is the live lookup: TMDB holds thousands of networks and
+  // companies, far too many to print here, so a name the list does not carry is
+  // asked for when the search finds nothing.
+  return `<div class="toggle-brand" data-brand-list data-brand-limit="${limit}" data-brand-name="${escapeHtml(
+    name
+  )}" data-brand-remote="/search/brands?kind=${escapeHtml(name)}">
     <label class="toggle-search">
       <span class="toggle-search-label">Search ${escapeHtml(noun)}</span>
       <input type="search" placeholder="Search ${escapeHtml(noun)}…" data-brand-search autocomplete="off" spellcheck="false" />
     </label>
     <div class="toggle-list toggle-scroll" data-brand-items>${items.join('')}</div>
     <p class="toggle-empty muted small" data-brand-empty hidden>No ${escapeHtml(noun)} matches that search.</p>
+    <div class="toggle-brand-found" data-brand-found hidden>
+      <p class="muted small" data-brand-note hidden></p>
+      <div class="toggle-list" data-brand-results></div>
+    </div>
     ${
       items.length > limit
         ? `<button class="btn btn-sm btn-ghost toggle-more" type="button" data-brand-more aria-expanded="false">Show all ${items.length} ${escapeHtml(noun)}</button>`
@@ -742,7 +749,7 @@ function railGroup(title, count, open, body) {
  * year, rating, vote, language and sort controls. It is a plain GET form, so it
  * works without JavaScript; the page script applies it on every change.
  */
-function filterRail({
+async function filterRail({
   action,
   mediaType,
   filters,
@@ -786,19 +793,38 @@ function filterRail({
     ${selectField('sort', 'Sort by', SORT_TABS, filters.sort)}
   </div>`
 
+  // A brand picked from a live search is not in the hand-written list, so its
+  // name is looked up and it is put first, ticked: a filter that cannot be seen
+  // cannot be removed either.
+  const brandOptions = async (kind, options, chosen) => {
+    const known = new Set(options.map((option) => String(option.id)))
+    const resolved = await brandNames(kind, chosen).catch(() => [])
+    return [...resolved.filter((item) => !known.has(String(item.id))), ...options]
+  }
+
   const brandGroup =
     mediaType === MediaType.MOVIE
       ? railGroup(
           'Studios',
           filters.studios.length,
           filters.studios.length > 0,
-          brandToggleList('studio', 'Studios', studios, filters.studios)
+          brandToggleList(
+            'studio',
+            'Studios',
+            await brandOptions('studio', studios, filters.studios),
+            filters.studios
+          )
         )
       : railGroup(
           'Networks',
           filters.networks.length,
           filters.networks.length > 0,
-          brandToggleList('network', 'Networks', networks, filters.networks)
+          brandToggleList(
+            'network',
+            'Networks',
+            await brandOptions('network', networks, filters.networks),
+            filters.networks
+          )
         )
 
   // The broadcast window: only series have an air date to filter on.
@@ -861,23 +887,6 @@ function filterRail({
   </form>`
 }
 
-/** The Discover panel: a media-type switch plus the shared filter rail. */
-async function discoverRail(mediaType, filters) {
-  const genres = await genreList(mediaType).catch(() => [])
-
-  return filterRail({
-    action: '/',
-    mediaType,
-    filters,
-    genres,
-    networks: networkOptions(),
-    studios: studioOptions(),
-    types: contentTypeOptions(mediaType),
-    typeSwitch: true,
-    clearHref: '/',
-  })
-}
-
 function browseUnavailable(what) {
   return `<div class="page-head">
       <div>
@@ -902,7 +911,6 @@ function discoverBody({
   totalPages = 1,
   error,
   plex = {},
-  rail = '',
   filtered = false,
   filters = null,
   collections = null,
@@ -951,7 +959,7 @@ function discoverBody({
   const subtitle = query
     ? 'Request anything you find for the library.'
     : filtered
-      ? 'Filtered with the panel on the right — change it any time.'
+      ? 'Filtered — the filters live on the Networks, Studios and genre pages.'
       : source === 'tmdb'
         ? 'Trending on TMDB — request anything for the library.'
         : 'Local catalog (offline demo data).'
@@ -987,8 +995,7 @@ function discoverBody({
               ...(filtered && filters ? filterParams(filters) : {}),
             },
           })
-    }`,
-    rail
+    }`
   )
 }
 
@@ -1087,7 +1094,7 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
             params: filterParams(filters),
           })
     }`,
-    filterRail({
+    await filterRail({
       action: basePath,
       mediaType,
       filters,
@@ -2424,7 +2431,6 @@ export function registerPageRoutes(router) {
     let totalPages = 1
     let items = []
     let collections = null
-    let rail = ''
     let filtered = false
     let error = url.searchParams.get('err')
 
@@ -2454,7 +2460,6 @@ export function registerPageRoutes(router) {
         items = collections
           ? []
           : result.items.map((item) => ({ item, local: store.getMediaByTmdb(item.tmdbId, item.mediaType) }))
-        rail = await discoverRail(mediaType, filters)
       } catch (tmdbError) {
         error = `TMDB unavailable: ${tmdbError.message}`
       }
@@ -2479,7 +2484,6 @@ export function registerPageRoutes(router) {
               store.setMediaArtwork(local.id, item.posterPath, item.backdropPath ?? null)
             }
           }
-          if (!query) rail = await discoverRail(mediaType, filters)
         } catch (tmdbError) {
           source = 'local'
           error = `TMDB unavailable, showing the local catalog: ${tmdbError.message}`
@@ -2508,7 +2512,6 @@ export function registerPageRoutes(router) {
         totalPages,
         error,
         plex,
-        rail,
         filtered,
         filters,
         collections,
@@ -2518,6 +2521,25 @@ export function registerPageRoutes(router) {
 
   // Suggestions for the Discover box. The form still submits normally, so a
   // failure here just means no dropdown.
+  // The live half of the brand search: a network or studio the hand-written
+  // list does not carry, looked up in TMDB's own catalogue.
+  router.get('/search/brands', async ({ req, res, url }) => {
+    if (!currentUser(req)) {
+      sendJson(res, 401, { items: [] })
+      return
+    }
+
+    const kind = url.searchParams.get('kind') === 'studio' ? 'studio' : 'network'
+    const query = String(url.searchParams.get('q') ?? '').trim().slice(0, 80)
+
+    try {
+      const items = await searchBrands(kind, query)
+      sendJson(res, 200, { items })
+    } catch {
+      sendJson(res, 200, { items: [] })
+    }
+  })
+
   router.get('/search/suggest', async ({ req, res, url }) => {
     const user = currentUser(req)
     if (!user) {

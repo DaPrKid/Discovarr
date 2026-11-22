@@ -236,11 +236,7 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
         // Hiding a sidebar is a per-browser choice, applied here so the grid
         // never jumps on load. Phones start with both panels tucked away.
         var panelFlags = { nav: 'hideNav', rail: 'hideRail' }
-        // Discover keeps its filters beside the grid, so that page takes no
-        // part in the remembered layout: a "filters hidden" choice saved by an
-        // earlier visit must not leave it without the panel or its way back.
-        var folds = location.pathname === '/' ? { nav: 'hideNav' } : panelFlags
-        Object.keys(folds).forEach(function (panel) {
+        Object.keys(panelFlags).forEach(function (panel) {
           var stored = null
           try { stored = localStorage.getItem('discovarr-' + panel) } catch (error) {}
           var hide = stored === null ? window.innerWidth < 900 : stored === 'hidden'
@@ -515,9 +511,24 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
           var more = list.querySelector('[data-brand-more]')
           var search = list.querySelector('[data-brand-search]')
           var empty = list.querySelector('[data-brand-empty]')
+          var found = list.querySelector('[data-brand-found]')
+          var results = list.querySelector('[data-brand-results]')
+          var note = list.querySelector('[data-brand-note]')
+          var remote = list.getAttribute('data-brand-remote')
+          var field = list.getAttribute('data-brand-name') || 'network'
           var expanded = false
+          var remoteShown = 0
+          var pending = null
+          var timer = null
 
           if (more) more.setAttribute('data-more-label', more.textContent)
+
+          function localMatch(term) {
+            for (var index = 0; index < items.length; index += 1) {
+              if (items[index].textContent.toLowerCase().indexOf(term) !== -1) return true
+            }
+            return false
+          }
 
           function paint(term) {
             var shown = 0
@@ -528,14 +539,98 @@ export function layout({ appName = 'Discovarr', title = '', user = null, active 
               if (visible) shown += 1
             })
             if (more) more.hidden = Boolean(term) || expanded
-            if (empty) empty.hidden = shown > 0
+            if (empty) empty.hidden = shown > 0 || remoteShown > 0
+          }
+
+          function setNote(text) {
+            if (!note) return
+            note.textContent = text
+            note.hidden = !text
+          }
+
+          function clearRemote() {
+            remoteShown = 0
+            if (results) results.textContent = ''
+            if (found) found.hidden = true
+            setNote('')
+          }
+
+          // A name the panel does not carry comes back as ordinary checkboxes,
+          // so ticking one submits the same form as the ones already printed.
+          function showRemote(rows) {
+            clearRemote()
+
+            if (!rows.length) {
+              setNote('TMDB has no match for that either.')
+              if (empty) empty.hidden = true
+              return
+            }
+
+            rows.forEach(function (row) {
+              var label = document.createElement('label')
+              label.className = 'toggle'
+
+              var input = document.createElement('input')
+              input.type = 'checkbox'
+              input.name = field
+              input.value = String(row.id)
+
+              var span = document.createElement('span')
+              span.textContent = row.name
+
+              label.appendChild(input)
+              label.appendChild(span)
+              results.appendChild(label)
+            })
+
+            remoteShown = rows.length
+            found.hidden = false
+            setNote('From TMDB — tick one to filter')
+            if (empty) empty.hidden = true
+          }
+
+          function lookup(term) {
+            if (!remote || !results) return
+            if (pending) pending.abort()
+
+            var controller = new AbortController()
+            pending = controller
+            setNote('Searching TMDB…')
+
+            fetch(remote + '&q=' + encodeURIComponent(term), {
+              credentials: 'same-origin',
+              headers: { accept: 'application/json' },
+              signal: controller.signal
+            })
+              .then(function (response) {
+                return response.ok ? response.json() : { items: [] }
+              })
+              .then(function (body) {
+                if (!controller.signal.aborted) showRemote(body.items || [])
+              })
+              .catch(function () {
+                if (!controller.signal.aborted) clearRemote()
+              })
           }
 
           paint('')
 
           if (search) {
             search.addEventListener('input', function () {
-              paint(search.value.trim().toLowerCase())
+              var term = search.value.trim().toLowerCase()
+              clearRemote()
+              paint(term)
+
+              if (timer) clearTimeout(timer)
+              if (pending) pending.abort()
+
+              // Only when the printed list has no answer: otherwise the match is
+              // already on screen and a request per keystroke would be waste.
+              if (term.length >= 2 && !localMatch(term)) {
+                timer = setTimeout(function () {
+                  lookup(term)
+                }, 250)
+              }
             })
             // Enter belongs to the search box, not to the filter form.
             search.addEventListener('keydown', function (event) {
