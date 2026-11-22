@@ -26,14 +26,39 @@ export const loginLimiter = createRateLimiter({
   max: config.loginRateLimit,
 })
 
-/** Counts a failed sign-in and reports whether the caller is still allowed. */
-export function recordFailedLogin(req) {
-  return loginLimiter.record(clientKey(req))
+/**
+ * The same budget, keyed by the account being guessed at. The per-client bucket
+ * alone lets an attacker with many addresses try one account forever, and lets
+ * one attacker (or one fat-fingered housemate) exhaust a shared address.
+ */
+export const accountLoginLimiter = createRateLimiter({
+  windowMs: config.loginRateWindowMs,
+  max: config.loginRateLimit,
+})
+
+function accountKey(identifier) {
+  const value = String(identifier ?? '').trim().toLowerCase()
+  return value ? `account:${value}` : null
 }
 
-/** Clears the failures for this client after a sign-in that succeeded. */
-export function clearLoginAttempts(req) {
+/** Counts a failed sign-in against both the client and the account. */
+export function recordFailedLogin(req, identifier = '') {
+  const byClient = loginLimiter.record(clientKey(req))
+  const key = accountKey(identifier)
+  const byAccount = key ? accountLoginLimiter.record(key) : { allowed: true, retryAfterSeconds: 0 }
+
+  return {
+    allowed: byClient.allowed && byAccount.allowed,
+    retryAfterSeconds: Math.max(byClient.retryAfterSeconds, byAccount.retryAfterSeconds),
+    remaining: Math.min(byClient.remaining, byAccount.remaining ?? byClient.remaining),
+  }
+}
+
+/** Clears the failures for this client and account after a sign-in that worked. */
+export function clearLoginAttempts(req, identifier = '') {
   loginLimiter.reset(clientKey(req))
+  const key = accountKey(identifier)
+  if (key) accountLoginLimiter.reset(key)
 }
 
 /**

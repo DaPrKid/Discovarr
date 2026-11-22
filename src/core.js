@@ -163,27 +163,33 @@ export async function requestMedia({
       ? profileAt(kind, Number(profileIndex))
       : resolveProfile(kind, { id: qualityProfileId })
 
-  const request = store.createRequest({
-    mediaId: media.id,
-    userId: user.id,
-    status: MediaRequestStatus.PENDING,
-    seasons,
-    qualityProfileId: profile?.profileId ?? null,
-    qualityProfileName: profile?.name ?? null,
-  })
+  // The request row, the title's status and its seasons move together: a crash
+  // between them used to leave a title processing with nothing to show for it.
+  const request = store.withTransaction(() => {
+    const created = store.createRequest({
+      mediaId: media.id,
+      userId: user.id,
+      status: MediaRequestStatus.PENDING,
+      seasons,
+      qualityProfileId: profile?.profileId ?? null,
+      qualityProfileName: profile?.name ?? null,
+    })
 
-  store.setMediaStatus(media.id, autoApprove ? MediaStatus.PROCESSING : MediaStatus.PENDING)
-  if (seasons) {
-    for (const number of seasons) {
-      store.setSeasonStatus(media.id, number, autoApprove ? MediaStatus.PROCESSING : MediaStatus.PENDING)
+    store.setMediaStatus(media.id, autoApprove ? MediaStatus.PROCESSING : MediaStatus.PENDING)
+    if (seasons) {
+      for (const number of seasons) {
+        store.setSeasonStatus(media.id, number, autoApprove ? MediaStatus.PROCESSING : MediaStatus.PENDING)
+      }
     }
-  }
 
-  store.recordAudit(
-    user.id,
-    'request.created',
-    `#${request.id} ${media.title}${seasons ? ` seasons ${seasons.join(', ')}` : ''}${autoApprove ? ' (auto-approved)' : ''}`
-  )
+    store.recordAudit(
+      user.id,
+      'request.created',
+      `#${created.id} ${media.title}${seasons ? ` seasons ${seasons.join(', ')}` : ''}${autoApprove ? ' (auto-approved)' : ''}`
+    )
+
+    return created
+  })
   notifyLater('request', {
     message: `${user.username} requested ${media.title}${seasons ? ` (season${seasons.length > 1 ? 's' : ''} ${seasons.join(', ')})` : ''}`,
     media,
@@ -209,17 +215,19 @@ async function approveAndDispatch(request, media, actor) {
   try {
     const result = await dispatchToService(media, request)
 
-    if (result.dispatched) store.setMediaExternalId(media.id, result.externalId)
-
     const note = result.dispatched ? result.detail : `Approved — ${result.reason}`
-    store.setRequestStatus(request.id, MediaRequestStatus.APPROVED, note)
-    store.setRequestRetry(request.id, { attempts: 0, nextRetryAt: null })
-    store.createNotification({
-      userId: request.userId,
-      kind: 'approved',
-      title: `${media.title} was approved`,
-      body: result.dispatched ? 'Sent to the download client.' : note,
-      href: `/media/${media.id}`,
+
+    store.withTransaction(() => {
+      if (result.dispatched) store.setMediaExternalId(media.id, result.externalId)
+      store.setRequestStatus(request.id, MediaRequestStatus.APPROVED, note)
+      store.setRequestRetry(request.id, { attempts: 0, nextRetryAt: null })
+      store.createNotification({
+        userId: request.userId,
+        kind: 'approved',
+        title: `${media.title} was approved`,
+        body: result.dispatched ? 'Sent to the download client.' : note,
+        href: `/media/${media.id}`,
+      })
     })
 
     notifyLater('approved', {
@@ -236,30 +244,32 @@ async function approveAndDispatch(request, media, actor) {
 
     return store.getRequestById(request.id)
   } catch (error) {
-    store.setRequestStatus(request.id, MediaRequestStatus.FAILED, `Dispatch failed: ${error.message}`)
-    store.recordAudit(actor?.id ?? null, 'request.dispatch_failed', `#${request.id} ${error.message}`)
-
     // Background retries take over from here unless the attempts are spent.
     const attempts = (request.attempts ?? 0) + 1
     const maxAttempts = Number(store.getSetting('requests.maxAttempts') ?? 3)
     const exhausted = attempts >= Math.max(1, maxAttempts)
 
-    store.setRequestRetry(request.id, {
-      attempts,
-      nextRetryAt: exhausted ? null : new Date(Date.now() + backoffDelayMs(attempts)).toISOString(),
+    store.withTransaction(() => {
+      store.setRequestStatus(request.id, MediaRequestStatus.FAILED, `Dispatch failed: ${error.message}`)
+      store.recordAudit(actor?.id ?? null, 'request.dispatch_failed', `#${request.id} ${error.message}`)
+      store.setRequestRetry(request.id, {
+        attempts,
+        nextRetryAt: exhausted ? null : new Date(Date.now() + backoffDelayMs(attempts)).toISOString(),
+      })
+
+      if (exhausted) {
+        store.createNotification({
+          userId: request.userId,
+          kind: 'failed',
+          title: `${media.title} could not be sent to ${media.mediaType === MediaType.MOVIE ? 'Radarr' : 'Sonarr'}`,
+          body: `Gave up after ${attempts} attempt(s): ${error.message}`,
+          href: `/media/${media.id}`,
+        })
+      }
     })
 
-    if (exhausted) {
-      store.createNotification({
-        userId: request.userId,
-        kind: 'failed',
-        title: `${media.title} could not be sent to ${media.mediaType === MediaType.MOVIE ? 'Radarr' : 'Sonarr'}`,
-        body: `Gave up after ${attempts} attempt(s): ${error.message}`,
-        href: `/media/${media.id}`,
-      })
-    }
-
-    notifyLater('approved', { message: `${media.title} failed to dispatch: ${error.message}`, media, user: actor })
+    // A failure is its own event now, so muting it no longer mutes approvals.
+    notifyLater('failed', { message: `${media.title} failed to dispatch: ${error.message}`, media, user: actor })
 
     if (exhausted) {
       pushLater(request.userId, 'failed', {
@@ -756,6 +766,7 @@ export function updateSettings(input, actor) {
       ['onRequest', 'notifications.onRequest'],
       ['onApproval', 'notifications.onApproval'],
       ['onAvailable', 'notifications.onAvailable'],
+      ['onFailure', 'notifications.onFailure'],
     ]) {
       if (notifications[field] !== undefined) entries[key] = notifications[field] ? 'true' : 'false'
     }

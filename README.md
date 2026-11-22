@@ -394,7 +394,7 @@ as `?token=` for clients that cannot send one.
 | `GET` | `/search?query=&type=` | TMDB search |
 | `GET` | `/media?type=&q=` | Local catalog |
 | `GET` | `/media/:id` | Title, seasons, requests |
-| `PATCH` | `/media/:id` | `{ status: 5 }` marks available |
+| `PATCH` | `/media/:id` | Marks the title available; the body is ignored |
 | `GET` | `/request?filter=&page=&take=` | Admin sees all |
 | `POST` | `/request` | `{ mediaId }`, `{ mediaType, tmdbId }`, optional `seasons`, `qualityProfileId` or `profileIndex` |
 | `POST` | `/request/:id/approve` | Approves and dispatches |
@@ -412,6 +412,7 @@ as `?token=` for clients that cannot send one.
 discovarr/
 ├── Dockerfile            # node:24-alpine, non-root, healthcheck, /data volume
 ├── docker-compose.yml
+├── discovarr-tv/         # Android TV client: Kotlin/Compose, its own Gradle build
 ├── docker/entrypoint.sh  # chowns /data, then drops to PUID:PGID
 ├── public/styles.css
 ├── tests/lifecycle.test.js
@@ -437,6 +438,10 @@ discovarr/
     ├── passwords.js      # scrypt hashing
     └── config.js         # environment configuration
 ```
+
+The TV client in `discovarr-tv/` is a separate build (`./gradlew assembleDebug`)
+and has its own workflow, so a broken Gradle file fails on its own rather than in
+the Node suite.
 
 `cache.js` (artwork cache limits), `diagnostics.js` (the Tasks tab snapshot),
 `mail.js` (a small SMTP client), `retry.js` (background dispatch retries) and

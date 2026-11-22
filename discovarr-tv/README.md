@@ -171,3 +171,9 @@ who signed in.
   not on the television; only the account's own settings are.
 - Requests can be filed and followed but not approved or declined from the TV.
 - No in-app update channel. Rebuild and `adb install -r` again.
+- Plain HTTP is accepted only for a private address (`10.x`, `192.168.x`,
+  `172.16–31.x`, `localhost`, `*.local`). A server reached over the internet
+  needs `https://`, because the session token would otherwise travel in the clear.
+- The session cookie or API token is kept in the app's private preferences, not
+  encrypted at rest. A rooted box, or an image taken of it, exposes that token;
+  it can be revoked from Discovarr's API tokens page like any other session.

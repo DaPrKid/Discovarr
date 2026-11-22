@@ -21,6 +21,39 @@ export const db = new DatabaseSync(config.databaseFile)
 db.exec('PRAGMA journal_mode = WAL;')
 db.exec('PRAGMA foreign_keys = ON;')
 
+/**
+ * Runs a group of statements as one unit. node:sqlite ships no transaction
+ * helper, so multi-step writes could stop halfway and leave a title flagged
+ * "processing" with no request behind it. A nested call joins the outer
+ * transaction instead of failing on a second BEGIN.
+ */
+let transactionDepth = 0
+
+export function withTransaction(work) {
+  if (transactionDepth > 0) return work()
+
+  db.exec('BEGIN IMMEDIATE')
+  transactionDepth += 1
+
+  try {
+    const result = work()
+    if (result && typeof result.then === 'function') {
+      throw new Error('withTransaction() must not wrap an async function')
+    }
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // SQLite may already have rolled back; the original error is the useful one.
+    }
+    throw error
+  } finally {
+    transactionDepth -= 1
+  }
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

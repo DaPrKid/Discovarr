@@ -719,6 +719,33 @@ class DiscovarrClient(
     // Transport
     // ---------------------------------------------------------------------
 
+    /**
+     * Plain HTTP is a home-network convenience: an Unraid box is usually reached
+     * on 192.168.x.x without a certificate. Anywhere else the session would
+     * travel in the clear, so those addresses must use https.
+     */
+    private fun transportGuard(url: String) {
+        val parsed = runCatching { URL(url) }.getOrNull() ?: return
+        if (parsed.protocol != "http") return
+        if (isPrivateHost(parsed.host)) return
+        throw ApiException(0, "Use https:// for a server outside your own network.")
+    }
+
+    private fun isPrivateHost(host: String): Boolean {
+        val name = host.trim().lowercase().removeSurrounding("[", "]")
+        if (name == "localhost" || name == "::1" || name.endsWith(".local")) return true
+
+        val parts = name.split('.')
+        if (parts.size != 4) return false
+        val numbers = parts.mapNotNull { it.toIntOrNull()?.takeIf { value -> value in 0..255 } }
+        if (numbers.size != 4) return false
+
+        return numbers[0] == 10 ||
+            numbers[0] == 127 ||
+            (numbers[0] == 192 && numbers[1] == 168) ||
+            (numbers[0] == 172 && numbers[1] in 16..31)
+    }
+
     /** Poster lookups already answered, keyed by the row they were asked for. */
     private val posterCache = mutableMapOf<String, String?>()
     private val posterLock = Any()
@@ -751,6 +778,7 @@ class DiscovarrClient(
         extraCookie: String? = null,
         followRedirects: Boolean = true,
     ): RawResponse = withContext(Dispatchers.IO) {
+        transportGuard(baseUrl + path)
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 10_000
@@ -803,6 +831,7 @@ class DiscovarrClient(
 
     private suspend fun execute(method: String, path: String, body: JSONObject?): RawResponse =
         withContext(Dispatchers.IO) {
+            transportGuard(baseUrl + path)
             val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = 10_000

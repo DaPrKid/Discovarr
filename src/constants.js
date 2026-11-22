@@ -131,9 +131,13 @@ export const SETTING_DEFAULTS = Object.freeze({
   'smtp.password': '',
   'smtp.from': '',
   'smtp.fromName': 'Discovarr',
+  // Off only for a relay on the same network with a self-signed certificate.
+  'smtp.verifyTls': 'true',
   'notifications.onRequest': 'true',
   'notifications.onApproval': 'true',
   'notifications.onAvailable': 'true',
+  // A dispatch that failed: its own switch, so muting it keeps approvals on.
+  'notifications.onFailure': 'true',
 })
 
 export const ACTIVE_REQUEST_STATUSES = Object.freeze([

@@ -129,6 +129,47 @@ test('login works and exposes the current user', async () => {
   assert.equal(me.json.user.username, 'Sam')
 })
 
+test('the catalog API needs a session too', async () => {
+  const anonymous = await call('/api/v1/media')
+  assert.equal(anonymous.status, 401, 'the catalog must not be readable without a session')
+
+  const signedIn = await call('/api/v1/media', { cookie: adminCookie })
+  assert.equal(signedIn.status, 200)
+  assert.equal(signedIn.json.totalResults, signedIn.json.results.length)
+
+  const detail = await call(`/api/v1/media/${signedIn.json.results[0].id}`)
+  assert.equal(detail.status, 401)
+})
+
+test('the mail certificate checkbox can actually be turned off', async () => {
+  // An unticked checkbox sends nothing at all, so smtpVerifyTls is absent here.
+  const form = new URLSearchParams({
+    settingsSection: 'mail',
+    settingsTab: 'notifications',
+    smtpEnabled: 'on',
+    smtpHost: 'mail.example.com',
+    smtpPort: '587',
+    smtpSecurity: 'starttls',
+    smtpFrom: 'discovarr@example.com',
+    smtpFromName: 'Discovarr',
+  })
+
+  const saved = await fetch(`${baseUrl}/settings`, {
+    method: 'POST',
+    headers: { cookie: adminCookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: form,
+    redirect: 'manual',
+  })
+  assert.equal(saved.status, 303)
+
+  const page = await (
+    await fetch(`${baseUrl}/settings?tab=notifications`, { headers: { cookie: adminCookie } })
+  ).text()
+
+  assert.match(page, /name="smtpVerifyTls"\s+\/>/, 'the checkbox must render unticked')
+  assert.doesNotMatch(page, /name="smtpVerifyTls"\s+checked/)
+})
+
 test('wrong password is rejected', async () => {
   const { status } = await call('/api/v1/auth/login', {
     method: 'POST',

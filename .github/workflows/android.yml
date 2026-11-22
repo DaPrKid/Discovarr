@@ -1,0 +1,50 @@
+name: Android TV
+
+# The Node suite cannot see a broken Gradle file, so the TV client gets its own
+# build. It only runs when the app (or this workflow) changes.
+
+on:
+  push:
+    paths:
+      - 'discovarr-tv/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'discovarr-tv/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Assemble the debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache the Gradle home
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('discovarr-tv/**/*.gradle.kts', 'discovarr-tv/gradle/wrapper/gradle-wrapper.properties') }}
+
+      - name: ./gradlew assembleDebug
+        working-directory: discovarr-tv
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Keep the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: discovarr-tv-debug
+          path: discovarr-tv/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

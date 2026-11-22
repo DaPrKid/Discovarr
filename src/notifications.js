@@ -4,7 +4,7 @@ import { sendMail } from './mail.js'
 const TIMEOUT_MS = 6000
 
 /** Which event a user must opt into to receive an email about it. */
-export const EVENT_BITS = Object.freeze({ approved: 1, declined: 2, available: 4 })
+export const EVENT_BITS = Object.freeze({ approved: 1, declined: 2, available: 4, failed: 8 })
 
 export function webhookConfigured() {
   return Boolean(getSetting('notifications.webhookUrl'))
@@ -29,6 +29,7 @@ async function sendWebhook(event, { message, media, user }) {
     approved: 'notifications.onApproval',
     declined: 'notifications.onApproval',
     available: 'notifications.onAvailable',
+    failed: 'notifications.onFailure',
   }[event]
 
   if (!url) return { sent: false, reason: 'no webhook configured' }

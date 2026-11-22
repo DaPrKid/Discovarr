@@ -22,6 +22,12 @@ export function syncState() {
 }
 
 function applyLibraryItem(item) {
+  // A whole item is one unit: media row, seasons, request completions and the
+  // notifications that go with them.
+  return store.withTransaction(() => applyLibraryItemNow(item))
+}
+
+function applyLibraryItemNow(item) {
   let media = store.getMediaByTmdb(item.tmdbId, item.mediaType)
   let updated = false
 

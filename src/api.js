@@ -69,10 +69,11 @@ export function registerApiRoutes(router) {
 
   router.post('/api/v1/auth/login', async ({ req, res }) => {
     const body = await readBody(req)
-    const user = store.findUserByLogin(body.username ?? body.email ?? '')
+    const identifier = body.username ?? body.email ?? ''
+    const user = store.findUserByLogin(identifier)
 
     if (!user || !verifyPassword(String(body.password ?? ''), user.passwordHash)) {
-      const limit = recordFailedLogin(req)
+      const limit = recordFailedLogin(req, identifier)
 
       if (!limit.allowed) {
         sendJson(
@@ -87,7 +88,7 @@ export function registerApiRoutes(router) {
       throw new HttpError(401, 'Incorrect username or password')
     }
 
-    clearLoginAttempts(req)
+    clearLoginAttempts(req, identifier)
     const token = createSession(user.id)
     sendJson(res, 200, { user: publicUser(user) }, { 'set-cookie': sessionCookie(token, req) })
   })
@@ -124,23 +125,22 @@ export function registerApiRoutes(router) {
     sendJson(res, 200, { results })
   })
 
+  // The catalog is the household's, not the internet's: the HTML pages all
+  // require a session, and this used to be the one door left open.
   router.get('/api/v1/media', ({ req, res, url }) => {
-    const user = currentUser(req)
-    sendJson(res, 200, {
-      page: 1,
-      totalPages: 1,
-      totalResults: 0,
-      results: getCatalog({
-        type: parseType(url.searchParams.get('type')),
-        query: url.searchParams.get('q') ?? url.searchParams.get('query') ?? '',
-        userId: user?.id ?? null,
-      }),
+    const user = requireUser(req)
+    const results = getCatalog({
+      type: parseType(url.searchParams.get('type')),
+      query: url.searchParams.get('q') ?? url.searchParams.get('query') ?? '',
+      userId: user.id,
     })
+
+    sendJson(res, 200, { page: 1, totalPages: 1, totalResults: results.length, results })
   })
 
   router.get('/api/v1/media/:id', ({ req, res, params }) => {
-    const user = currentUser(req)
-    sendJson(res, 200, getMediaDetail(Number(params.id), user?.id ?? null))
+    const user = requireUser(req)
+    sendJson(res, 200, getMediaDetail(Number(params.id), user.id))
   })
 
   router.patch('/api/v1/media/:id', ({ req, res, params }) => {

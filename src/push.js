@@ -27,7 +27,7 @@ const MAX_PAYLOAD_BYTES = 3000
 const RECORD_SIZE = 4096
 
 /** The per-user event flags, matching the checkboxes on the account page. */
-const EVENT_BITS = Object.freeze({ approved: 1, declined: 2, failed: 1, available: 4 })
+const EVENT_BITS = Object.freeze({ approved: 1, declined: 2, available: 4, failed: 8 })
 const THEMES = ['midnight', 'cinema', 'teal', 'forest', 'sapphire', 'crimson']
 
 const base64url = (buffer) => Buffer.from(buffer).toString('base64url')
