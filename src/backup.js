@@ -99,7 +99,10 @@ export function pruneBackups(keep = 7) {
  * Writes one snapshot now. `label` only shows up in the file name, so the list
  * on the settings page says why it exists.
  */
-export function createBackup({ keep = 7, label = 'manual' } = {}) {
+export function createBackup({ keep = null, label = 'manual' } = {}) {
+  // A snapshot taken by hand, or before a restore, rotates against the same
+  // limit the schedule uses, or the disk would grow with every button press.
+  const limit = Math.max(1, Number(keep ?? getSettings()['backup.keep'] ?? 7) || 7)
   const directory = backupDirectory()
   mkdirSync(directory, { recursive: true })
 
@@ -112,7 +115,7 @@ export function createBackup({ keep = 7, label = 'manual' } = {}) {
   const file = join(directory, name)
   writeSnapshotTo(file)
 
-  const pruned = pruneBackups(keep)
+  const pruned = pruneBackups(limit)
   return { name, file, bytes: statSync(file).size, pruned }
 }
 
