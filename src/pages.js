@@ -743,7 +743,7 @@ function brandToggleList(name, label, options, selected) {
       <input type="search" placeholder="Search ${escapeHtml(noun)}…" data-brand-search autocomplete="off" spellcheck="false" />
     </label>
     <div class="toggle-list toggle-scroll" data-brand-items>${items.join('')}</div>
-    <p class="toggle-empty muted small" data-brand-empty hidden>No ${escapeHtml(noun)} matches that search.</p>
+    <p class="toggle-empty muted small" data-brand-empty hidden>No ${escapeHtml(noun)} match that search.</p>
     <div class="toggle-brand-found" data-brand-found hidden>
       <p class="muted small" data-brand-note hidden></p>
       <div class="toggle-list" data-brand-results></div>
