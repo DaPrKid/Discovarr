@@ -585,6 +585,7 @@ input[type='checkbox'] {
 }
 
 .media-card {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -1251,6 +1252,30 @@ code {
   background: var(--accent-soft);
   border-color: var(--accent);
   font-weight: 600;
+}
+
+/* The service the household owns carries this card's title: the Plex ribbon's
+   counterpart, on the poster, one click from playing it. */
+.watch-pin {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: rgba(12, 14, 20, 0.82);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.watch-pin:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .service-panel {

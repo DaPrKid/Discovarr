@@ -1541,7 +1541,7 @@ export function cardRequestDialog({ movieProfiles = [], tvProfiles = [] } = {}) 
   </dialog>`
 }
 
-export function mediaCard(item, { returnTo = '/', local = null, plex = null } = {}) {
+export function mediaCard(item, { returnTo = '/', local = null, plex = null, watch = null } = {}) {
   const entry = local ?? (item.id ? item : null)
   // A seeded or imported row can lack artwork while TMDB has it; prefer the
   // local record but borrow the poster rather than falling back to initials.
@@ -1571,7 +1571,17 @@ export function mediaCard(item, { returnTo = '/', local = null, plex = null } = 
   return `<article class="media-card">
     <a href="${href}" class="poster-link"${preview}>${poster(view)}${
       plex ? '<span class="plex-ribbon" title="Available on Plex">Plex</span>' : ''
-    }</a>
+    }</a>${
+      // The service the household already pays for carries this title: the
+      // Plex ribbon's counterpart, with the play icon straight to the title.
+      watch
+        ? `<a class="watch-pin" href="${escapeHtml(watch.url)}" target="_blank" rel="noreferrer noopener" title="Play ${escapeHtml(
+            view.title ?? item.title ?? ''
+          )} on ${escapeHtml(watch.name)}" aria-label="Play ${escapeHtml(
+            view.title ?? item.title ?? ''
+          )} on ${escapeHtml(watch.name)}">▶</a>`
+        : ''
+    }
     <div class="media-body">
       <a class="media-title" href="${href}"${preview}>${title}</a>
       <p class="media-meta">${escapeHtml(meta)}${year ? ` · ${escapeHtml(year)}` : ''}</p>

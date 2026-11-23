@@ -287,8 +287,13 @@ before(async () => {
       const body = JSON.parse(raw || '{}')
       jw.requests.push(body)
 
+      const search = String(body.variables?.search ?? '')
+
+      // A title nobody ever answers for, so the cap on the wait can be measured.
+      if (search === 'Movie 998') return
+
       const edges =
-        body.variables?.search === 'Detail Movie'
+        search === 'Detail Movie'
           ? [
               {
                 node: {
@@ -326,7 +331,22 @@ before(async () => {
                 },
               },
             ]
-          : []
+          : search === 'Trending 1-0'
+            ? [
+                {
+                  node: {
+                    content: { externalIds: { tmdbId: '100' } },
+                    offers: [
+                      {
+                        monetizationType: 'FLATRATE',
+                        standardWebURL: 'https://www.netflix.com/title/80100172',
+                        package: { clearName: 'Netflix' },
+                      },
+                    ],
+                  },
+                },
+              ]
+            : []
 
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ data: { popularTitles: { edges } } }))
@@ -376,6 +396,8 @@ before(async () => {
 after(() => {
   server?.kill('SIGTERM')
   tmdb?.close()
+  // The test that measures the cap leaves one request hanging on purpose.
+  jw?.closeAllConnections?.()
   jw?.close()
   if (dataDir) rmSync(dataDir, { recursive: true, force: true })
 })
@@ -932,4 +954,30 @@ test('a ticked service plays the title on that service, not a search page', asyn
   assert.match(settings, /name="tmdbService" value="8" checked/)
   assert.match(settings, /name="tmdbService" value="99" checked/)
   assert.match(settings, /name="tmdbServicesSubmitted" value="1"/)
+
+  // The dependency is written down where an administrator will look: the Tasks
+  // tab names the catalogue, the cap and the last lookup.
+  const tasks = await (await page('/settings?tab=tasks')).text()
+  assert.match(tasks, /<th>Play links<\/th>/)
+  assert.match(tasks, /5 service\(s\) ticked/)
+  assert.match(tasks, /2000 ms cap/)
+  assert.match(tasks, /last lookup (ok|failed)/)
+})
+
+test('a card carries a play pin for a service the household owns', async () => {
+  const html = await (await page('/')).text()
+  assert.match(html, /class="watch-pin" href="https:\/\/www\.netflix\.com\/title\/80100172"/)
+  // Only the title the catalogue answered for gets a pin: the grid reads the
+  // cache, it does not block on every poster.
+  assert.equal((html.match(/class="watch-pin"/g) ?? []).length, 1)
+})
+
+test('a slow JustWatch cannot hold up a title page', async () => {
+  const started = Date.now()
+  const html = await (await page('/title/movie/998')).text()
+  const elapsed = Date.now() - started
+
+  assert.match(html, /Movie 998/)
+  assert.doesNotMatch(html, /btn-watch/)
+  assert.ok(elapsed < 3500, `the title page took ${elapsed} ms`)
 })

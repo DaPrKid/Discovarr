@@ -5,6 +5,7 @@ import { APP_VERSION, MediaRequestStatus } from './constants.js'
 import * as store from './db.js'
 import { serviceSummary } from './services.js'
 import { syncState } from './sync.js'
+import { watchState } from './watch.js'
 
 function fileSize(path) {
   try {
@@ -58,6 +59,10 @@ export function diagnosticsSnapshot() {
       radarr: serviceSummary('radarr'),
       sonarr: serviceSummary('sonarr'),
     },
+    // The streaming play links come from JustWatch, which is the one dependency
+    // that is not TMDB, Plex or the *arrs. Reporting it here means a change on
+    // their side shows up in Tasks instead of only as missing buttons.
+    watch: watchState(),
     sync: {
       lastRun: sync.lastRun,
       lastSummary: sync.lastSummary,

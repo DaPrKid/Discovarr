@@ -22,7 +22,13 @@ const OFFER_TTL_MS = 24 * 60 * 60 * 1000
 // A title JustWatch could not answer for is not retried on every page load.
 const ERROR_TTL_MS = 10 * 60 * 1000
 const CACHE_LIMIT = 500
-const TIMEOUT_MS = 6000
+// A title page waits for this and no longer. The dependency is a convenience:
+// when it is slow or down the page still renders, just without the buttons.
+const TIMEOUT_MS = 2000
+// How long a grid waits in total for its card badges, and how many lookups run
+// at once. Cards are a preview, so the budget is shorter than a title page's.
+const CARD_BUDGET_MS = 1500
+const CARD_CONCURRENCY = 5
 
 const OFFERS_QUERY = `query ($country: Country!, $language: Language!, $search: String!) {
   popularTitles(country: $country, filter: { searchQuery: $search }, first: 5, sortBy: POPULAR) {
@@ -106,6 +112,27 @@ export async function myServices() {
 }
 
 const offersCache = new Map()
+/** The last lookup, for the diagnostics page: a broken dependency is visible. */
+let lastLookup = null
+
+/** One key per title, shared with the pages that ask for its cards. */
+export function cardKey(mediaType, tmdbId) {
+  return `${mediaType}:${tmdbId}`
+}
+
+/** What the Tasks tab reports about the streaming play links. */
+export function watchState() {
+  const entries = [...offersCache.values()]
+
+  return {
+    services: serviceIds().length,
+    endpoint: config.justwatchUrl,
+    timeoutMs: TIMEOUT_MS,
+    cachedTitles: entries.filter((entry) => !entry.failed).length,
+    failedTitles: entries.filter((entry) => entry.failed).length,
+    lastLookup,
+  }
+}
 
 function remember(key, entry) {
   offersCache.delete(key)
@@ -170,11 +197,18 @@ async function titleOffers(tmdbId, title) {
   if (cached && Date.now() - cached.at < (cached.failed ? ERROR_TTL_MS : OFFER_TTL_MS)) return cached.offers
 
   let offers = null
+  let failure = null
   try {
     offers = await fetchOffers(tmdbId, title)
-  } catch {
+  } catch (error) {
     offers = null
+    failure =
+      error?.name === 'TimeoutError' || error?.name === 'AbortError'
+        ? `no answer within ${TIMEOUT_MS} ms`
+        : String(error?.message ?? error)
   }
+
+  lastLookup = { at: new Date().toISOString(), ok: !failure, detail: failure }
 
   const entry = offers ? { at: Date.now(), offers, failed: false } : { at: Date.now(), offers: [], failed: true }
   remember(key, entry)
@@ -200,4 +234,47 @@ export async function serviceLinks({ tmdbId, title }) {
   }
 
   return links
+}
+
+/**
+ * The same links for a grid of cards: resolved in parallel, under one short
+ * budget, so a slow service never holds up the page. A title that is not
+ * answered in time simply has no badge until a later page has it cached, and
+ * the per-title cache is what makes the second visit complete.
+ */
+export async function cardLinks(items, { budgetMs = CARD_BUDGET_MS, concurrency = CARD_CONCURRENCY } = {}) {
+  const result = new Map()
+  const queue = (items ?? []).filter((item) => item?.tmdbId && item?.mediaType)
+  if (!queue.length || !serviceIds().length) return result
+
+  const deadline = Date.now() + budgetMs
+
+  const worker = async () => {
+    while (queue.length) {
+      const item = queue.shift()
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return
+
+      let timer
+      try {
+        // The race is what keeps a slow lookup inside the budget: the request
+        // keeps running and fills the cache for the next page, but the card
+        // does not wait for it.
+        const links = await Promise.race([
+          serviceLinks({ tmdbId: item.tmdbId, title: item.title }),
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve(null), remaining)
+          }),
+        ])
+        if (links) result.set(cardKey(item.mediaType, item.tmdbId), links)
+      } catch {
+        // A card without a badge is the whole failure mode here.
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, () => worker()))
+  return result
 }

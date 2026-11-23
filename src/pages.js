@@ -84,7 +84,7 @@ import {
   TYPE_GENRE_IDS,
 } from './tmdb.js'
 import { brandNames as resolveBrandNames, searchBrands } from './brands.js'
-import { serviceLinks } from './watch.js'
+import { cardKey, cardLinks, serviceLinks } from './watch.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
 import { downloadQueue } from './services.js'
@@ -678,13 +678,18 @@ async function scanCollections({ mediaType, filters, first = [], totalPages = 1 
   return { films: films.length, collections: await collectionsFor(films) }
 }
 
-function mediaGrid(items, { returnTo = '/', plex = {} } = {}) {
+function mediaGrid(items, { returnTo = '/', plex = {}, badges = new Map() } = {}) {
   if (!items.length) return '<p class="empty">Nothing found.</p>'
 
   return `<div class="grid" data-fill>${items
     .map((item) => {
       const local = store.getMediaByTmdb(item.tmdbId, item.mediaType)
-      return mediaCard(item, { returnTo, local, plex: plexFor(plex, item.mediaType, item.tmdbId) })
+      return mediaCard(item, {
+        returnTo,
+        local,
+        plex: plexFor(plex, item.mediaType, item.tmdbId),
+        watch: badges.get(cardKey(item.mediaType, item.tmdbId))?.[0] ?? null,
+      })
     })
     .join('')}</div>`
 }
@@ -961,6 +966,7 @@ function discoverBody({
   filtered = false,
   filters = null,
   collections = null,
+  badges = new Map(),
 }) {
   const tabs = [
     ['all', 'All'],
@@ -994,6 +1000,7 @@ function discoverBody({
               returnTo: '/',
               local,
               plex: plexFor(plex, item.mediaType, item.tmdbId),
+              watch: badges.get(cardKey(item.mediaType, item.tmdbId))?.[0] ?? null,
             })
           )
           .join('')}</div>`
@@ -1112,6 +1119,9 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
     : null
   const collections = scanned?.collections ?? []
   const items = collectionMode ? [] : result.items
+  // Play badges are resolved from the per-title cache under a short budget, so
+  // a grid never waits on a slow service.
+  const badges = collectionMode ? new Map() : await cardLinks(items)
   const collectionNote = collectionMode
     ? ` Only collections that match these filters, grouped from the top ${scanned.films} matches.`
     : ''
@@ -1139,7 +1149,7 @@ async function catalogueBody({ browse, basePath, mediaType, filters, page = 1, p
     ? collections.length
       ? `<div class="grid">${collections.map((collection) => collectionCard(collection)).join('')}</div>`
       : '<p class="empty">No collections match these filters.</p>'
-    : mediaGrid(items, { returnTo: browseHref(basePath, filterParams(filters)), plex })
+    : mediaGrid(items, { returnTo: browseHref(basePath, filterParams(filters)), plex, badges })
 
   return discoverLayout(
     browse,
@@ -2579,6 +2589,10 @@ export function registerPageRoutes(router) {
       }
     }
 
+    // Card badges come from the per-title cache under a short budget: a slow
+    // service costs the grid a badge rather than the page.
+    const badges = await cardLinks(items.map(({ item }) => item))
+
     render(res, 200, {
       title: 'Discover',
       user,
@@ -2596,6 +2610,7 @@ export function registerPageRoutes(router) {
         filtered,
         filters,
         collections,
+        badges,
       }),
     })
   })

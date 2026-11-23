@@ -601,6 +601,23 @@ export function settingsBody({
   const diag = diagnosticsSnapshot()
   const cache = cacheStats()
 
+  // The play buttons depend on a catalogue that is not TMDB: say so plainly,
+  // with its endpoint, its cap and how the last lookup went, so a change on
+  // their side is a line here rather than a feature that quietly vanished.
+  const watchLine = diag.watch.services
+    ? `${diag.watch.services} service(s) ticked · ${diag.watch.cachedTitles} title(s) cached${
+        diag.watch.failedTitles ? `, ${diag.watch.failedTitles} unanswered` : ''
+      } · ${diag.watch.endpoint} (${diag.watch.timeoutMs} ms cap) · ${
+        diag.watch.lastLookup
+          ? diag.watch.lastLookup.ok
+            ? `last lookup ok ${diag.watch.lastLookup.at.replace('T', ' ').slice(0, 16)} UTC`
+            : `last lookup failed ${diag.watch.lastLookup.at.replace('T', ' ').slice(0, 16)} UTC: ${
+                diag.watch.lastLookup.detail ?? 'unknown error'
+              }`
+          : 'no lookup yet'
+      }`
+    : `no services ticked · ${diag.watch.endpoint} (${diag.watch.timeoutMs} ms cap)`
+
   // A failing sync used to be visible only in docker logs; surface it here with
   // the retry time so an administrator does not have to watch the container.
   const syncHealth = diag.sync.lastError
@@ -752,6 +769,7 @@ export function settingsBody({
           <tr><th>Radarr</th><td>${escapeHtml(serviceLine(diag.services.radarr))}</td></tr>
           <tr><th>Sonarr</th><td>${escapeHtml(serviceLine(diag.services.sonarr))}</td></tr>
           <tr><th>Last sync</th><td>${diag.sync.lastRun ? escapeHtml(diag.sync.lastRun.replace('T', ' ').slice(0, 19)) : 'never'}${diag.sync.lastError ? ' · last attempt failed' : ''}</td></tr>
+          <tr><th>Play links</th><td>${escapeHtml(watchLine)}</td></tr>
         </tbody>
       </table>
     </section>`

@@ -167,9 +167,10 @@ anonymous pull on every release, so the install cannot break silently.
   subscribes to in Settings → General and every title they carry gets the same
   ▶ Play button the Plex library gets, on the title page beside it: one click
   opens that exact title on Netflix, Disney+, Max or whichever service, not a
-  search box. A service is matched by name, so a cheaper "with ads" tier of the
-  same service still counts, and the links are the ones the offers behind the
-  where-to-watch panel publish for each service.
+  search box. The poster on a browse card carries a ▶ pin too, so a grid reads
+  the same way it does with Plex. A service is matched by name, so a cheaper
+  "with ads" tier of the same service still counts, and the links are the ones
+  the offers behind the where-to-watch panel publish for each service.
 - **A filter panel on the browse pages** — the right-hand rail of Networks,
   Studios and the genre pages toggles genres, studios, networks and streaming
   services, then narrows further by year, minimum rating, vote count, original
@@ -410,6 +411,7 @@ created with `umask 002` so the group can write them.
 | `PUID` | `99` | UID the app runs as inside the container (Unraid `nobody`) |
 | `PGID` | `100` | GID the app runs as (Unraid `users`) |
 | `TMDB_API_KEY` | unset | Fallback when no key is saved in settings |
+| `JUSTWATCH_URL` | `https://apis.justwatch.com/graphql` | Where the per-service play links are looked up |
 | `DEMO_AUTO_LOGIN` | unset | Preview only: sign every request in as this email. Never set publicly. |
 
 Everything else (TMDB key, Sonarr/Radarr URLs, keys, root folders, quality
@@ -511,6 +513,15 @@ that is not a web address never rendered.
 ## Limitations
 
 - Single container, single writer: SQLite in WAL mode, no external database.
+- **The streaming play buttons depend on JustWatch.** TMDB names the services
+  but returns one JustWatch page for all of them, so the per-service links come
+  from JustWatch's public catalogue — a dependency that is not TMDB, Plex or the
+  *arrs, and one that could change without notice. A lookup is capped at two
+  seconds and cached per title for a day, and a slow or broken catalogue costs
+  the button, not the page: everything else, including the where-to-watch panel,
+  keeps working. Settings → Tasks → Diagnostics reports the endpoint, the cap,
+  the cache size and how the last lookup went, so a break shows up there rather
+  than only as buttons that quietly stopped appearing.
 - Notification email is plain text from one SMTP account; there is no per-user
   mail server or mailing-list management.
 - Dispatch assumes Radarr/Sonarr v3 APIs; failures surface verbatim in the note.
