@@ -18,6 +18,7 @@ data class CastMember(
     val name: String,
     val role: String,
     val photoPath: String?,
+    val id: Long = 0,
 )
 
 /**
@@ -57,6 +58,9 @@ data class WatchlistEntry(
     val title: String,
     val meta: String?,
     val posterPath: String?,
+    val mediaId: Long? = null,
+    val statusId: Int = MediaStatus.UNKNOWN,
+    val activeRequests: Int = 0,
 )
 
 /** One release on one day of the calendar's agenda. */

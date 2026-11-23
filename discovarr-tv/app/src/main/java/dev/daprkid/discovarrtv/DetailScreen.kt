@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,151 +31,108 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.daprkid.discovarrtv.ui.Chips
 import dev.daprkid.discovarrtv.ui.FocusableSurface
 import dev.daprkid.discovarrtv.ui.Palette
+import dev.daprkid.discovarrtv.ui.PosterCard
 import dev.daprkid.discovarrtv.ui.RemoteImage
 import dev.daprkid.discovarrtv.ui.StatusLine
 import dev.daprkid.discovarrtv.ui.TvButton
+import dev.daprkid.discovarrtv.ui.TvChip
 import kotlinx.coroutines.launch
 
 /**
- * One title, laid out like the browser's page.
+ * One title. Facts, cast, seasons, the quality profile and the collection come
+ * from the same decision the browser's title page makes, over JSON.
  *
- * The facts, the tagline, the cast and the reading of whether Plex already holds
- * the file all come from the same HTML the browser renders — the JSON API
- * carries none of it. Seasons come from `/api/v1/media/:id`, episodes from the
- * season partial the browser itself opens, and availability from the catalog row,
- * so the request button never offers something that is already here.
- *
- * The page used to be set at browser sizes doubled, which made a synopsis read
- * like a poster: three lines filled the screen and the facts, the seasons and the
- * cast sat below the fold with no sign they existed. It is now the browser's own
- * scale, and the sections run in the browser's own order: art, title, blurb,
- * library state, seasons with their episodes, facts, cast.
- *
- * Actions stay in one row across the top, where the first press reaches them,
- * while up and down scroll the reading. That is the one place the television
- * cannot copy the browser: a pointer can scroll from anywhere on the page.
+ * Up and down move between the buttons, the season ticks and the cast. Only
+ * when nothing further that way can take focus does the synopsis scroll, so a
+ * remote can actually reach the controls that used to sit inside the scroll.
  */
 @Composable
-fun DetailScreen(media: Media, client: DiscovarrClient, onBack: () -> Unit) {
-    var page by remember(media.id, media.tmdbId) { mutableStateOf(MediaPage()) }
-    var detail by remember(media.id) { mutableStateOf<MediaDetail?>(null) }
-    var status by remember(media.id) { mutableStateOf<String?>(null) }
-    var isError by remember(media.id) { mutableStateOf(false) }
-    var busy by remember(media.id) { mutableStateOf(false) }
-    var watched by remember(media.id) { mutableStateOf(false) }
-    var saving by remember(media.id) { mutableStateOf(false) }
-    var loaded by remember(media.id) { mutableStateOf(false) }
-
-    var openSeason by remember(media.id) { mutableStateOf<Int?>(null) }
-    var episodes by remember(media.id) { mutableStateOf<List<Episode>>(emptyList()) }
-    var episodesLoading by remember(media.id) { mutableStateOf(false) }
-    val episodeCache = remember(media.id) { mutableMapOf<Int, List<Episode>>() }
+fun DetailScreen(
+    media: Media,
+    client: DiscovarrClient,
+    onBack: () -> Unit,
+    onPerson: (Long) -> Unit,
+    onOpen: (Media) -> Unit,
+    onCollection: (Long) -> Unit,
+) {
+    var view by remember(media.id, media.tmdbId) { mutableStateOf<TitleView?>(null) }
+    var status by remember(media.id, media.tmdbId) { mutableStateOf<String?>(null) }
+    var isError by remember(media.id, media.tmdbId) { mutableStateOf(false) }
+    var busy by remember(media.id, media.tmdbId) { mutableStateOf(false) }
+    var saving by remember(media.id, media.tmdbId) { mutableStateOf(false) }
+    var picked by remember(media.id, media.tmdbId) { mutableStateOf(setOf<Int>()) }
+    var profileIndex by remember(media.id, media.tmdbId) { mutableStateOf<Int?>(null) }
+    var openSeason by remember(media.id, media.tmdbId) { mutableStateOf<Int?>(null) }
+    var episodes by remember(media.id, media.tmdbId) { mutableStateOf<List<Episode>>(emptyList()) }
+    var episodesLoading by remember(media.id, media.tmdbId) { mutableStateOf(false) }
+    val episodeCache = remember(media.id, media.tmdbId) { mutableMapOf<Int, List<Episode>>() }
+    var reload by remember(media.id, media.tmdbId) { mutableStateOf(0) }
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val focus = LocalFocusManager.current
     val scroll = rememberScrollState()
-    // One press moves about a paragraph, not a pixel and not a page.
-    val step = with(LocalDensity.current) { 150.dp.toPx() }
 
-    LaunchedEffect(media.id, media.tmdbId) {
-        runCatching { client.mediaPage(media) }.onSuccess { incoming ->
-            page = incoming
-            watched = incoming.watched
-            loaded = true
-        }
-        if (media.id > 0) {
-            runCatching { client.mediaDetail(media.id) }.onSuccess { detail = it }
-        }
+    LaunchedEffect(media.id, media.tmdbId, reload) {
+        runCatching { client.title(media) }
+            .onSuccess { incoming ->
+                view = incoming
+                picked = incoming.seasons.filter { !it.inLibrary }.map { it.seasonNumber }.toSet()
+                profileIndex = incoming.profiles.firstOrNull { it.isDefault }?.index
+                    ?: incoming.profiles.firstOrNull()?.index
+                if (openSeason == null) openSeason = incoming.seasons.firstOrNull()?.seasonNumber
+            }
+            .onFailure { error ->
+                status = error.message ?: "Could not open this title"
+                isError = true
+            }
     }
 
-    val shown = detail?.media ?: media
-    val overview = page.overview ?: shown.overview
-
-    // The catalog's season rows carry a count, but it stays at zero until Sonarr
-    // has reported the files; the page's summaries come from TMDB and know how
-    // long the season actually is. Prefer the page, fall back to the catalog.
-    val seasons: List<Season> = run {
-        val stored = detail?.seasons.orEmpty().map { season ->
-            val counted = page.seasonCounts[season.seasonNumber] ?: 0
-            if (counted > 0) season.copy(episodeCount = counted) else season
-        }
-        stored.ifEmpty {
-            page.seasonCounts.entries
-                .sortedBy { it.key }
-                .map { (number, count) -> Season(number, "Season $number", count) }
-        }
-    }
-
-    // A show opens on its first season, so the episode list is visible without
-    // the viewer having to discover that the seasons are selectable at all.
-    LaunchedEffect(seasons) {
-        if (openSeason == null) openSeason = seasons.firstOrNull()?.seasonNumber
-    }
-
-    LaunchedEffect(openSeason) {
+    LaunchedEffect(openSeason, view?.media?.tmdbId) {
         val number = openSeason ?: return@LaunchedEffect
-        episodeCache[number]?.let {
-            episodes = it
-            return@LaunchedEffect
-        }
-        val tmdbId = page.tmdbId ?: shown.tmdbId
-        episodes = emptyList()
-        if (tmdbId == null) return@LaunchedEffect
+        episodeCache[number]?.let { episodes = it; return@LaunchedEffect }
+        val tmdbId = view?.media?.tmdbId ?: media.tmdbId ?: return@LaunchedEffect
         episodesLoading = true
-        val loadedEpisodes = runCatching { client.episodes(tmdbId, number) }.getOrDefault(emptyList())
-        episodeCache[number] = loadedEpisodes
-        episodes = loadedEpisodes
+        val loaded = runCatching { client.episodes(tmdbId, number) }.getOrDefault(emptyList())
+        episodeCache[number] = loaded
+        episodes = loaded
         episodesLoading = false
     }
 
-    // The page's own fact table when TMDB knows the title; the local record when
-    // it does not, so an item Plex added by hand still says what it is. The
-    // library row is dropped: the page writes it as "Available · 0 active
-    // request(s)", which reads as "nothing is in the library" on a screen where
-    // the film obviously is, so that state is said in its own words below.
-    val facts = page.facts
-        .filterNot { it.label.equals("Library", ignoreCase = true) }
-        .ifEmpty {
-            buildList {
-                shown.year?.let { add(Fact("Release date", it)) }
-                if (seasons.isNotEmpty()) {
-                    add(Fact("Seasons", seasons.size.toString()))
-                    val total = seasons.sumOf { it.episodeCount }
-                    if (total > 0) add(Fact("Episodes", total.toString()))
-                }
-                shown.runtime?.takeIf { it > 0 }?.let { add(Fact("Runtime", "$it min")) }
-            }
-        }
-
-    val inLibrary = shown.isAvailable || page.plexUrl != null
-    val activeRequests = maxOf(shown.activeRequests, detail?.media?.activeRequests ?: 0)
-    val libraryLine = when {
-        inLibrary && activeRequests > 0 -> "In your library · $activeRequests active request(s)"
-        inLibrary -> "In your library"
-        activeRequests > 0 -> "Requested · waiting on the download"
-        else -> "Not in your library yet"
-    }
+    val shown = view?.media ?: media
+    val page = view
 
     fun submit() {
+        if (shown.mediaType == "tv" && picked.isEmpty()) {
+            status = "Select at least one season."
+            isError = true
+            return
+        }
         busy = true
         scope.launch {
             try {
-                client.request(shown)
-                status = "Requested ${shown.title}. It will appear under Requests until it downloads."
+                client.request(
+                    shown,
+                    seasons = if (shown.mediaType == "tv") picked.sorted() else null,
+                    profileIndex = profileIndex,
+                )
+                status = "Requested ${shown.title}."
                 isError = false
+                reload += 1
             } catch (error: Exception) {
                 status = error.message ?: "The request was refused"
                 isError = true
@@ -187,15 +143,13 @@ fun DetailScreen(media: Media, client: DiscovarrClient, onBack: () -> Unit) {
     }
 
     fun toggleWatchlist() {
+        val current = page ?: return
         saving = true
         scope.launch {
             try {
-                watched = client.toggleWatchlist(page)
-                status = if (watched) {
-                    "Saved ${shown.title} to your watchlist."
-                } else {
-                    "Removed ${shown.title} from your watchlist."
-                }
+                val saved = client.toggleWatchlist(current.asPage())
+                view = current.copy(watched = saved)
+                status = if (saved) "Saved ${shown.title} to your watchlist." else "Removed ${shown.title} from your watchlist."
                 isError = false
             } catch (error: Exception) {
                 status = error.message ?: "The watchlist refused the change"
@@ -210,27 +164,24 @@ fun DetailScreen(media: Media, client: DiscovarrClient, onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(Palette.Background)
-            // Up and down belong to the page, not to focus: everything focusable
-            // is in the rows above, so a press that would move focus nowhere is
-            // better spent reading. Once at the top, up is released again so the
-            // rail and the rest of the shell still get their presses.
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
                     Key.DirectionDown -> {
-                        scope.launch { scroll.animateScrollBy(step) }
-                        true
-                    }
-
-                    Key.DirectionUp -> {
-                        if (scroll.value <= 0) {
-                            false
-                        } else {
-                            scope.launch { scroll.animateScrollBy(-step) }
+                        if (focus.moveFocus(FocusDirection.Down)) true
+                        else {
+                            scope.launch { scroll.scrollTo((scroll.value + 280).coerceAtMost(scroll.maxValue)) }
                             true
                         }
                     }
-
+                    Key.DirectionUp -> {
+                        if (focus.moveFocus(FocusDirection.Up)) true
+                        else if (scroll.value <= 0) false
+                        else {
+                            scope.launch { scroll.scrollTo((scroll.value - 280).coerceAtLeast(0)) }
+                            true
+                        }
+                    }
                     else -> false
                 }
             },
@@ -238,386 +189,263 @@ fun DetailScreen(media: Media, client: DiscovarrClient, onBack: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 40.dp, end = 52.dp, top = 26.dp, bottom = 22.dp),
+                .padding(start = 36.dp, end = 48.dp, top = 22.dp, bottom = 18.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Only drawn when Plex actually holds the title, the same rule the
-                // web title page follows. Plex accepts a link it then ignores, so
-                // only the attempt that fails says anything: a successful hand-off
-                // is the viewer watching Plex, not reading a banner about it.
-                var plexForm by remember(page.plexUrl) { mutableStateOf(0) }
-                page.plexUrl?.let { link ->
-                    TvButton(
-                        label = "▶  Play on Plex",
-                        onClick = {
-                            val mediaType = page.mediaType ?: shown.mediaType
-                            val forms = PlexLauncher.formCount(link, mediaType)
-                            if (forms == 0) {
-                                status = "This server sent a Plex link this TV cannot " +
-                                    "turn into a Plex address: $link"
-                                isError = true
-                            } else {
-                                val attempt = plexForm % forms
-                                when (PlexLauncher.open(context, link, mediaType, attempt)) {
-                                    PlexLauncher.Launch.None -> {
-                                        status = "This TV has no app that opens Plex links, so that title cannot be opened there."
-                                        isError = true
-                                    }
-
-                                    PlexLauncher.Launch.PlexHome -> {
-                                        status = "Plex opened at its home screen. Press Play on Plex again to try the next way of linking to it."
-                                        isError = false
-                                    }
-
-                                    else -> {
-                                        // It worked: clear the line rather than
-                                        // narrate a link the viewer just watched
-                                        // open.
-                                        status = null
-                                        isError = false
-                                    }
+                var plexForm by remember(page?.plexUrl) { mutableStateOf(0) }
+                page?.plexUrl?.let { link ->
+                    TvButton(label = "Play on Plex", onClick = {
+                        val forms = PlexLauncher.formCount(link, shown.mediaType)
+                        if (forms == 0) {
+                            status = "This server sent a Plex link this TV cannot open."
+                            isError = true
+                        } else {
+                            val attempt = plexForm % forms
+                            when (PlexLauncher.open(context, link, shown.mediaType, attempt)) {
+                                PlexLauncher.Launch.None -> {
+                                    status = "This TV has no app that opens Plex links."
+                                    isError = true
                                 }
-                                plexForm = attempt + 1
+                                PlexLauncher.Launch.PlexHome -> {
+                                    status = "Plex opened at its home screen. Press Play on Plex again to try the next link."
+                                    isError = false
+                                }
+                                else -> {
+                                    status = null
+                                    isError = false
+                                }
                             }
-                        },
-                        tone = Palette.Plex,
-                    )
+                            plexForm = attempt + 1
+                        }
+                    }, tone = Palette.Plex)
                 }
-
-                page.trailerUrl?.let { trailer ->
-                    TvButton(
-                        label = "▶  Trailer",
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(trailer))
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }.onFailure {
-                                status = "No app on this TV can open links."
-                                isError = true
-                            }
-                        },
-                        tone = Palette.SurfaceHigh,
-                    )
+                page?.trailerUrl?.let { trailer ->
+                    TvButton(label = "Trailer", onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(trailer)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }.onFailure {
+                            status = "No app on this TV can open links."
+                            isError = true
+                        }
+                    }, tone = Palette.SurfaceHigh)
                 }
-
                 when {
-                    shown.isAvailable -> Pill(libraryLine, Palette.Success)
-
-                    shown.hasActiveRequest -> Pill("Requested", Palette.Accent)
-
-                    else -> TvButton(
-                        label = when {
-                            busy -> "Requesting..."
-                            shown.mediaType == "tv" -> "Request all seasons"
-                            else -> "Request"
-                        },
+                    page == null -> Unit
+                    page.canRequest -> TvButton(
+                        label = if (busy) "Requesting..." else "Request",
                         onClick = { submit() },
                         enabled = !busy,
                     )
+                    page.blocked -> Pill(page.blockReason ?: "Already requested", Palette.Accent)
+                    page.inLibrary -> Pill("In your library", Palette.Success)
                 }
-
-                if (loaded || page.tmdbId != null) {
+                if (page != null) {
                     TvButton(
                         label = when {
                             saving -> "..."
-                            watched -> "★ Saved"
-                            else -> "☆ Watchlist"
+                            page.watched -> "Saved"
+                            else -> "Watchlist"
                         },
                         onClick = { toggleWatchlist() },
                         enabled = !saving,
                         tone = Palette.SurfaceHigh,
                     )
                 }
-
                 Spacer(Modifier.weight(1f))
                 TvButton(label = "Back", onClick = onBack, tone = Palette.SurfaceHigh)
             }
 
-            // Answers from the request and the watchlist land here, under the
-            // button that was pressed. A Plex launch that worked says nothing.
             StatusLine(status, isError)
 
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
-                Column(modifier = Modifier.width(224.dp)) {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                Column(modifier = Modifier.width(200.dp)) {
                     RemoteImage(
                         url = client.resolveImage(shown.posterPath),
                         label = shown.title,
-                        modifier = Modifier
-                            .width(224.dp)
-                            .height(336.dp)
-                            .clip(RoundedCornerShape(12.dp)),
+                        modifier = Modifier.width(200.dp).height(300.dp).clip(RoundedCornerShape(12.dp)),
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Pill(
-                        if (watched) "★ On your watchlist" else "☆ Not on your watchlist",
-                        if (watched) Palette.Warning else Palette.TextSecondary,
-                    )
+                    page?.plexLibrary?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text("On Plex · $it", style = Palette.Chip.copy(color = Palette.Success))
+                    }
                 }
 
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(start = 32.dp)
+                        .padding(start = 28.dp)
                         .verticalScroll(scroll),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text(
-                        shown.title,
-                        style = Palette.Title,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-
-                    page.tagline?.takeIf { it.isNotBlank() }?.let { tagline ->
-                        Spacer(Modifier.height(2.dp))
-                        Text(tagline, style = Palette.BodyMuted.copy(color = Palette.Accent))
+                    Text(shown.title, style = Palette.Title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    page?.tagline?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = Palette.BodyMuted.copy(color = Palette.Accent))
                     }
-
-                    val meta = page.meta ?: listOfNotNull(
-                        shown.year,
-                        when (shown.mediaType) {
-                            "movie" -> "Film"
-                            "tv" -> "TV series"
-                            "book" -> "Book"
-                            "audiobook" -> "Audiobook"
-                            else -> null
-                        },
-                        shown.subtitle,
-                    ).joinToString(" · ")
-
-                    if (meta.isNotBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(meta, style = Palette.BodyMuted)
+                    val meta = page?.meta ?: listOfNotNull(shown.year, shown.subtitle).joinToString(" · ")
+                    if (meta.isNotBlank()) Text(meta, style = Palette.BodyMuted)
+                    if (page != null && page.quotaLimit > 0) {
+                        Text(
+                            "${page.quotaUsed}/${page.quotaLimit} requests used this month",
+                            style = Palette.Chip,
+                        )
                     }
-
-                    if (shown.genres.isNotEmpty()) {
-                        Spacer(Modifier.height(10.dp))
-                        Chips(shown.genres)
-                    }
-
-                    Spacer(Modifier.height(10.dp))
                     Text(
-                        libraryLine,
-                        style = Palette.Chip.copy(
-                            color = when {
-                                inLibrary -> Palette.Success
-                                activeRequests > 0 -> Palette.Accent
-                                else -> Palette.TextSecondary
-                            },
-                        ),
-                    )
-
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        overview?.takeIf { it.isNotBlank() } ?: "No description available yet.",
+                        page?.overview?.takeIf { it.isNotBlank() } ?: shown.overview?.takeIf { it.isNotBlank() }
+                            ?: "No description available yet.",
                         style = Palette.Body,
                     )
 
+                    val seasons = page?.seasons.orEmpty()
                     if (seasons.isNotEmpty()) {
-                        Spacer(Modifier.height(24.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Seasons", style = Palette.SectionTitle)
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "${seasons.size} · ${seasons.sumOf { it.episodeCount }} episodes",
-                                style = Palette.Chip,
-                            )
-                        }
-                        Spacer(Modifier.height(10.dp))
+                        Text("Seasons", style = Palette.SectionTitle)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(seasons, key = { it.seasonNumber }) { season ->
-                                SeasonChip(
-                                    label = "${season.name} · ${season.episodeCount} ep",
-                                    selected = season.seasonNumber == openSeason,
-                                    onClick = { openSeason = season.seasonNumber },
+                                val included = season.seasonNumber in picked
+                                val label = when {
+                                    season.inLibrary -> "${season.name} · in library"
+                                    page?.canRequest == true && included -> "${season.name} · include"
+                                    page?.canRequest == true -> "${season.name} · skip"
+                                    else -> "${season.name} · ${season.episodeCount} ep"
+                                }
+                                TvChip(
+                                    label = label,
+                                    active = season.seasonNumber == openSeason || included,
+                                    onClick = {
+                                        openSeason = season.seasonNumber
+                                        if (page?.canRequest == true && !season.inLibrary) {
+                                            picked = if (included) picked - season.seasonNumber else picked + season.seasonNumber
+                                        }
+                                    },
                                 )
                             }
                         }
-
-                        Spacer(Modifier.height(14.dp))
                         when {
                             episodesLoading -> Text("Reading the episodes...", style = Palette.BodyMuted)
-
-                            episodes.isEmpty() -> Text(
-                                "No episode list for this season yet.",
-                                style = Palette.BodyMuted,
-                            )
-
-                            else -> {
-                                episodes.take(14).forEach { episode -> EpisodeRow(episode) }
-                                if (episodes.size > 14) {
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        "and ${episodes.size - 14} more in this season",
-                                        style = Palette.Chip,
-                                    )
-                                }
-                            }
-                        }
-
-                        if (!inLibrary) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "Requesting a series sends every season; pick single seasons in the web UI.",
-                                style = Palette.Chip,
-                            )
+                            episodes.isEmpty() -> Text("No episode list for this season yet.", style = Palette.BodyMuted)
+                            else -> episodes.take(12).forEach { EpisodeRow(it) }
                         }
                     }
 
+                    val profiles = page?.profiles.orEmpty()
+                    if (page?.canRequest == true && profiles.size > 1) {
+                        Text("Quality profile", style = Palette.SectionTitle)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(profiles, key = { it.index }) { profile ->
+                                TvChip(
+                                    label = profile.name + if (profile.isDefault) " · default" else "",
+                                    active = profile.index == profileIndex,
+                                    onClick = { profileIndex = profile.index },
+                                )
+                            }
+                        }
+                    } else if (page?.canRequest == true && profiles.size == 1) {
+                        Text("Quality profile · ${profiles.first().name}", style = Palette.Chip)
+                    }
+
+                    page?.collection?.let { collection ->
+                        Text(collection.name, style = Palette.SectionTitle)
+                        Text(
+                            "${collection.parts.size} films · tick happens on the collection page",
+                            style = Palette.Chip,
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            items(collection.parts, key = { it.tmdbId }) { part ->
+                                PosterCard(
+                                    title = part.title,
+                                    subtitle = part.label.ifBlank { part.releaseDate?.take(4) },
+                                    imageUrl = client.resolveImage(part.posterPath),
+                                    badge = when {
+                                        part.current -> "THIS"
+                                        part.blocked -> part.label.ifBlank { "HELD" }
+                                        else -> null
+                                    },
+                                    onClick = { onOpen(part.asMedia()) },
+                                )
+                            }
+                        }
+                        TvButton(
+                            label = "Open collection",
+                            onClick = { onCollection(collection.id) },
+                            tone = Palette.SurfaceHigh,
+                        )
+                    }
+
+                    page?.watch?.takeIf { it.isNotEmpty() }?.let { groups ->
+                        Text("Where to watch", style = Palette.SectionTitle)
+                        groups.forEach { group ->
+                            Text("${group.label}: ${group.names.joinToString(", ")}", style = Palette.BodyMuted)
+                        }
+                    }
+
+                    val facts = page?.facts.orEmpty().filterNot { it.label.equals("Library", ignoreCase = true) }
                     if (facts.isNotEmpty()) {
-                        Spacer(Modifier.height(26.dp))
                         facts.chunked(3).forEach { row ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(20.dp),
-                            ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 row.forEach { fact ->
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(fact.label.uppercase(), style = Palette.Chip)
-                                        Spacer(Modifier.height(2.dp))
                                         Text(fact.value, style = Palette.Body, maxLines = 3)
                                     }
                                 }
-                                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                             }
                         }
                     }
 
-                    if (page.cast.isNotEmpty()) {
-                        Spacer(Modifier.height(20.dp))
+                    page?.cast?.takeIf { it.isNotEmpty() }?.let { cast ->
                         Text("Cast", style = Palette.SectionTitle)
-                        Spacer(Modifier.height(10.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            items(page.cast, key = { it.name + it.role }) { member ->
-                                Column(modifier = Modifier.width(96.dp)) {
-                                    val photo = member.photoPath?.let { path ->
-                                        if (path.startsWith("http")) path else client.baseUrl + path
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            items(cast, key = { it.id.toString() + it.name }) { member ->
+                                FocusableSurface(onClick = { if (member.id > 0) onPerson(member.id) }, modifier = Modifier.width(110.dp)) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        val photo = member.photoPath?.let { path ->
+                                            if (path.startsWith("http")) path else client.resolveImage(path)
+                                        }
+                                        RemoteImage(
+                                            url = photo,
+                                            label = member.name,
+                                            modifier = Modifier.size(84.dp).clip(RoundedCornerShape(42.dp)),
+                                        )
+                                        Spacer(Modifier.height(6.dp))
+                                        Text(member.name, style = Palette.Chip.copy(color = Palette.TextPrimary), maxLines = 2)
+                                        Text(member.role, style = Palette.Chip, maxLines = 2)
                                     }
-                                    RemoteImage(
-                                        url = photo,
-                                        label = member.name,
-                                        modifier = Modifier
-                                            .width(96.dp)
-                                            .height(96.dp)
-                                            .clip(RoundedCornerShape(48.dp)),
-                                    )
-                                    Spacer(Modifier.height(6.dp))
-                                    Text(
-                                        member.name,
-                                        style = Palette.Chip.copy(color = Palette.TextPrimary),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        member.role,
-                                        style = Palette.Chip,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
                                 }
                             }
                         }
                     }
-
-                    Spacer(Modifier.height(24.dp))
+                    Spacer(Modifier.height(12.dp))
                 }
             }
         }
     }
 }
 
-/** A quiet status lozenge: a dot and a sentence, no button to hunt for. */
 @Composable
-private fun Pill(label: String, tint: androidx.compose.ui.graphics.Color) {
+private fun Pill(label: String, tint: Color) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(20.dp))
             .background(tint.copy(alpha = 0.14f))
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
-        Text(label, style = Palette.Chip.copy(color = tint))
+        Text(label, style = Palette.Chip.copy(color = tint), maxLines = 1)
     }
 }
 
-/**
- * One season, as a selectable chip.
- *
- * Seasons are a row rather than a stack because up and down already belong to
- * the page: a vertical list inside a scrolling page is the arrangement that made
- * the profile picker unreachable, and there is no reason to repeat it.
- */
-@Composable
-private fun SeasonChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(8.dp)
-    FocusableSurface(
-        onClick = onClick,
-        modifier = Modifier.height(36.dp),
-        shape = shape,
-        focusedScale = 1.03f,
-    ) { focused ->
-        Box(
-            modifier = Modifier
-                .clip(shape)
-                .background(if (selected) Palette.AccentSoft else Palette.SurfaceHigh)
-                .border(
-                    if (selected) 2.dp else 1.dp,
-                    if (selected || focused) Palette.Accent else Palette.Line,
-                    shape,
-                )
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-        ) {
-            Text(
-                label,
-                style = Palette.Chip.copy(
-                    color = if (selected || focused) Palette.TextPrimary else Palette.TextSecondary,
-                ),
-            )
-        }
-    }
-}
-
-/** One episode: its number, its name, and the one line that says what it is. */
 @Composable
 private fun EpisodeRow(episode: Episode) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(26.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(Palette.SurfaceHigh),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                "${episode.number}",
-                style = Palette.Chip.copy(color = Palette.TextPrimary),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    episode.name,
-                    style = Palette.Body.copy(fontWeight = FontWeight.Medium),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                episode.meta?.takeIf { it.isNotBlank() }?.let { meta ->
-                    Spacer(Modifier.width(10.dp))
-                    Text(meta, style = Palette.Chip, maxLines = 1)
-                }
-            }
-            episode.overview?.takeIf { it.isNotBlank() }?.let { text ->
-                Text(text, style = Palette.Chip, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(
+            "${episode.number}. ${episode.name}",
+            style = Palette.Body.copy(fontWeight = FontWeight.Medium),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val line = listOfNotNull(episode.meta, episode.overview).filter { it.isNotBlank() }.joinToString(" — ")
+        if (line.isNotBlank()) Text(line, style = Palette.Chip, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

@@ -364,6 +364,41 @@ fun StatusLine(message: String?, isError: Boolean, modifier: Modifier = Modifier
     }
 }
 
+/** A toggle the remote can land on. Filled while it is the current choice. */
+@Composable
+fun TvChip(label: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    FocusableSurface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = shape,
+        focusedScale = 1.03f,
+    ) { focused ->
+        Box(
+            modifier = Modifier
+                .clip(shape)
+                .background(if (active) Palette.Accent else Palette.SurfaceHigh)
+                .border(
+                    if (focused) 2.dp else 1.dp,
+                    when {
+                        focused -> Palette.TextPrimary
+                        active -> Palette.Accent
+                        else -> Palette.Line
+                    },
+                    shape,
+                )
+                .padding(horizontal = 16.dp, vertical = 9.dp),
+        ) {
+            Text(
+                label,
+                style = Palette.Chip.copy(color = if (active) Color.White else Palette.TextSecondary),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 /** Chips for genres, status and other short metadata. */
 @Composable
 fun Chips(values: List<String>, modifier: Modifier = Modifier) {

@@ -31,15 +31,18 @@ import dev.daprkid.discovarrtv.ui.Palette
 import dev.daprkid.discovarrtv.ui.RemoteImage
 import dev.daprkid.discovarrtv.ui.StatusLine
 import dev.daprkid.discovarrtv.ui.TvButton
+import dev.daprkid.discovarrtv.ui.TvChip
 import kotlinx.coroutines.launch
 
 /** Every request this account can see, newest first, with its current state. */
 @Composable
-fun RequestsScreen(client: DiscovarrClient, onOpen: (Media) -> Unit) {
+fun RequestsScreen(client: DiscovarrClient, canManage: Boolean, onOpen: (Media) -> Unit) {
     var requests by remember { mutableStateOf<List<RequestItem>>(emptyList()) }
+    var filter by remember { mutableStateOf("all") }
     var loading by remember { mutableStateOf(true) }
     var status by remember { mutableStateOf<String?>(null) }
     var isError by remember { mutableStateOf(false) }
+    var reload by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     fun load() {
@@ -47,8 +50,8 @@ fun RequestsScreen(client: DiscovarrClient, onOpen: (Media) -> Unit) {
         status = null
         scope.launch {
             try {
-                requests = client.requests()
-                if (requests.isEmpty()) status = "No requests yet."
+                requests = client.requests(filter)
+                if (requests.isEmpty()) status = "No requests in this view."
             } catch (error: ApiException) {
                 status = error.message ?: "Could not load requests"
                 isError = true
@@ -61,7 +64,7 @@ fun RequestsScreen(client: DiscovarrClient, onOpen: (Media) -> Unit) {
         }
     }
 
-    LaunchedEffect(Unit) { load() }
+    LaunchedEffect(filter, reload) { load() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -81,61 +84,109 @@ fun RequestsScreen(client: DiscovarrClient, onOpen: (Media) -> Unit) {
             }
         }
 
+        item {
+            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val filters = listOf(
+                    "all" to "All",
+                    "pending" to "Pending",
+                    "approved" to "Approved",
+                    "declined" to "Declined",
+                    "failed" to "Failed",
+                    "completed" to "Completed",
+                )
+                items(filters.size) { index ->
+                    val (value, label) = filters[index]
+                    TvChip(label, filter == value) { filter = value }
+                }
+            }
+        }
+
         item { StatusLine(status, isError) }
 
         items(requests, key = { it.id }) { request ->
             val media = request.media
-            FocusableSurface(
-                onClick = { media?.let(onOpen) },
-                modifier = Modifier.fillMaxWidth(),
-                focusedScale = 1.02f,
-            ) { _ ->
-                Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RemoteImage(
-                        url = client.resolveImage(media?.posterPath),
-                        label = media?.title ?: "?",
-                        modifier = Modifier
-                            .width(86.dp)
-                            .height(129.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                    )
-
-                    Spacer(Modifier.width(20.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = media?.title ?: "Unknown title",
-                            style = Palette.Body,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+            val seasonLine = if (request.seasons.isEmpty()) null else "Seasons ${request.seasons.joinToString(", ")}"
+            val meta = listOfNotNull(seasonLine, request.requester?.let { "by $it" }, request.qualityProfileName)
+                .joinToString(" · ")
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                FocusableSurface(
+                    onClick = { media?.let(onOpen) },
+                    modifier = Modifier.weight(1f),
+                    focusedScale = 1.02f,
+                ) { _ ->
+                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RemoteImage(
+                            url = client.resolveImage(media?.posterPath),
+                            label = media?.title ?: "?",
+                            modifier = Modifier.width(86.dp).height(129.dp).clip(RoundedCornerShape(8.dp)),
                         )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = request.statusLine,
-                            style = Palette.Chip.copy(
-                                color = when {
-                                    request.isComplete -> Palette.Success
-                                    request.isFailed -> Palette.Danger
-                                    request.isMoving -> Palette.Accent
-                                    else -> Palette.TextSecondary
-                                },
-                            ),
-                        )
-                        request.qualityProfileName?.let {
-                            Spacer(Modifier.height(4.dp))
-                            Text(it, style = Palette.Chip)
-                        }
-                        request.note?.takeIf { it.isNotBlank() }?.let {
-                            Spacer(Modifier.height(4.dp))
-                            Text(it, style = Palette.BodyMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(20.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(media?.title ?: "Unknown title", style = Palette.Body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                request.statusLine,
+                                style = Palette.Chip.copy(
+                                    color = when {
+                                        request.isComplete -> Palette.Success
+                                        request.isFailed -> Palette.Danger
+                                        request.isMoving -> Palette.Accent
+                                        else -> Palette.TextSecondary
+                                    },
+                                ),
+                            )
+                            if (meta.isNotBlank()) Text(meta, style = Palette.Chip)
+                            request.note?.takeIf { it.isNotBlank() }?.let {
+                                Text(it, style = Palette.BodyMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
-
-                    Spacer(Modifier.width(16.dp))
-                    Text(
-                        text = request.createdAt?.take(10) ?: "",
-                        style = Palette.Chip,
-                    )
+                }
+                Column(
+                    modifier = Modifier.padding(start = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    Text(request.createdAt?.take(10) ?: "", style = Palette.Chip)
+                    if (canManage && (request.statusId == RequestStatus.PENDING || request.statusId == RequestStatus.FAILED)) {
+                        TvButton(
+                            label = if (request.statusId == RequestStatus.FAILED) "Retry" else "Approve",
+                            onClick = {
+                                scope.launch {
+                                    runCatching { client.approveRequest(request.id) }
+                                        .onSuccess { status = "Updated ${media?.title ?: "request"}."; isError = false; reload += 1 }
+                                        .onFailure { status = it.message; isError = true }
+                                }
+                            },
+                        )
+                    }
+                    if (canManage && request.statusId == RequestStatus.PENDING) {
+                        TvButton(label = "Decline", onClick = {
+                            scope.launch {
+                                runCatching { client.declineRequest(request.id) }
+                                    .onSuccess { reload += 1 }
+                                    .onFailure { status = it.message; isError = true }
+                            }
+                        }, tone = Palette.SurfaceHigh)
+                    }
+                    if (canManage && media != null && media.id > 0) {
+                        TvButton(label = "Mark available", onClick = {
+                            scope.launch {
+                                runCatching { client.markAvailable(media.id) }
+                                    .onSuccess { reload += 1 }
+                                    .onFailure { status = it.message; isError = true }
+                            }
+                        }, tone = Palette.SurfaceHigh)
+                    }
+                    if (canManage || request.statusId == RequestStatus.PENDING) {
+                        TvButton(label = "Remove", onClick = {
+                            scope.launch {
+                                runCatching { client.deleteRequest(request.id) }
+                                    .onSuccess { reload += 1 }
+                                    .onFailure { status = it.message; isError = true }
+                            }
+                        }, tone = Palette.Danger)
+                    }
                 }
             }
         }

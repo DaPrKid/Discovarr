@@ -97,7 +97,7 @@ fun WatchlistScreen(client: DiscovarrClient, onOpen: (Media) -> Unit) {
                                         mediaType = entry.mediaType,
                                         title = entry.title,
                                         posterPath = entry.posterPath,
-                                    ),
+                                    ).copy(id = entry.mediaId ?: 0L),
                                 )
                             },
                         )

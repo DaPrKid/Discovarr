@@ -83,29 +83,11 @@ class DiscovarrClient(
     suspend fun plexLoginAvailable(): Boolean =
         runCatching { execute("GET", "/login", null).body.contains("/auth/plex") }.getOrDefault(false)
 
-    /**
-     * Whether the books half of the app applies at all.
-     *
-     * Administrators can read `services.readarr.enabled` straight from the
-     * settings API. Everyone else cannot, and needs no special case: if the
-     * server holds no books and no audiobooks, there is nothing to show either
-     * way, and the app behaves exactly as it did before books existed.
-     */
-    suspend fun booksEnabled(): Boolean {
-        val settings = runCatching { get("/api/v1/settings").optJSONObject("settings") }.getOrNull()
-        if (settings != null) {
-            return settings.str("services.readarr.enabled")?.equals("true", ignoreCase = true) == true
-        }
-        return runCatching {
-            media("book").isNotEmpty() || media("audiobook").isNotEmpty()
-        }.getOrDefault(false)
-    }
-
     // ---------------------------------------------------------------------
     // Catalog
     // ---------------------------------------------------------------------
 
-    /** One shelf's worth of titles. `type` is movie, tv, book, audiobook or all. */
+    /** One shelf of the local catalog. `type` is movie, tv or all. */
     suspend fun media(type: String, query: String = ""): List<Media> {
         val path = buildString {
             append("/api/v1/media?type=").append(encode(type))
@@ -122,15 +104,93 @@ class DiscovarrClient(
         return Media.list(get(path).optJSONArray("results"))
     }
 
-    suspend fun requests(): List<RequestItem> =
-        RequestItem.list(get("/api/v1/request?filter=all&page=1&take=50"))
+    suspend fun requests(filter: String = "all", page: Int = 1): List<RequestItem> =
+        RequestItem.list(get("/api/v1/request?filter=${encode(filter)}&page=$page&take=50"))
+
+    suspend fun approveRequest(id: Long) = postAction("/api/v1/request/$id/approve")
+
+    suspend fun declineRequest(id: Long) = postAction("/api/v1/request/$id/decline")
+
+    suspend fun retryRequest(id: Long) = postAction("/api/v1/request/$id/retry")
+
+    suspend fun deleteRequest(id: Long) {
+        val response = execute("DELETE", "/api/v1/request/$id", null)
+        if (response.status !in 200..299) {
+            throw ApiException(response.status, errorMessage(response.body) ?: "The request could not be removed")
+        }
+    }
+
+    suspend fun markAvailable(mediaId: Long) {
+        val response = execute("PATCH", "/api/v1/media/$mediaId", JSONObject().put("status", 5))
+        if (response.status !in 200..299) {
+            throw ApiException(response.status, errorMessage(response.body) ?: "Could not mark this title available")
+        }
+    }
+
+    private suspend fun postAction(path: String) {
+        val response = execute("POST", path, JSONObject())
+        if (response.status !in 200..299) {
+            throw ApiException(response.status, errorMessage(response.body) ?: "That action was refused")
+        }
+    }
+
+    suspend fun discover(spec: DiscoverSpec): DiscoverPage = discoverPage(get(spec.path()))
+
+    suspend fun facets(type: String): Facets = facets(get("/api/v1/discover/facets?type=${encode(type)}"))
+
+    suspend fun recommendations(): Recommendations = recommendations(get("/api/v1/recommendations"))
+
+    suspend fun title(item: Media): TitleView {
+        val path = if (item.id > 0) {
+            "/api/v1/media/${item.id}/page"
+        } else {
+            "/api/v1/titles/${item.mediaType}/${item.tmdbId ?: 0}"
+        }
+        return try {
+            titleView(get(path))
+        } catch (error: ApiException) {
+            if (error.status == 404) titleViewFromPage(mediaPage(item), item) else throw error
+        }
+    }
+
+    suspend fun person(id: Long, page: Int = 1): PersonPage =
+        personPage(get("/api/v1/person/$id?page=$page"))
+
+    suspend fun collection(id: Long): CollectionSide {
+        val json = get("/api/v1/collection/$id")
+        return json.collectionSide() ?: throw ApiException(500, "The server sent an unreadable collection")
+    }
+
+    suspend fun requestCollection(id: Long, tmdbIds: List<Long>, profileIndex: Int? = null): String {
+        val body = JSONObject().put("tmdbIds", JSONArray(tmdbIds))
+        if (profileIndex != null) body.put("profileIndex", profileIndex)
+        val response = execute("POST", "/api/v1/collection/$id/request", body)
+        if (response.status !in 200..299) {
+            throw ApiException(response.status, errorMessage(response.body) ?: "Those films could not be requested")
+        }
+        return runCatching { JSONObject(response.body).str("message") }.getOrNull()
+            ?: "Requested"
+    }
+
+    suspend fun notifications(): Pair<Int, List<AppNotification>> = notifications(get("/api/v1/notifications"))
+
+    suspend fun markNotificationsRead(id: Long? = null) {
+        val body = JSONObject()
+        if (id != null) body.put("id", id)
+        val response = execute("POST", "/api/v1/notifications/read", body)
+        if (response.status !in 200..299) {
+            throw ApiException(response.status, errorMessage(response.body) ?: "Could not update notifications")
+        }
+    }
+
+    suspend fun activity(): ActivityView = activityView(get("/api/v1/activity"))
 
     /**
      * Creates a request. Titles already in the library go by `mediaId`; a search
      * hit the server has not imported yet goes by type and id, and the server
      * imports it first. Both shapes are accepted by the same endpoint.
      */
-    suspend fun request(item: Media, seasons: List<Int>? = null): RequestItem {
+    suspend fun request(item: Media, seasons: List<Int>? = null, profileIndex: Int? = null): RequestItem {
         val body = JSONObject()
         if (item.id > 0) {
             body.put("mediaId", item.id)
@@ -141,6 +201,7 @@ class DiscovarrClient(
         if (!seasons.isNullOrEmpty()) {
             body.put("seasons", JSONArray(seasons))
         }
+        if (profileIndex != null) body.put("profileIndex", profileIndex)
 
         val response = execute("POST", "/api/v1/request", body)
         if (response.status !in 200..299) {
@@ -350,6 +411,11 @@ class DiscovarrClient(
      */
     suspend fun episodes(tmdbId: Long, seasonNumber: Int): List<Episode> {
         if (tmdbId <= 0) return emptyList()
+        try {
+            return episodesFromJson(get("/api/v1/tv/$tmdbId/season/$seasonNumber"))
+        } catch (error: ApiException) {
+            if (error.status != 404) throw error
+        }
         val html = page("/partial/tv/$tmdbId/season/$seasonNumber")
         return Html.all(html, "<article class=\"episode\">(.*?)</article>").mapNotNull { match ->
             val block = match.groupValues[1]
@@ -376,6 +442,29 @@ class DiscovarrClient(
     // ---------------------------------------------------------------------
 
     suspend fun watchlist(): List<WatchlistEntry> {
+        try {
+            val json = get("/api/v1/watchlist")
+            val rows = json.optJSONArray("results") ?: return emptyList()
+            return (0 until rows.length()).mapNotNull { index ->
+                val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                val tmdbId = row.longOrNull("tmdbId") ?: return@mapNotNull null
+                WatchlistEntry(
+                    tmdbId = tmdbId,
+                    mediaType = row.str("mediaType") ?: "movie",
+                    title = row.str("title") ?: "Untitled",
+                    meta = listOfNotNull(
+                        if (row.str("mediaType") == "tv") "Series" else "Movie",
+                        row.str("releaseDate")?.take(4),
+                    ).joinToString(" · "),
+                    posterPath = row.str("posterPath"),
+                    mediaId = row.longOrNull("mediaId"),
+                    statusId = row.optInt("status", MediaStatus.UNKNOWN),
+                    activeRequests = row.optInt("activeRequests"),
+                )
+            }
+        } catch (error: ApiException) {
+            if (error.status != 404) throw error
+        }
         val html = page("/watchlist")
         return html.split("<div class=\"watch-row\">").drop(1).mapNotNull { row ->
             val title = Html.firstText(row, "<a class=\"media-title\"[^>]*>(.*?)</a>") ?: return@mapNotNull null
@@ -400,6 +489,19 @@ class DiscovarrClient(
      */
     suspend fun toggleWatchlist(page: MediaPage, returnTo: String = "/watchlist"): Boolean {
         val tmdbId = page.tmdbId ?: throw ApiException(400, "This title has no TMDB id to save")
+        val body = JSONObject()
+            .put("tmdbId", tmdbId)
+            .put("mediaType", page.mediaType ?: "movie")
+            .put("title", page.title ?: "")
+            .put("posterPath", page.posterPath ?: "")
+            .put("releaseDate", page.releaseDate ?: "")
+        val json = execute("POST", "/api/v1/watchlist/toggle", body)
+        if (json.status in 200..299) {
+            return runCatching { JSONObject(json.body).optBoolean("added") }.getOrDefault(false)
+        }
+        if (json.status != 404) {
+            throw ApiException(json.status, errorMessage(json.body) ?: "The watchlist refused the change")
+        }
         val fields = linkedMapOf(
             "tmdbId" to tmdbId.toString(),
             "mediaType" to (page.mediaType ?: "movie"),
@@ -435,6 +537,12 @@ class DiscovarrClient(
     // ---------------------------------------------------------------------
 
     suspend fun calendar(month: String? = null): CalendarMonth {
+        val jsonPath = if (month.isNullOrBlank()) "/api/v1/calendar" else "/api/v1/calendar?month=" + encode(month)
+        try {
+            return calendarMonth(get(jsonPath))
+        } catch (error: ApiException) {
+            if (error.status != 404) throw error
+        }
         val path = if (month.isNullOrBlank()) "/calendar" else "/calendar?month=" + encode(month)
         val html = page(path)
 
