@@ -13,7 +13,7 @@ import { diagnosticsSnapshot } from './diagnostics.js'
 import { plexSettings } from './plex.js'
 import { loadServiceOptions, serviceProfiles, serviceSummary } from './services.js'
 import { syncState } from './sync.js'
-import { tmdbApiKey } from './tmdb.js'
+import { cachedProviderChoices, tmdbApiKey } from './tmdb.js'
 import { alert, escapeHtml, formatBytes, formatDuration, themeSelect } from './views.js'
 
 
@@ -447,6 +447,15 @@ export function settingsBody({
   const sync = syncState()
   const current = SETTINGS_TABS.some(([key]) => key === tab) ? tab : 'general'
 
+  // The services this household already pays for. A ticked one becomes a play
+  // button on every title it carries, which is the same idea as the Plex
+  // button: the title opens where it can actually be watched.
+  const chosenServices = String(settings['tmdb.services'] ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+  const services = cachedProviderChoices(40)
+
   const general = `<form method="post" action="/settings" class="stack">
       <input type="hidden" name="settingsSection" value="general" />
       <input type="hidden" name="settingsTab" value="general" />
@@ -465,6 +474,25 @@ export function settingsBody({
         <label>Where-to-watch region
           <select name="tmdbRegion">${regionOptions(settings['tmdb.region'])}</select>
         </label>
+        <div class="rail-field">
+          <span>Streaming services you have</span>
+          ${
+            services.length
+              ? `<div class="toggle-list toggle-scroll">${services
+                  .map(
+                    (service) => `<label class="toggle"><input type="checkbox" name="tmdbService" value="${escapeHtml(
+                      String(service.id)
+                    )}"${
+                      chosenServices.includes(String(service.id)) ? ' checked' : ''
+                    } /><span>${escapeHtml(service.name)}</span></label>`
+                  )
+                  .join('')}</div>`
+              : '<p class="muted small">Add a TMDB key above and save to list the streaming services in your region.</p>'
+          }
+          <p class="muted small">A ticked service gets a ▶ Play button on the titles it carries, and the button opens
+            that title on the service. Untick everything to turn the buttons off.</p>
+          <input type="hidden" name="tmdbServicesSubmitted" value="1" />
+        </div>
       </fieldset>
       <button class="btn" type="submit">Save general settings</button>
     </form>
@@ -877,6 +905,9 @@ export function settingsFromBody(body) {
     if (body.appName !== undefined) input.appName = body.appName
     if (body.tmdbApiKey !== undefined) input.tmdbApiKey = body.tmdbApiKey
     if (body.tmdbRegion !== undefined) input.tmdbRegion = body.tmdbRegion
+    // The hidden flag is what tells "no services ticked" from "another tab's
+    // form was posted", so clearing the list is possible.
+    if (body.tmdbServicesSubmitted !== undefined) input.tmdbServices = body.tmdbService ?? []
   }
 
   if (

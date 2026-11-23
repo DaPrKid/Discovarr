@@ -719,6 +719,14 @@ export function updateSettings(input, actor) {
   if (input.tmdbRegion !== undefined) {
     entries['tmdb.region'] = String(input.tmdbRegion ?? '').trim().toUpperCase() || 'US'
   }
+  if (input.tmdbServices !== undefined) {
+    // Provider ids, in the order they were ticked: unticking every box clears
+    // the list, which is why the form says it was submitted.
+    const ids = [].concat(input.tmdbServices ?? [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+    entries['tmdb.services'] = [...new Set(ids)].join(',')
+  }
   if (input.syncIntervalMinutes !== undefined) {
     entries['sync.intervalMinutes'] = String(Math.max(0, Number(input.syncIntervalMinutes ?? 30) || 0))
   }

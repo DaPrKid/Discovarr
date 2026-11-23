@@ -1239,6 +1239,20 @@ code {
   flex-wrap: wrap;
 }
 
+/* The services the household already pays for, beside the Plex button. */
+.play-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-watch {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .service-panel {
   gap: 16px;
 }

@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.2.5'
+export const APP_VERSION = '1.2.6'
 
 // Lifecycle values mirror the enums Seerr uses, so the API and database stay
 // familiar to anyone coming from that codebase.
@@ -81,6 +81,9 @@ export const SETTING_DEFAULTS = Object.freeze({
   'tmdb.apiKey': '',
   // Where-to-watch region for the title page (ISO 3166-1 alpha-2).
   'tmdb.region': 'US',
+  // The streaming services this household subscribes to, as TMDB provider ids.
+  // Ticked ones get a play button on the titles they carry.
+  'tmdb.services': '',
 
   'services.sonarr.enabled': 'false',
   'services.sonarr.url': '',

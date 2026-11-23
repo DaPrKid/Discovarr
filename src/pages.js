@@ -84,6 +84,7 @@ import {
   TYPE_GENRE_IDS,
 } from './tmdb.js'
 import { brandNames as resolveBrandNames, searchBrands } from './brands.js'
+import { serviceLinks } from './watch.js'
 import { forgetPlex, plexEntries, plexEntryFor, plexSettings, testPlexConnection } from './plex.js'
 import { syncLibrary, syncState } from './sync.js'
 import { downloadQueue } from './services.js'
@@ -1449,7 +1450,7 @@ function collectionPanel(collection) {
   </aside>`
 }
 
-function detailBody({ user, media, details, notice, error, plex = null, remote = null, collection = null, trailer = null }) {
+function detailBody({ user, media, details, notice, error, plex = null, remote = null, collection = null, trailer = null, streaming = [] }) {
   const entry = media ?? details
   const isTv = entry.mediaType === MediaType.TV
   const kind = isTv ? 'sonarr' : 'radarr'
@@ -1570,6 +1571,22 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
       </div>`
     : ''
 
+  // The services this household already pays for, beside the Plex button: the
+  // same play icon, opening the title on that service instead of in Plex. Empty
+  // until services are ticked in settings.
+  const streamingRow = streaming.length
+    ? `<div class="play-row">${streaming
+        .map(
+          (service) =>
+            `<a class="btn btn-sm btn-watch" href="${escapeHtml(service.url)}" target="_blank" rel="noreferrer noopener" title="Play ${escapeHtml(
+              entry.title
+            )} on ${escapeHtml(service.name)}" aria-label="Play ${escapeHtml(entry.title)} on ${escapeHtml(
+              service.name
+            )}">▶ Play on ${escapeHtml(service.name)}</a>`
+        )
+        .join('')}</div>`
+    : ''
+
   const quota = quotaSummary(user)[isTv ? 'tv' : 'movie']
   const quotaLine =
     quota.limit > 0 ? `<p class="muted small">${quota.used}/${quota.limit} requests used this month</p>` : ''
@@ -1676,6 +1693,7 @@ function detailBody({ user, media, details, notice, error, plex = null, remote =
             <p class="overview">${escapeHtml(entry.overview || details?.overview || 'No description available yet.')}</p>
             ${factsHtml}
             ${plexRow}
+            ${streamingRow}
             ${pickable ? '' : seasonsBlock}
             ${action}
             ${watchToggle}
@@ -2774,6 +2792,7 @@ export function registerPageRoutes(router) {
     try {
       const media = getMediaDetail(Number(params.id), user.id)
       const details = await loadTitleDetails(media.mediaType, media.tmdbId)
+      const streaming = await serviceLinks({ tmdbId: media.tmdbId, title: media.title })
       const kind = media.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr'
       const remote = await serviceLookup(kind, media.tmdbId)
       const collection = await loadCollection(details, media.mediaType, media.tmdbId, `/media/${media.id}`)
@@ -2788,6 +2807,7 @@ export function registerPageRoutes(router) {
           notice: url.searchParams.get('notice'),
           error: url.searchParams.get('err'),
           plex: plexEntryFor(await plexEntries(), media.mediaType, media.tmdbId),
+          streaming,
           remote,
           collection,
         }),
@@ -2819,6 +2839,7 @@ export function registerPageRoutes(router) {
 
     try {
       const details = await titleDetails(mediaType, tmdbId)
+      const streaming = await serviceLinks({ tmdbId, title: details?.title })
       const remote = await serviceLookup(mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr', tmdbId)
       const collection = await loadCollection(details, mediaType, tmdbId, `/title/${mediaType}/${tmdbId}`)
       render(res, 200, {
@@ -2832,6 +2853,7 @@ export function registerPageRoutes(router) {
           notice: url.searchParams.get('notice'),
           error: url.searchParams.get('err'),
           plex: plexEntryFor(await plexEntries(), mediaType, tmdbId),
+          streaming,
           remote,
           collection,
           trailer: await trailerFor(mediaType, tmdbId),
@@ -3511,6 +3533,10 @@ export function registerPageRoutes(router) {
 
   /** The settings page in one call, so POST handlers can answer without a redirect. */
   async function renderSettings(res, actor, { tab, notice = null, error = null, tokens = null, newToken = null, newTokenScope }) {
+    // The General tab prints the region's streaming services as checkboxes, so
+    // the catalogue is warmed here and the settings body reads it without
+    // waiting on TMDB of its own.
+    await providerChoices(40).catch(() => [])
     render(res, 200, {
       title: 'Settings',
       user: actor,

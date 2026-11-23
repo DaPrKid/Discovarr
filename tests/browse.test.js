@@ -12,6 +12,7 @@ import { gzipSync } from 'node:zlib'
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 
 let tmdb
+let jw
 let server
 let dataDir
 let baseUrl
@@ -275,6 +276,67 @@ before(async () => {
   const tmdbPort = await freePort()
   await new Promise((resolve) => tmdb.listen(tmdbPort, '127.0.0.1', resolve))
 
+  // A stand-in JustWatch: the catalogue behind TMDB's "where to watch" data,
+  // and the only place a per-service link for a title exists.
+  jw = createHttpServer((req, res) => {
+    let raw = ''
+    req.on('data', (chunk) => {
+      raw += chunk
+    })
+    req.on('end', () => {
+      const body = JSON.parse(raw || '{}')
+      jw.requests.push(body)
+
+      const edges =
+        body.variables?.search === 'Detail Movie'
+          ? [
+              {
+                node: {
+                  content: { externalIds: { tmdbId: '999' } },
+                  offers: [
+                    // A cheaper tier of the service still counts as that service.
+                    {
+                      monetizationType: 'FLATRATE',
+                      standardWebURL: 'https://www.netflix.com/title/80100172',
+                      package: { clearName: 'Netflix Standard with Ads' },
+                    },
+                    {
+                      monetizationType: 'FLATRATE',
+                      standardWebURL: 'https://play.max.com/show/abc',
+                      package: { clearName: 'Max' },
+                    },
+                    {
+                      monetizationType: 'FLATRATE',
+                      standardWebURL: 'https://www.peacocktv.com/watch/asset/x',
+                      package: { clearName: 'Peacock Premium' },
+                    },
+                    // A rental is not a subscription the household already pays for.
+                    {
+                      monetizationType: 'RENT',
+                      standardWebURL: 'https://www.shudder.com/movies/x',
+                      package: { clearName: 'Shudder' },
+                    },
+                    // Not a web address, so it must never become a button.
+                    {
+                      monetizationType: 'FLATRATE',
+                      standardWebURL: 'javascript:alert(1)',
+                      package: { clearName: 'Acme Stream' },
+                    },
+                  ],
+                },
+              },
+            ]
+          : []
+
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ data: { popularTitles: { edges } } }))
+    })
+  })
+  jw.requests = []
+
+  const jwPort = await freePort()
+  await new Promise((resolve) => jw.listen(jwPort, '127.0.0.1', resolve))
+
   dataDir = mkdtempSync(join(tmpdir(), 'discovarr-browse-test-'))
   const port = await freePort()
   baseUrl = `http://127.0.0.1:${port}`
@@ -293,6 +355,7 @@ before(async () => {
       TMDB_API_KEY: 'test-key',
       TMDB_BASE_URL: `http://127.0.0.1:${tmdbPort}/3`,
       NETWORK_EXPORT_BASE: `http://127.0.0.1:${tmdbPort}/exports`,
+      JUSTWATCH_URL: `http://127.0.0.1:${jwPort}/graphql`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -313,6 +376,7 @@ before(async () => {
 after(() => {
   server?.kill('SIGTERM')
   tmdb?.close()
+  jw?.close()
   if (dataDir) rmSync(dataDir, { recursive: true, force: true })
 })
 
@@ -817,4 +881,55 @@ test('Discover shows collections too when the switch is on', async () => {
   assert.match(html, /Only collections that match these filters|collections that match these filters/)
   assert.match(html, /class="media-card collection-card"/)
   assert.match(html, /href="\/collection\//)
+})
+
+test('no play buttons appear until the household picks its services', async () => {
+  const html = await (await page('/title/movie/999')).text()
+  assert.doesNotMatch(html, /btn-watch/)
+  // Nothing is asked of JustWatch either: an install that does not use this
+  // pays nothing for it.
+  assert.equal(jw.requests.length, 0)
+})
+
+test('a ticked service plays the title on that service, not a search page', async () => {
+  const saved = await fetch(`${baseUrl}/settings`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { cookie: adminCookie, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams([
+      ['settingsSection', 'general'],
+      ['settingsTab', 'general'],
+      ['tmdbServicesSubmitted', '1'],
+      ['tmdbService', '8'],
+      ['tmdbService', '1899'],
+      ['tmdbService', '386'],
+      ['tmdbService', '99'],
+      ['tmdbService', '777'],
+    ]).toString(),
+  })
+  assert.equal(saved.status, 303)
+
+  const html = await (await page('/title/movie/999')).text()
+  assert.match(html, /href="https:\/\/www\.netflix\.com\/title\/80100172"/)
+  assert.match(html, /href="https:\/\/play\.max\.com\/show\/abc"/)
+  assert.match(html, /href="https:\/\/www\.peacocktv\.com\/watch\/asset\/x"/)
+  assert.match(html, /Play on Netflix/)
+  assert.match(html, /Play on Max/)
+  // The rental and the script URL are not subscriptions this household owns.
+  assert.doesNotMatch(html, /shudder\.com/)
+  assert.doesNotMatch(html, /javascript:/)
+  assert.equal((html.match(/class="btn btn-sm btn-watch"/g) ?? []).length, 3)
+
+  // The offer lookup is remembered per title, so a second visit does not ask
+  // again.
+  const asked = jw.requests.length
+  await page('/title/movie/999')
+  assert.equal(jw.requests.length, asked)
+
+  // The settings page keeps the ticks, and the hidden flag is what lets the
+  // list be cleared again.
+  const settings = await (await page('/settings?tab=general')).text()
+  assert.match(settings, /name="tmdbService" value="8" checked/)
+  assert.match(settings, /name="tmdbService" value="99" checked/)
+  assert.match(settings, /name="tmdbServicesSubmitted" value="1"/)
 })

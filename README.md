@@ -45,7 +45,7 @@ is **public**, like this repository, so `docker pull` needs no login — which i
 also what lets an Unraid Community Apps install pull it with no credentials.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.5
+docker pull ghcr.io/daprkid/discovarr:1.2.6
 ```
 
 Tags are the bare version (`0.3.0`), `latest` for tagged releases, and
@@ -62,12 +62,12 @@ verbatim with the version swapped, which is why the port, PUID/PGID and volume
 appear here as on the first install.
 
 ```bash
-docker pull ghcr.io/daprkid/discovarr:1.2.5
+docker pull ghcr.io/daprkid/discovarr:1.2.6
 docker stop discovarr && docker rm discovarr
 docker run -d --name discovarr --restart unless-stopped \
   -p 5057:5057 -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  ghcr.io/daprkid/discovarr:1.2.5
+  ghcr.io/daprkid/discovarr:1.2.6
 ```
 
 Nothing in `/data` is touched between versions; if a release ever needs a
@@ -163,6 +163,13 @@ anonymous pull on every release, so the install cannot break silently.
   `/data/brands` like the network export, so a restart while TMDB is down still
   names services from the region's own list; the built-in shortlist answers only
   when there is no cache and no TMDB.
+- **Play it where you already pay for it** — tick the services your household
+  subscribes to in Settings → General and every title they carry gets the same
+  ▶ Play button the Plex library gets, on the title page beside it: one click
+  opens that exact title on Netflix, Disney+, Max or whichever service, not a
+  search box. A service is matched by name, so a cheaper "with ads" tier of the
+  same service still counts, and the links are the ones the offers behind the
+  where-to-watch panel publish for each service.
 - **A filter panel on the browse pages** — the right-hand rail of Networks,
   Studios and the genre pages toggles genres, studios, networks and streaming
   services, then narrows further by year, minimum rating, vote count, original
@@ -372,7 +379,7 @@ without manual `chown`:
 docker run -d --name discovarr -p 5060:5057 \
   -e PUID=99 -e PGID=100 \
   -v /mnt/user/appdata/discovarr:/data \
-  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.5
+  --restart unless-stopped ghcr.io/daprkid/discovarr:1.2.6
 ```
 
 If you prefer to run the process without root at all, start the container with
@@ -460,6 +467,7 @@ discovarr/
     ├── sync.js           # library reconciliation + scheduler
     ├── services.js       # Radarr/Sonarr client
     ├── plex.js           # Plex library check and deep links
+    ├── watch.js          # service play links for the titles a household owns
     ├── tmdb.js           # metadata client
     ├── images.js         # cached artwork proxy
     ├── notifications.js  # webhooks
@@ -496,7 +504,9 @@ the POST it receives, which covers connection testing, folder and profile
 loading, named profiles (adding, editing and dispatching with a non-default one),
 the tabbed settings page and sign-in landing on Discover. A stand-in Plex
 provides an identity, two libraries and one item, which covers the availability
-badge, the play deep link and the browse sidebar.
+badge, the play deep link and the browse sidebar. A stand-in JustWatch covers the
+streaming play buttons: a link per ticked service, rentals left out, and a link
+that is not a web address never rendered.
 
 ## Limitations
 

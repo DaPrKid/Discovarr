@@ -380,6 +380,21 @@ export async function providerChoices(limit = 24) {
   return (await streamingProviders()).slice(0, limit)
 }
 
+/**
+ * The region's services as they are known right now, without waiting for TMDB:
+ * the settings page prints its checkboxes from this, so opening it never blocks
+ * on the provider catalogue. Falls back to the built-in shortlist on a fresh
+ * install, before the first browse page has filled the cache.
+ */
+export function cachedProviderChoices(limit = 40) {
+  const items =
+    providerCache?.items ??
+    readBrandCache(providerCacheName(watchRegion()))?.items ??
+    providerOptions()
+
+  return items.slice(0, limit).map((service) => ({ ...service }))
+}
+
 // Refreshed daily, on disk as well as in memory: TMDB adds services by the day,
 // and a list that is a day old is still worth far more than built-in ids when
 // the next start cannot reach TMDB at all.

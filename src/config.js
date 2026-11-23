@@ -32,6 +32,10 @@ export const config = {
   tmdbApiKeyEnv: process.env.TMDB_API_KEY ?? '',
   // Overridable so tests and TMDB-compatible mirrors can be pointed at another host.
   tmdbBaseUrl: (process.env.TMDB_BASE_URL ?? 'https://api.themoviedb.org/3').replace(/\/+$/, ''),
+  // The catalogue behind TMDB's "where to watch" data, which is where the
+  // per-service links for the play buttons come from. Overridable for the same
+  // reason as TMDB itself: the tests stand in for it.
+  justwatchUrl: process.env.JUSTWATCH_URL ?? 'https://apis.justwatch.com/graphql',
   // Overridable so tests can stand in for plex.tv.
   plexTvBase: (process.env.PLEX_TV_BASE ?? 'https://plex.tv').replace(/\/+$/, ''),
   // Plex keeps each account's watchlist on its discovery host, which is a
